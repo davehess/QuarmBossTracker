@@ -136,7 +136,7 @@ describe('saved positions', () => {
 describe('the drag paths and the panel use it', () => {
   const c = stripJs(canvas);
   it('place, the single drag and the group drag all clamp through yBounds / xBounds with the flag', () => {
-    expect(c).toMatch(/fitRect\(screenList\(W, H\)[^;]*, p\.h, growsUp\(p\), isFree\(p\)\);/);
+    expect(c).toMatch(/fitRect\(screenList\(W, H\)[^;]*, cb\.h, growsUp\(p\), isFree\(p\)\);/);
     expect(c).toMatch(/yb = yBounds\(0, H, d\.h0, [^;]*dfree\)/);
     expect(c).toMatch(/myb = yBounds\(0, H, r\.offsetHeight, [^;]*mfree\)/);
   });

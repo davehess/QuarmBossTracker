@@ -16,7 +16,7 @@ describe('Target Info: a Shadow Knight mob\'s Harm Touch', () => {
   });
   // The chip itself is run as a function in test/mobinfo-class-variants-overlay.test.js.
   it('the used state is red on the card', () => {
-    expect(html).toMatch(/\.mob \.ht\.used\{color:#f85149\}/);
+    expect(html).toMatch(/\.mob \.ht\.used\{color:var\(--wp-red\)\}/);
     expect(js).toContain('var nht = mi.target_npc_ht;');
   });
 });

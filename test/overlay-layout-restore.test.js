@@ -82,7 +82,7 @@ describe('a window being built (_resolveBounds)', () => {
 });
 
 // ── 3. the dragged height is kept per screen setup ───────────────────────────────────────────────────────────────────
-const floorSrc = sliceBlock(MAIN, 'const _FLOOR_OTHER_MAX = 5;', '  win.__wpFloor = next;\n}');
+const floorSrc = sliceBlock(MAIN, 'const _FLOOR_OTHER_MAX = 5;', '  win[_floorSlot(win)] = next;\n}');
 function floorEnv(initialCfg, sig) {
   const state = { cfg: JSON.parse(JSON.stringify(initialCfg || {})), sig };
   // eslint-disable-next-line no-new-func
@@ -161,6 +161,7 @@ function loadSetEnv({ cfg, windows }) {
   const fn = new Function('loadConfig', 'saveConfig', '_screenSignature', '_HIDEALL_FLAGS', '_setRectsHere', 'applyAllVisibility',
     '_overlayEntries', '_boundsKeyForEntry', 'pushStatus', 'buildTrayMenu', 'applyAllOverlayBackdrops', 'canvasWindow', 'screen',
     `let _hideAllActive = false, _hideAllPrev = null;
+     const _noteCanvasChoice = () => false;   // the active character's saved layout follows the Canvas (canvas-per-character.test.js)
      ${floorSrc}
      ${lookKeysSrc}
      ${scaleSrc}

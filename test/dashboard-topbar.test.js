@@ -68,9 +68,10 @@ describe('where the controls live', () => {
   const nav = src.slice(src.indexOf('<div class="nav">'), src.indexOf('<div id="wpPanelMenu"'));
   const foot = nav.slice(nav.indexOf('<div class="wp-rail-foot">'));
 
-  it('Reload and mail ride the title row, not the links row', () => {
+  // The guild lead, 2026-10-29: "put the feedback button on the top right. next to the reload".
+  it('Reload, mail and Feedback ride the title row, not the links row', () => {
     const right = h1.slice(h1.indexOf('<span id="wpTopRight">'));
-    for (const id of ['wpReload', 'wpMailBtn']) {
+    for (const id of ['wpReload', 'wpMailBtn', 'wpFbBtn']) {
       expect(right).toContain('id="' + id + '"');
       expect(links).not.toContain('id="' + id + '"');
     }
@@ -91,11 +92,12 @@ describe('where the controls live', () => {
     expect(nav).not.toContain('id="wpGear"');
   });
 
-  it('Tour and Feedback sit stacked at the foot of the rail', () => {
-    for (const id of ['wpTourBtn', 'wpFbBtn']) {
-      expect(foot).toContain('id="' + id + '"');
-      expect(bar).not.toContain('id="' + id + '"');
-    }
+  it('Tour sits at the foot of the rail; Feedback is beside Reload, not in the rail', () => {
+    expect(foot).toContain('id="wpTourBtn"');
+    expect(bar).not.toContain('id="wpTourBtn"');
+    expect(nav).not.toContain('id="wpFbBtn"');
+    const right = h1.slice(h1.indexOf('<span id="wpTopRight">'));
+    expect(right.indexOf('id="wpFbBtn"')).toBeLessThan(right.indexOf('id="wpReload"'));
     const css = stripJs(src);
     expect(css).toMatch(/\.wp-rail-foot\s*\{[^}]*margin-top:auto/);
     expect(css).toMatch(/\.wp-rail-foot\s*\{[^}]*flex-direction:column/);

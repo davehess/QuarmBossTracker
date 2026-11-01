@@ -122,7 +122,7 @@ describe('overlay: Bars is the only layout', () => {
     expect(out).toMatch(/class="tk srv"[\s\S]*class="tk mob"/);
     expect(nodes.map((n) => n.tv.textContent)).toEqual(['1.5', '~4.5']);          // the mob tick is rough: marked with ~
     expect(nodes.map((n) => n.bar.style.width)).toEqual(['25.0%', '75.0%']);      // time left as a share of the 6 s tick
-    expect(html).toMatch(/--srv:#58a6ff; --mob:#a371f7/);
+    expect(html).toMatch(/--srv:var\(--wp-blue\); --mob:var\(--wp-purple\)/);
   });
   it('draws no dials, whatever layout an earlier version saved on this machine', () => {
     for (const saved of [null, 'bars', 'dials']) {

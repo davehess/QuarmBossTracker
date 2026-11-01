@@ -133,7 +133,7 @@ describe('DPS mini: me and my neighbours', () => {
     const h = dps.miniRowsHtml(board(['Aldenmar']), null, 1000, 0, true);
     expect(h).toContain('<li class="mrow tk">');
     expect(h).toContain('@0<');                                  // no elapsed time yet → no rate
-    expect(cssOf(dpsHtml)).toContain('li.mrow.tk .mbar i{background:#f85149}');
+    expect(cssOf(dpsHtml)).toContain('li.mrow.tk .mbar i{background:var(--wp-red)}');
   });
   it('a name cannot break out of its row', () => {
     const h = dps.miniRowsHtml([['<img src=x>', 10, 0, null, 1]], null, 10, 1, false);

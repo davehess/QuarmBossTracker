@@ -693,7 +693,7 @@ describe('map.html: the health chip on alive rows', () => {
   });
   it('the chip has colours for all three tiers', () => {
     const css = stripCss(MAP_HTML);
-    expect(css).toMatch(/\.trow \.tm \.hp\.hi\{color:#56d364\}/);
+    expect(css).toMatch(/\.trow \.tm \.hp\.hi\{color:var\(--wp-green\)\}/);
     expect(css).toMatch(/\.hp\.mid\{color:#f0b429\}/);
     expect(css).toMatch(/\.hp\.lo\{color:#f87171\}/);
   });

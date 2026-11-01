@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>map</title>
+<link rel="stylesheet" href="theme.css">
 <style>
   /* Spawn map overlay (Mimic 2.9, beta) - layout C, the tracker: the zone map on the left, the active respawn
      timers on the right. Reads the agent's /api/map-state once a second; click a spawn dot to mark it.
@@ -17,27 +18,27 @@
      customization should open up to a new section to the side where the timers would be so you can update the map at
      the same time"). Same width as the list, so it takes the list's slot; see setCfgOpen. */
   #cfg{flex:0 0 210px;box-sizing:border-box;min-height:0;overflow-y:auto;overflow-x:hidden;border-radius:6px;
-    background:rgba(13,17,23,0.97);border:1px solid rgba(110,118,129,0.5);padding:0 8px 8px;font-size:10.5px;color:#c9d1d9;text-shadow:none}
+    background:rgba(var(--wp-bg-rgb),0.97);border:1px solid rgba(110,118,129,0.5);padding:0 8px 8px;font-size:10.5px;color:var(--wp-text);text-shadow:none}
   #cfg[hidden]{display:none}
   #wrap.cfgopen #side{display:none}
   #cfg::-webkit-scrollbar{width:10px}
-  #cfg::-webkit-scrollbar-thumb{background:#484f58;border-radius:5px;border:2px solid rgba(13,17,23,0.95)}
-  #cfg .chead{position:sticky;top:0;z-index:1;background:rgba(13,17,23,0.99);padding:7px 26px 5px 0;border-bottom:1px solid rgba(110,118,129,0.4);
+  #cfg::-webkit-scrollbar-thumb{background:#484f58;border-radius:5px;border:2px solid rgba(var(--wp-bg-rgb),0.95)}
+  #cfg .chead{position:sticky;top:0;z-index:1;background:rgba(var(--wp-bg-rgb),0.99);padding:7px 26px 5px 0;border-bottom:1px solid rgba(110,118,129,0.4);
     display:flex;align-items:center;gap:6px;font-size:12px}
   #cfg .chead .sp{flex:1}
   #cfg .grp{margin:9px 0 3px;color:#8b949e;text-transform:uppercase;font-size:9.5px;letter-spacing:.5px}
   #cfg .row{display:flex;align-items:center;gap:6px;padding:1.5px 0}
   #cfg .row .bl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #cfg label.row{cursor:pointer}
-  #cfg input[type=checkbox]{margin:0;accent-color:#58a6ff;cursor:pointer}
-  #cfg input[type=range]{width:86px;margin:0;accent-color:#58a6ff;cursor:ew-resize}
+  #cfg input[type=checkbox]{margin:0;accent-color:var(--wp-blue);cursor:pointer}
+  #cfg input[type=range]{width:86px;margin:0;accent-color:var(--wp-blue);cursor:ew-resize}
   #cfg input[type=color]{width:26px;height:16px;padding:0;border:1px solid rgba(110,118,129,0.6);border-radius:3px;background:none;cursor:pointer}
-  #cfg select,#cfg button{background:rgba(22,27,34,.9);color:#c9d1d9;border:1px solid rgba(110,118,129,0.5);border-radius:4px;font:inherit;font-size:10px;padding:1px 6px;cursor:pointer}
-  #cfg button:hover,#cfg select:hover{border-color:#58a6ff;color:#fff}
+  #cfg select,#cfg button{background:rgba(var(--wp-panel-rgb),.9);color:var(--wp-text);border:1px solid rgba(110,118,129,0.5);border-radius:4px;font:inherit;font-size:10px;padding:1px 6px;cursor:pointer}
+  #cfg button:hover,#cfg select:hover{border-color:var(--wp-blue);color:#fff}
   #cfg .rs{flex:none;width:20px;padding:0;line-height:15px;color:#8b949e}
   #cfg .gl{width:20px;text-align:center;flex:none}
   #cfg .val{flex:none;min-width:58px;text-align:right;color:#8b949e}
-  #cfg .foot{margin-top:10px;display:flex;justify-content:space-between;align-items:center;gap:6px;color:#6e7681;font-size:9.5px}
+  #cfg .foot{margin-top:10px;display:flex;justify-content:space-between;align-items:center;gap:6px;color:var(--wp-dim);font-size:9.5px}
   #stage{position:absolute;inset:0}
   #cv{position:absolute;inset:0;width:100%;height:100%;display:block}
   #hits{position:absolute;inset:0;pointer-events:none}
@@ -63,18 +64,18 @@
     text-shadow:0 0 3px #000,0 0 2px #000;font-variant-numeric:tabular-nums}
   #kiteChip[hidden]{display:none}
   #tools .tb[hidden]{display:none}   /* the circle buttons (Others / Circles / Drift) show only while there is a circle to act on */
-  #kiteChip .g{color:#56d364}#kiteChip .a{color:#f0b429}#kiteChip .r{color:#ff6b5e}#kiteChip .gd{color:#d4f542}
+  #kiteChip .g{color:var(--wp-green)}#kiteChip .a{color:#f0b429}#kiteChip .r{color:#ff6b5e}#kiteChip .gd{color:#d4f542}
   /* The timers list slides in and out (the guild lead, 2026-10-12: "slide the spawn timers in and out. So that it could
      take up less space if we weren't focused on that"): a top-right button on the map; slid in, the map takes the width. */
   #sideBtn{position:absolute;top:6px;right:6px;z-index:6}
   #wrap.noside #side{display:none}
   #wrap.noside:not(.cfgopen) #sideBtn{right:30px}   /* slid in, the map's top-right is the window's: keep clear of the ✕ */
-  .tb{height:18px;padding:0 6px;border-radius:4px;background:rgba(14,17,22,0.7);color:#c9d1d9;
+  .tb{height:18px;padding:0 6px;border-radius:4px;background:rgba(14,17,22,0.7);color:var(--wp-text);
     border:1px solid rgba(110,118,129,0.45);font:inherit;font-size:10px;line-height:1;cursor:pointer}
-  .tb:hover{color:#fff;border-color:#58a6ff}
-  .tb.on{background:rgba(88,166,255,0.35);color:#fff;border-color:#58a6ff}
+  .tb:hover{color:#fff;border-color:var(--wp-blue)}
+  .tb.on{background:rgba(88,166,255,0.35);color:#fff;border-color:var(--wp-blue)}
   /* Levels: how far above and below you (in z) the walls, spawn dots and routes stay bright. */
-  .lv{height:18px;padding:0 6px;border-radius:4px;background:rgba(14,17,22,0.7);color:#c9d1d9;display:flex;align-items:center;gap:4px;
+  .lv{height:18px;padding:0 6px;border-radius:4px;background:rgba(14,17,22,0.7);color:var(--wp-text);display:flex;align-items:center;gap:4px;
     border:1px solid rgba(110,118,129,0.45);font-size:10px;line-height:1;box-sizing:border-box}
   .lv input{width:64px;height:10px;margin:0;cursor:pointer}
   .lv span{min-width:64px}
@@ -99,21 +100,21 @@
   #menu{display:none}
   #menu button{display:block;width:100%;text-align:left;margin-top:3px;padding:3px 6px;border-radius:4px;
     background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.18);color:#e6edf3;font:inherit;font-size:11px;cursor:pointer}
-  #menu button:hover{border-color:#58a6ff;background:rgba(88,166,255,0.2)}
+  #menu button:hover{border-color:var(--wp-blue);background:rgba(88,166,255,0.2)}
   #menu .x{color:#8b949e;margin-top:4px}
   /* The list is text read over EverQuest's nameplates: its background never goes below 0.94, whatever the opacity slider says
      for the map pane (the guild lead, 2026-10-16: nameplates showed through the respawn list). The colour is still --map-bg. */
   #side{flex:0 0 210px;display:flex;flex-direction:column;min-height:0;background:rgb(var(--map-bg, 19 26 38) / max(0.94, var(--map-bg-a, var(--bg-alpha))));
     border-radius:6px;padding:6px 8px;text-shadow:0 1px 2px #000}
   #zone{font-size:12px;color:#79c0ff;padding-right:26px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  #posage{font-size:9px;color:#6e7681;min-height:11px;white-space:nowrap}
-  #wallsrc{font-size:9px;color:#6e7681;min-height:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #posage{font-size:9px;color:var(--wp-dim);min-height:11px;white-space:nowrap}
+  #wallsrc{font-size:9px;color:var(--wp-dim);min-height:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   /* The saved raid route's legend, which is also its switch. A button because a click-through window needs the hover handshake
      on anything clickable (the preload arms it for buttons). Dimmed and struck through while the line is hidden. */
   #routenote{display:block;max-width:100%;margin:0;padding:0;border:0;background:none;font:inherit;font-size:9px;line-height:11px;text-align:left;
     color:#e8b923;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;text-shadow:inherit}
   #routenote[hidden]{display:none}
-  #routenote.off{color:#6e7681;text-decoration:line-through}
+  #routenote.off{color:var(--wp-dim);text-decoration:line-through}
   #setupbar select{font:inherit;font-size:10px;max-width:90px}
   #tgt{font-size:10px;color:#f0883e;min-height:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   /* The header lines (zone, position age, walls, target) and the foot never shrink: they are overflow:hidden flex items, so in a
@@ -121,15 +122,15 @@
      the top of this timer window"). Only the list gives way, from a zero basis, and scrolls inside its own box under them. */
   #side > :not(#lists){flex:0 0 auto}
   #lists{flex:1 1 0;overflow:auto;min-height:0;margin-top:3px}
-  .sec{font-size:9px;color:#6e7681;text-transform:uppercase;letter-spacing:.5px;margin:5px 0 2px}
+  .sec{font-size:9px;color:var(--wp-dim);text-transform:uppercase;letter-spacing:.5px;margin:5px 0 2px}
   .trow{display:grid;grid-template-columns:1fr auto;column-gap:6px;padding:2px 4px;margin-bottom:2px;
-    border-left:3px solid #6e7681;background:rgba(255,255,255,0.05);border-radius:3px;cursor:pointer;font-size:10px}
+    border-left:3px solid var(--wp-dim);background:rgba(255,255,255,0.05);border-radius:3px;cursor:pointer;font-size:10px}
   .trow .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e6edf3}
   /* the time sits in its own right-aligned column, 2px bigger than the name; the source line is small and dim under the name */
   .trow .tm{grid-column:2;grid-row:1 / span 2;align-self:center;font-size:12px;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
   .trow .src{grid-column:1;color:#586069;font-size:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* "☠ killed" on an alive row: its own third column, so rows without one keep their two */
-  .trow .kill{grid-column:3;grid-row:1 / span 2;align-self:center;background:rgba(22,27,34,.9);color:#c9d1d9;border:1px solid rgba(110,118,129,0.5);
+  .trow .kill{grid-column:3;grid-row:1 / span 2;align-self:center;background:rgba(var(--wp-panel-rgb),.9);color:var(--wp-text);border:1px solid rgba(110,118,129,0.5);
     border-radius:4px;font:inherit;font-size:9px;padding:0 5px;cursor:pointer;white-space:nowrap}
   .trow .kill:hover{color:#ffd866;border-color:#f0b429}
   .sec.watch{color:#f0b429}
@@ -137,26 +138,26 @@
   /* Respawns (FB-100): the top line is itself a control (left click pulses the spots that are down, right click zooms to them),
      with a ▸ button that lists the actual spots under it. */
   .sec.resp{cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:6px}
-  .sec.resp:hover{color:#c9d1d9}
-  .sec.resp .more{background:rgba(22,27,34,.9);color:#8b949e;border:1px solid rgba(110,118,129,0.5);border-radius:4px;font:inherit;
+  .sec.resp:hover{color:var(--wp-text)}
+  .sec.resp .more{background:rgba(var(--wp-panel-rgb),.9);color:#8b949e;border:1px solid rgba(110,118,129,0.5);border-radius:4px;font:inherit;
     font-size:9px;padding:0 5px;cursor:pointer;text-transform:none;letter-spacing:0}
-  .sec.resp .more:hover{color:#e6edf3;border-color:#58a6ff}
+  .sec.resp .more:hover{color:#e6edf3;border-color:var(--wp-blue)}
   .trow.sub{margin-left:10px;border-left-width:2px;padding-top:1px;padding-bottom:1px}
   .kite{font-size:11px;color:#8b949e;padding:0 2px 4px}
   .trow.engaged{border-left-color:#f0883e;cursor:default} .trow.engaged .tm{color:#f0883e}
   .trow.watch .nm{font-weight:bold}
   .trow.corpse{border-left-color:#8b949e} .trow.corpse .tm{color:#8b949e}
   .trow.corpse.drag{border-left-color:#f0b429} .trow.corpse.drag .tm{color:#f0b429}
-  .trow.wait{border-left-color:#f85149} .trow.wait .tm{color:#f85149}
+  .trow.wait{border-left-color:var(--wp-red)} .trow.wait .tm{color:var(--wp-red)}
   .trow.window{border-left-color:#f0b429} .trow.window .tm{color:#f0b429}
   .trow.flash{border-left-color:#f0b429;background:rgba(240,180,41,0.22)} .trow.flash .tm{color:#ffd866;font-weight:bold}
-  .trow.up{border-left-color:#56d364} .trow.up .tm{color:#56d364;font-weight:bold}
+  .trow.up{border-left-color:var(--wp-green)} .trow.up .tm{color:var(--wp-green);font-weight:bold}
   .trow.q{border-left-color:#d2a8ff} .trow.q .tm{color:#d2a8ff}
-  .trow.seen{border-left-color:#56d364;background:rgba(86,211,100,0.12)} .trow.seen .tm{color:#56d364}
+  .trow.seen{border-left-color:var(--wp-green);background:rgba(86,211,100,0.12)} .trow.seen .tm{color:var(--wp-green)}
   .trow .tm .hp{font-size:10px;font-weight:bold;margin-right:5px}
-  .trow .tm .hp.hi{color:#56d364} .trow .tm .hp.mid{color:#f0b429} .trow .tm .hp.lo{color:#f87171}
+  .trow .tm .hp.hi{color:var(--wp-green)} .trow .tm .hp.mid{color:#f0b429} .trow .tm .hp.lo{color:#f87171}
   #empty{color:rgba(255,255,255,0.45);font-size:10px;padding:2px 4px}
-  #foot{font-size:9px;color:#6e7681;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #foot{font-size:9px;color:var(--wp-dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   /* drag/lock/setup - same pattern as the other overlays. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -180,7 +181,7 @@
     display:flex;align-items:center;justify-content:center;border-radius:4px;
     background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
-  #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
+  #move-btn:hover{opacity:1;color:var(--wp-blue);border-color:var(--wp-blue)}
   body.setup #move-btn{top:30px}
   body.setup #tools,body.setup #sideBtn{top:32px}
   /* A narrow window (XS is 200 wide) keeps the map and drops the timer list. */
@@ -198,7 +199,7 @@
      client area by main and is click-through always, like the Timers canvas, so only the buttons take the mouse. There is
      no ✥ (nothing to move), no timers column (the pop-out still works), and a small control pair at the top-right to go
      back to Window and open the settings. */
-  body.full #move-btn, body.full #drag-controls, body.full #sideBtn, body.full #side{display:none !important}
+  body.full #move-btn, body.full #drag-controls, body.full #sideBtn, body.full #side, body.full .wp-name-chip{display:none !important}
   body.full.unlocked{outline:none}
   #fullCtl{display:none;position:fixed;top:6px;right:30px;z-index:66;gap:4px}
   body.full #fullCtl{display:flex}
@@ -208,11 +209,11 @@
   #clearEdit{position:absolute;inset:0;z-index:7;cursor:crosshair;background:rgba(88,166,255,0.05)}
   #clearEdit[hidden]{display:none}
   #clearBar{position:absolute;top:34px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:6px;padding:3px 8px;
-    border-radius:5px;background:rgba(14,17,22,0.96);border:1px solid rgba(88,166,255,0.7);font-size:10px;color:#c9d1d9;cursor:default;white-space:nowrap}
-  #clearBar button{background:rgba(22,27,34,.9);color:#c9d1d9;border:1px solid rgba(110,118,129,0.5);border-radius:4px;font:inherit;font-size:10px;padding:1px 6px;cursor:pointer}
-  #clearBar button:hover{border-color:#58a6ff;color:#fff}
+    border-radius:5px;background:rgba(14,17,22,0.96);border:1px solid rgba(88,166,255,0.7);font-size:10px;color:var(--wp-text);cursor:default;white-space:nowrap}
+  #clearBar button{background:rgba(var(--wp-panel-rgb),.9);color:var(--wp-text);border:1px solid rgba(110,118,129,0.5);border-radius:4px;font:inherit;font-size:10px;padding:1px 6px;cursor:pointer}
+  #clearBar button:hover{border-color:var(--wp-blue);color:#fff}
   .cbox{position:absolute;box-sizing:border-box;pointer-events:none}
-  .cbox.user{border:1.5px dashed #58a6ff;background:rgba(88,166,255,0.12)}
+  .cbox.user{border:1.5px dashed var(--wp-blue);background:rgba(88,166,255,0.12)}
   .cbox.ui{border:1px dotted rgba(240,180,41,0.75);background:rgba(240,180,41,0.06)}
   .cbox.band{border:1.5px dashed #f0b429;background:rgba(240,180,41,0.1)}
   .cbox .cx{position:absolute;top:-1px;right:-1px;width:16px;height:16px;padding:0;line-height:14px;font-size:10px;border-radius:3px;pointer-events:auto;cursor:pointer;
@@ -222,12 +223,13 @@
   /* ⚙ → Keep clear: every game window found in the UI file, tick = keep it clear, hover = outline it on the map. */
   #clearList{max-height:176px;overflow-y:auto;margin:3px 0;padding:2px 4px;border:1px solid rgba(110,118,129,0.3);border-radius:4px}
   #clearList .crow:hover{background:rgba(88,166,255,0.14)}
-  #clearList .crow .sub{color:#6e7681}
+  #clearList .crow .sub{color:var(--wp-dim)}
   #clearList .crow.off .bl{color:#8b949e}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner - same on every overlay)">✥</button>
   <button id="hide-btn" title="Hide the Map (turn back on from the tray → Overlays)">✕</button>
+  <div class="wp-name-chip wp-name-bl" data-wp-name title="Press to fold this window to its title; right-click for the overlay picker">🗺 Map</div>
   <div id="fullCtl">
     <button class="tb" id="fullWinBtn" type="button" title="Back to Window mode: the Map returns to the size and spot it had.">▢ Window</button>
     <button class="tb" id="fullCfgBtn" type="button" title="Map settings">⚙</button>
@@ -324,7 +326,7 @@
         <div class="foot"><span>Saved on this computer.</span><button id="cfgReset" type="button">Reset to default</button></div>
       </div>
     <div id="side">
-      <div id="zone">Map <span style="color:#6e7681">[beta]</span></div>
+      <div id="zone">Map <span style="color:var(--wp-dim)">[beta]</span></div>
       <div id="posage" title="Age of the newest position when drawn, and where it came from."></div>
       <div id="wallsrc" title="Where the walls on the map come from."></div>
       <button id="routenote" type="button" hidden></button>
@@ -571,11 +573,12 @@
     return h + 'h' + String(m % 60).padStart(2, '0') + 'm';
   }
   // The right-hand list's words: "up in 3m-5m" while red, "up now-2m" inside the window, "UP" once it must be.
+  // 🐢 = a slow-mode kill: 18 hours from death (FB-114; the agent's _mapMakeTimer sets t.slow).
   function timerText(t, now) {
-    var st = timerState(t, now);
-    if (st === 'up') return 'UP';
-    if (st === 'wait') return 'up in ' + fmtDur(t.earliest - now) + '–' + fmtDur(t.latest - now);
-    return 'up now–' + fmtDur(t.latest - now);
+    var st = timerState(t, now), turtle = t.slow ? '🐢 ' : '';
+    if (st === 'up') return turtle + 'UP';
+    if (st === 'wait') return turtle + 'up in ' + fmtDur(t.earliest - now) + (t.latest > t.earliest ? '–' + fmtDur(t.latest - now) : '');
+    return turtle + 'up now–' + fmtDur(t.latest - now);
   }
   // "Up · seen": a pinned mob was seen alive on a point. Hover words: "seen alive 2m ago · spawn #812 · by Corvale".
   function seenText(s, now) {
@@ -701,9 +704,24 @@
     if (/enrage/.test(k)) return '💢';
     if (/flurry/.test(k)) return '≋';
     if (/reverse_slow/.test(k)) return '⇅';
+    if (k === 'splits') return '⑂';   // splits when it dies (the guild lead, 2026-11-01); the card says into what
     // Everything else (dual_wield, triple_attack, magical…) is spelled out in the hover card instead:
     // a first-letter glyph per ability turns every dot into alphabet soup.
     return '';
+  }
+  // What a mob turns into when it dies (the bot's `splits`, read from the server's death scripts): "⑂ splits into 3×
+  // A Phoenix Gustlet", "⑂ at 50% HP splits into …"; a placeholder that brings up its named reads "on death brings up X".
+  function splitText(s) {
+    if (!s || !Array.isArray(s.into) || !s.into.length) return '';
+    function n(e) {
+      var c = e.max == null ? (e.min > 1 ? e.min + '+' : '') : e.min === e.max ? String(e.min) : (e.min ? e.min + '–' : 'up to ') + e.max;
+      return (c && c !== '1' ? c + '× ' : '') + e.name;
+    }
+    var split = s.into.filter(function (e) { return !e.unique; }), named = s.into.filter(function (e) { return e.unique; });
+    var out = [];
+    if (split.length) out.push('⑂ ' + (s.at ? 'at ' + s.at + ' ' : '') + 'splits into ' + split.map(n).join(', '));
+    if (named.length) out.push('on death may bring up ' + named.map(function (e) { return e.name; }).join(', '));
+    return out.join(' · ');
   }
   function badgeWords(bs) {
     return (bs || []).filter(function (b) { return !badgeGlyph(b) && !/raid/.test(b); })
@@ -1251,6 +1269,25 @@
     if (!t || t.x == null || !pin || (twins && twins.length > 1)) return null;
     var dz = t.z != null && pin.z != null && isFinite(t.z) && isFinite(pin.z) ? t.z - pin.z : 0;
     return Math.round(Math.sqrt((t.x - pin.x) * (t.x - pin.x) + (t.y - pin.y) * (t.y - pin.y) + dz * dz));
+  }
+  // How far your target stands from you, the way a spell measures it: in 3D (a member, 2026-10-28, FB-108: "Map distance is
+  // only x/y not z, so when casting on something it should be full distance and if it's too high or too low"). Positions are
+  // {x, y, z} in game units (the agent's _mapPos turns Zeal's loc into this order; z is 0 when the pipe sent none, so an
+  // exact 0 reads as "no height" and the range stays flat rather than inventing a drop to the floor of the world).
+  // `flat` is the old map-plane number; only the NUMBER SHOWN changes, no circle or line on the map is drawn from this.
+  var RANGE_DZ_SHOW = 10;   // a height gap this big is said aloud; under it the 3D number already tells (you are ~6 tall)
+  function zKnown(z) { return z != null && isFinite(Number(z)) && Number(z) !== 0; }
+  function targetRange(a, b) {
+    if (!a || !b || a.x == null || b.x == null) return null;
+    var dx = b.x - a.x, dy = b.y - a.y, known = zKnown(a.z) && zKnown(b.z), dz = known ? Number(b.z) - Number(a.z) : 0;
+    return { flat: Math.round(Math.hypot(dx, dy)), d: Math.round(Math.sqrt(dx * dx + dy * dy + dz * dz)), dz: known ? Math.round(dz) : null };
+  }
+  // "42" on the level, "42 (↑18)" with the target 18 above you, "42 (↓18)" below.
+  function rangeText(r) {
+    if (!r) return '';
+    var t = String(r.d);
+    if (r.dz != null && Math.abs(r.dz) >= RANGE_DZ_SHOW) t += ' (' + (r.dz > 0 ? '↑' : '↓') + Math.abs(r.dz) + ')';
+    return t;
   }
   // Past this many units from its spawn point a mob that has Gate in its spell list can gate home once it is at 15% HP
   // or less, outside classic-era zones and unless it roams a box (Quarm's server source; a 50% roll each AI check).
@@ -3035,7 +3072,7 @@
           var sd = drawn('self', P.self, rt), sq = wpt(sd.x, sd.y);
           ctx.beginPath(); ctx.setLineDash([2, 4]); ctx.moveTo(sq[0], sq[1]); ctx.lineTo(tq[0], tq[1]);
           ctx.lineWidth = 1.5; ctx.strokeStyle = CO.target; ctx.stroke(); ctx.setLineDash([]);
-          if (P.target.dist != null && SH.distance) halo(String(Math.round(Math.hypot(td.x - sd.x, td.y - sd.y))), (sq[0] + tq[0]) / 2, (sq[1] + tq[1]) / 2 - 7, labelFont('dist'), CO.target, 'center');   // from the drawn spots, so it keeps up with the dots
+          if (P.target.dist != null && SH.distance) halo(rangeText(targetRange(sd, td)), (sq[0] + tq[0]) / 2, (sq[1] + tq[1]) / 2 - 7, labelFont('dist'), CO.target, 'center');   // from the drawn spots, so it keeps up with the dots
         }
         // The path we have watched it walk, and where it is heading (the guild lead, 2026-10-13: "Can we show the path
         // that we observed a mob walking towards?"): its positions since you targeted it, fading with age, and an
@@ -3412,6 +3449,8 @@
       card.appendChild(row);
       var words = badgeWords(n.badges);
       if (words) card.appendChild(el('div', 's', words));
+      var sp = splitText(n.splits);
+      if (sp) card.appendChild(el('div', 's', sp));
     });
     if ((p.npcs || []).length > 8) card.appendChild(el('div', 's', '+' + ((p.npcs || []).length - 8) + ' more'));
     var t = S.timerBy[pid], sn = S.seenBy[pid];
@@ -3485,7 +3524,7 @@
     zEl.textContent = ((P && (P.long_name || P.zone)) ? (P.long_name || P.zone) : 'Map') + (cp ? ' · ' + cp.text : '');
     zEl.title = cp ? cp.title : '';
     var tg = document.getElementById('tgt');
-    if (P && P.target) tg.textContent = '◎ ' + P.target.name + (P.target.dist != null ? ' · ' + P.target.dist : (P.target.x == null ? ' · no position' : '')) + (P.target.point_id != null ? ' → pinned' : '') + (P.target.tot ? ' · on ' + P.target.tot.name : '');
+    if (P && P.target) tg.textContent = '◎ ' + P.target.name + (P.target.dist != null ? ' · ' + (rangeText(targetRange(P.self, P.target)) || P.target.dist) : (P.target.x == null ? ' · no position' : '')) + (P.target.point_id != null ? ' → pinned' : '') + (P.target.tot ? ' · on ' + P.target.tot.name : '');
     else tg.textContent = '';
     var box = document.getElementById('lists');
     box.innerHTML = '';

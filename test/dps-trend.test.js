@@ -134,10 +134,10 @@ describe('Trend: the sparkline', () => {
   const two = [{ v: 100, label: 'Alpha' }, { v: 200, label: 'Beta <b>' }];
   const svg = T._trendSvg(two, 100, 50, 'dps');
   it('a 2px line over an area at 0.16, in the meter\'s purple, with zero as the floor', () => {
-    expect(T.TREND_COL).toBe('#a371f7');
+    expect(T.TREND_COL).toBe('var(--wp-purple)');
     expect(svg).toContain('viewBox="0 0 100 50"');
-    expect(svg).toContain('<polyline points="6.0,26.0 94.0,5.0" fill="none" stroke="#a371f7" stroke-width="2"');
-    expect(svg).toContain('<path d="M6.0,50 L6.0,26.0 L94.0,5.0 L94.0,50 Z" fill="#a371f7" fill-opacity="0.16"');
+    expect(svg).toContain('<polyline points="6.0,26.0 94.0,5.0" fill="none" stroke="var(--wp-purple)" stroke-width="2"');
+    expect(svg).toContain('<path d="M6.0,50 L6.0,26.0 L94.0,5.0 L94.0,50 Z" fill="var(--wp-purple)" fill-opacity="0.16"');
   });
   it('every point is a dot with its own tooltip; the last is the big one', () => {
     expect(svg).toContain('<title>Alpha · 100 dps</title>');
@@ -156,7 +156,7 @@ describe('Trend: the sparkline', () => {
     expect(T._trendSvg([], 100, 50, 'dps')).toBe('');
   });
   it('never a warning red, never a NaN', () => {
-    expect(svg).not.toMatch(/f85149/i);
+    expect(svg).not.toMatch(/f85149|--wp-red/i);
     expect(svg).not.toContain('NaN');
     expect(T._trendSvg([{ v: 0, label: 'z' }, { v: 0, label: 'y' }], 100, 50, 'dps')).not.toContain('NaN');
   });
@@ -410,10 +410,10 @@ describe('Trend: the markup and the rules', () => {
     expect(trendCss).toContain('body.trendmode:not(.wp-mini) .histwrap{display:none}');
   });
   it('purple for the line, the bars and the number; never a warning red', () => {
-    expect(trendCss).not.toMatch(/f85149/i);
-    expect(trendJs).not.toMatch(/f85149/i);
+    expect(trendCss).not.toMatch(/f85149|--wp-red/i);
+    expect(trendJs).not.toMatch(/f85149|--wp-red/i);
     expect(trendCss).toContain('.trow .tb i{display:block;height:100%;background:rgba(163,113,247,0.6)');
-    expect(trendCss).toContain('.trow.new .tb i{background:#a371f7}');
+    expect(trendCss).toContain('.trow.new .tb i{background:var(--wp-purple)}');
   });
   it('the sparkline scales with its window; nothing in it is a fixed pixel width', () => {
     expect(trendCss).toContain('.tsvg{display:block;width:100%;height:auto');

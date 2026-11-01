@@ -197,6 +197,7 @@ function canvasWorld() {
   const body = `
     var M = { overlayHoverInteractive: function (w) { calls.push(w); }, onCanvasCursor: function (cb) { st.cursorCb = cb; } };
     var _edit = false;
+    function hoverMins() {}   // ▭ Minimize follows the same cursor reports; not under test here
     var document = { addEventListener: function (t, f) { (docL[t] = docL[t] || []).push(f); },
       elementFromPoint: function (x, y) { return st.under(x, y); } };
     var panelsEl = { contains: function () { return true; },

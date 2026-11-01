@@ -96,6 +96,7 @@ describe('arranging never turns the Canvas on by itself', () => {
       const appendAgentLog = (l) => logs.push(l);
       const createCanvasWindow = () => { windows++; canvasWindow = {}; };
       const applyCanvasVisibility = () => {}, applyTriggerVisibility = () => {}, buildTrayMenu = () => {}, pushStatus = () => {};
+      const _noteCanvasChoice = () => false;   // the active character's saved layout follows the choice (canvas-per-character.test.js)
       const dialog = { showMessageBox: async (o) => { asked.push(o); return { response: ${answer} }; } };
       ${sliceBlock(main, 'function _setCanvasArrange(on, consented) {', '\n}\n')}
       ${sliceBlock(main, 'async function _arrangeCanvasAsked(on) {', '\n}\n')}

@@ -19,7 +19,7 @@ const dash = readSource(path.join(ROOT, 'packages', 'wolfpack-logsync', 'dashboa
 
 const ROWS   = sliceBlock(dash, 'var WP_OVERLAY_ROWS = [', '\n];\n');
 const BLURB  = sliceBlock(dash, 'var WP_OVERLAY_BLURB = {', '\n};\n');
-const MINI   = sliceBlock(dash, 'var WP_MINI_KEY_OF = {', '};\n');
+const MINI   = sliceBlock(dash, 'var WP_MINI_KEY_OF = {', '};\n') + sliceBlock(dash, 'var WP_FOLD_KEY_OF = {', '};\n');
 const ESC    = sliceBlock(dash, 'function esc(s) {', ' }\n');
 const KEEP   = 'var _wpOpenDetails = {};\n' + sliceBlock(dash, 'function wpKeep(key, defaultOpen) {', '\n}\n');
 const RENDER = sliceBlock(dash, 'function renderOverlays(s) {', '\n}\n');

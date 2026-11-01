@@ -36,8 +36,8 @@ const KAAVIN = [
 ];
 
 // What the tab rendered before this change, character for character.
-const OLD_NONE = '<div class="sn" style="font-size:10px;color:#6e7681;padding:2px 0">No faction change recorded for this mob.</div>';
-const OLD_ROWS = '<div class="facwrap"><div class="sn" style="font-size:9px;color:#6e7681;margin-bottom:2px">on kill</div>'
+const OLD_NONE = '<div class="sn" style="font-size:10px;color:var(--wp-dim);padding:2px 0">No faction change recorded for this mob.</div>';
+const OLD_ROWS = '<div class="facwrap"><div class="sn" style="font-size:9px;color:var(--wp-dim);margin-bottom:2px">on kill</div>'
   + '<div class="fac"><span class="fn">Dain Frostreaver IV</span><span class="fv dn">-50</span></div>'
   + '<div class="fac"><span class="fn">Coldain</span><span class="fv dn">-50</span></div>'
   + '<div class="fac"><span class="fn">King Tormax</span><span class="fv up">+25</span></div>'
@@ -75,7 +75,7 @@ describe('a mob on a faction with nothing on kill (the enforcer)', () => {
 
   it('has no Helps line when the faction helps nobody, and no red', () => {
     expect(h).not.toContain('Helps:');
-    expect(h).not.toContain('#f85149');
+    expect(h).not.toContain('var(--wp-red)');
     expect(h).not.toContain('fv dn');
   });
 });
@@ -97,7 +97,7 @@ describe('an older bot (none of the new fields)', () => {
   });
 
   it('still claims nothing while the lookup is in flight', () => {
-    expect(renderFactions(null)).toBe('<div class="sn" style="font-size:10px;color:#6e7681;padding:2px 0"></div>');
+    expect(renderFactions(null)).toBe('<div class="sn" style="font-size:10px;color:var(--wp-dim);padding:2px 0"></div>');
   });
 });
 

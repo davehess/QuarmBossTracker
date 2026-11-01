@@ -1,11 +1,12 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Mimic Settings</title>
+<link rel="stylesheet" href="theme.css">
 <style>
   /* Bottom padding reserves the strip the floating Save sits in, so the last
      control on the page can never end up underneath it. */
-  body{margin:0;background:#0e1116;color:#c9d1d9;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;padding:20px 20px 76px}
+  body{margin:0;background:#0e1116;color:var(--wp-text);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;padding:20px 20px 76px}
   h1{color:#f6c365;font-size:16px;font-weight:normal;margin:0 0 4px}
-  h2{color:#58a6ff;font-size:12px;font-weight:normal;text-transform:uppercase;letter-spacing:0.08em;margin:22px 0 8px;border-bottom:1px solid #2a3140;padding-bottom:4px}
+  h2{color:var(--wp-blue);font-size:12px;font-weight:normal;text-transform:uppercase;letter-spacing:0.08em;margin:22px 0 8px;border-bottom:1px solid #2a3140;padding-bottom:4px}
   /* Maximized, the sections flow into as many ~520px columns as fit (a member,
      2026-09-23). The page is a flat run of <h2> + controls, so a small script at
      the end of <body> wraps each heading and its controls in a .sec; a section
@@ -19,14 +20,40 @@
   }
   .sub{color:#8b949e;font-size:11px;margin-bottom:8px}
   label{display:block;color:#8b949e;font-size:11px;margin:12px 0 4px}
-  input[type=text]{width:100%;box-sizing:border-box;background:#161b22;border:1px solid #2a3140;border-radius:4px;
-    color:#c9d1d9;padding:7px 9px;font-family:inherit;font-size:12px}
+  input[type=text]{width:100%;box-sizing:border-box;background:var(--wp-panel);border:1px solid #2a3140;border-radius:4px;
+    color:var(--wp-text);padding:7px 9px;font-family:inherit;font-size:12px}
   .hint{color:#6b7280;font-size:10px;margin-top:3px;line-height:1.4}
   .row{display:flex;align-items:center;gap:8px;margin:8px 0}
-  .row input[type=checkbox]{accent-color:#1f6feb}
-  .row label{margin:0;color:#c9d1d9;font-size:12px}
-  button{margin-top:14px;background:#1f6feb;border:none;color:#fff;padding:8px 16px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:12px}
+  .row input[type=checkbox]{accent-color:var(--wp-accent)}
+  .row label{margin:0;color:var(--wp-text);font-size:12px}
+  button{margin-top:14px;background:var(--wp-accent);border:none;color:#fff;padding:8px 16px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:12px}
   button:disabled{opacity:0.6;cursor:wait}
+  /* UI Studio compare-first restore, Keep in sync, This PC (the guild lead, 2026-11-01). */
+  .uicmp{border:1px solid var(--wp-border);border-radius:6px;background:var(--wp-bg);padding:10px 12px;font-size:12px}
+  .uicmp .src{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;color:var(--wp-text)}
+  .uicmp .src span.m{color:var(--wp-dim)}
+  .uicmp .thumbs{display:flex;gap:12px;margin:10px 0 4px;flex-wrap:wrap}
+  .uicmp .scr{position:relative;width:150px;height:84px;border:1px solid var(--wp-border);border-radius:3px;background:color-mix(in srgb, black 30%, var(--wp-bg));overflow:hidden}
+  .uicmp .scr i{position:absolute;background:color-mix(in srgb, var(--wp-blue) 20%, var(--wp-bg));border:1px solid color-mix(in srgb, var(--wp-blue) 40%, var(--wp-bg));border-radius:2px;box-sizing:border-box}
+  .uicmp .cap{font-size:10px;color:var(--wp-dim);text-align:center;margin-top:3px}
+  .uicmp table{width:100%;border-collapse:collapse;margin-top:8px}
+  .uicmp th{text-align:left;color:var(--wp-dim);font-weight:normal;font-size:10px;padding:3px 4px;border-bottom:1px solid var(--wp-border)}
+  .uicmp td{padding:6px 4px;border-bottom:1px solid var(--wp-border);vertical-align:top;font-size:11px}
+  .uicmp td.d{color:var(--wp-dim)}
+  .uicmp td.d.chg{color:var(--wp-gold)}
+  .uicmp .seg{display:inline-flex;border:1px solid var(--wp-border);border-radius:4px;overflow:hidden}
+  .uicmp .seg button{margin:0;border:none;border-radius:0;background:transparent;color:var(--wp-dim);padding:3px 8px;font-size:10px;white-space:nowrap}
+  .uicmp .seg button.on{background:var(--wp-accent);color:white}
+  .uicmp .never{margin-top:10px;font-size:11px;color:var(--wp-dim);background:color-mix(in srgb, var(--wp-gold) 6%, var(--wp-bg));border:1px solid color-mix(in srgb, var(--wp-gold) 25%, var(--wp-bg));border-radius:5px;padding:6px 8px}
+  .uicmp .acts{display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:10px}
+  .uicmp .acts button{margin:0}
+  .uicmp .acts .sec{background:transparent;border:1px solid var(--wp-border);color:var(--wp-text)}
+  .uichips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 2px}
+  .uichips label{display:inline-flex;align-items:center;gap:4px;margin:0;font-size:11px;color:var(--wp-text);border:1px solid var(--wp-border);border-radius:12px;padding:2px 8px;cursor:pointer}
+  .uikv{display:grid;grid-template-columns:140px 1fr;gap:6px 10px;font-size:12px;align-items:center}
+  .uikv .k{color:var(--wp-dim)}
+  .uisugg{margin-top:8px;border:1px solid color-mix(in srgb, var(--wp-green) 30%, var(--wp-bg));background:color-mix(in srgb, var(--wp-green) 6%, var(--wp-bg));border-radius:5px;padding:7px 9px;font-size:12px;display:flex;gap:10px;align-items:center;justify-content:space-between}
+  .uisugg button{margin:0;padding:4px 10px;font-size:11px}
   button.success{background:#1a7f37}
   button.error{background:#a3260a}
   .lock{color:#f6c365}
@@ -40,8 +67,8 @@
     z-index:1000;border-bottom:1px solid transparent;
   }
   .toast.show{transform:translateY(0)}
-  .toast.pending{background:#1f6feb;color:#fff;border-color:#3a8bff}
-  .toast.success{background:#1a7f37;color:#fff;border-color:#56d364}
+  .toast.pending{background:var(--wp-accent);color:#fff;border-color:#3a8bff}
+  .toast.success{background:#1a7f37;color:#fff;border-color:var(--wp-green)}
   .toast.error  {background:#a3260a;color:#fff;border-color:#f87171}
   /* Save floats bottom-right and only appears once something has actually
      changed (the guild lead, 2026-09-18). This page is a long scroll — nine
@@ -60,8 +87,8 @@
   #save.show{opacity:1;transform:translateY(0);pointer-events:auto}
   /* Drafts + the before-closing reminder (2026-09-26). Pinned above the floating Save. */
   #draftBar{position:fixed;left:14px;right:14px;bottom:64px;z-index:90;display:none;align-items:center;
-    gap:8px;flex-wrap:wrap;padding:8px 10px;border-radius:6px;background:#161b22;border:1px solid #d29922;
-    color:#c9d1d9;font-size:12px;box-shadow:0 6px 18px rgba(0,0,0,0.55)}
+    gap:8px;flex-wrap:wrap;padding:8px 10px;border-radius:6px;background:var(--wp-panel);border:1px solid var(--wp-gold);
+    color:var(--wp-text);font-size:12px;box-shadow:0 6px 18px rgba(0,0,0,0.55)}
   #draftBar.show{display:flex}
   #draftBar .msg{flex:1 1 220px}
   #draftBar button{font-size:12px}
@@ -73,7 +100,7 @@
   <div class="sub">Stored locally in your user profile. Mimic brings its own Node runtime — nothing else to install.</div>
   <div style="margin:8px 0 2px">
     <button id="resetDashBtn" type="button"
-      style="background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:12px"
+      style="background:#21262d;color:var(--wp-text);border:1px solid var(--wp-border);border-radius:6px;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:12px"
       title="Zero out the dashboard session counters and Recent Parses. Lifetime totals and opt-in backfill progress are preserved.">⟲ Reset dashboard</button>
     <span id="resetDashMsg" style="margin-left:8px;font-size:11px;color:#8b949e"></span>
   </div>
@@ -90,20 +117,29 @@
 
   <h2>Wolf Pack account <span style="background:#5a1d1d;color:#ff9b9b;border:1px solid #a04040;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">REQUIRED</span></h2>
   <div class="sub">Sign in with Discord to link this Mimic install to your account. Persists across upgrades. <b>Required</b> for charm/melody/pet trackers, suggested triggers, cross-machine sync, and officer tools. <span style="color:#9aa4ad">(If you're running Mimic purely offline — no Discord, no Wolf Pack uploads — you can skip sign-in, but most overlay features will stay hidden.)</span></div>
+  <div id="hubBox" style="margin-top:10px">
+    <label for="hubSel" style="margin-top:0">Guild</label>
+    <select id="hubSel" style="width:100%;box-sizing:border-box;background:var(--wp-panel);border:1px solid var(--wp-border);border-radius:4px;color:var(--wp-text);padding:7px 9px;font-family:inherit;font-size:12px"></select>
+    <div id="hubPasteRow" style="display:none;gap:8px;margin-top:6px">
+      <input id="hubAddr" type="text" placeholder="https://your-guild.example" aria-label="Guild address" style="flex:1" />
+      <button id="hubUseBtn" type="button" style="margin:0">Use this guild</button>
+    </div>
+    <div class="hint" id="hubNote">Which guild's server this Mimic signs in to. Switching signs this PC out of the old guild, and you link again.</div>
+  </div>
   <div id="acctSignedOut" style="margin-top:10px">
     <button id="acctSignInBtn" type="button" style="background:#5865f2;border:none;color:#fff;padding:8px 14px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:12px;display:inline-flex;align-items:center;gap:8px">
       <span style="font-size:14px">⛓</span> Sign in to Wolf Pack
     </button>
     <div class="hint" id="acctSignInHint">Opens your browser at wolfpack.quest. Sign in with the Discord account you use in the guild.</div>
   </div>
-  <div id="acctLinking" style="display:none;margin-top:10px;padding:10px 12px;background:#161b22;border:1px dashed #58a6ff;border-radius:6px">
-    <div style="font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px">Code to paste at <span id="acctLinkUrl" style="color:#58a6ff">wolfpack.quest/auth/mimic-link</span></div>
+  <div id="acctLinking" style="display:none;margin-top:10px;padding:10px 12px;background:var(--wp-panel);border:1px dashed var(--wp-blue);border-radius:6px">
+    <div style="font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px">Code to paste at <span id="acctLinkUrl" style="color:var(--wp-blue)">wolfpack.quest/auth/mimic-link</span></div>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <div id="acctLinkCode" style="font-family:ui-monospace,Consolas,monospace;font-size:26px;letter-spacing:0.3em;color:#f6c365;font-weight:bold;background:#0e1116;border:1px solid #2a3140;border-radius:4px;padding:6px 14px">------</div>
-      <button id="acctLinkCopyBtn" type="button" style="background:#21262d;border:1px solid #2a3140;color:#c9d1d9;padding:6px 10px;font-size:11px;margin:0">Copy</button>
+      <button id="acctLinkCopyBtn" type="button" style="background:#21262d;border:1px solid #2a3140;color:var(--wp-text);padding:6px 10px;font-size:11px;margin:0">Copy</button>
       <span id="acctLinkRemaining" style="font-size:11px;color:#8b949e"></span>
       <div id="acctLinkBrowserWarn" style="display:none;flex-basis:100%;font-size:11px;color:#f0b429;margin-top:6px"></div>
-      <button id="acctLinkOpenBtn" type="button" style="background:#12263a;border:1px solid #1f6feb;color:#58a6ff;padding:6px 10px;font-size:11px;margin:0">Open page</button>
+      <button id="acctLinkOpenBtn" type="button" style="background:#12263a;border:1px solid var(--wp-accent);color:var(--wp-blue);padding:6px 10px;font-size:11px;margin:0">Open page</button>
       <button id="acctLinkCancelBtn" type="button" style="background:#2a1212;border:1px solid #a3260a;color:#f87171;padding:6px 10px;font-size:11px;margin:0">Cancel</button>
     </div>
     <div class="hint">Waiting for the browser… your dashboard will update as soon as the link is confirmed.</div>
@@ -111,7 +147,7 @@
   <div id="acctSignedIn" style="display:none;margin-top:10px;padding:10px 12px;background:#0f2a1a;border:1px solid #1a7f37;border-radius:6px">
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <span style="font-size:14px">✓</span>
-      <span style="font-size:13px">Signed in as <b id="acctName" style="color:#56d364">—</b><span id="acctOfficerBadge" style="display:none;background:#7c4a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">OFFICER</span></span>
+      <span style="font-size:13px">Signed in as <b id="acctName" style="color:var(--wp-green)">—</b><span id="acctOfficerBadge" style="display:none;background:#7c4a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">OFFICER</span></span>
       <button id="acctSignOutBtn" type="button" style="background:#2a1212;border:1px solid #a3260a;color:#f87171;padding:6px 10px;font-size:11px;margin:0 0 0 auto">Sign out</button>
     </div>
     <div class="hint" id="acctLinkedAt"></div>
@@ -142,14 +178,18 @@
 
   <div style="margin-top:16px;padding-top:14px;border-top:1px solid #21262d">
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <button id="eqSetupBtn" type="button" style="background:#1f6feb;color:#fff;border:0;border-radius:5px;padding:6px 14px;cursor:pointer;font-weight:600">🔧 Set up EQ for me</button>
+      <button id="eqSetupBtn" type="button" style="background:var(--wp-accent);color:#fff;border:0;border-radius:5px;padding:6px 14px;cursor:pointer;font-weight:600">🔧 Set up EQ for me</button>
       <span id="eqSetupMsg" style="font-size:11px;color:#8b949e"></span>
     </div>
     <div class="sub" style="margin-top:8px">Writes <b>Log=TRUE</b> (<code>eqclient.ini</code>) + <b>ExportOnCamp</b> / <b>PipeDelay</b> / <b>PipeVerbose</b> (<code>zeal.ini</code>) across every folder above — the settings that make logging and raid/HP data flow. <b>Close EverQuest first</b> (it overwrites <code>eqclient.ini</code> on exit). Already in-game? Type <code>/log on</code> to start logging this session; the Zeal settings apply on next EQ launch.</div>
   </div>
 
-  <h2>UI Studio <span style="background:#7c4a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">BETA</span></h2>
+  <h2 id="uistudio">UI Studio <span style="background:#7c4a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">BETA</span></h2>
   <div class="sub">Back up your EQ window layout, hotkeys, chat tabs, bandolier, socials, and <code>eqclient.ini</code> to wolfpack.quest. Restore on any computer so you don't have to drag every window again. Files are encrypted before they leave this machine.</div>
+
+  <div id="uiSyncPrompts"></div>
+  <div id="uiSyncPanel" style="margin-top:10px"></div>
+  <div id="uiThisPc" style="margin-top:10px"></div>
 
   <div id="uiStudioPanel" style="margin-top:10px">
     <div class="hint" id="uiStudioStatus">Scanning for characters…</div>
@@ -160,6 +200,7 @@
   <div class="sub">Keep the CoastalRedwood <b>Zeal</b> mod current without dragging files around. Mimic downloads the latest release and drops <code>Zeal.asi</code> + <code>uifiles/</code> into your EverQuest folder — backing up whatever's there first. Close EverQuest before installing (the game holds the file while it's running).</div>
 
   <div class="row" style="margin-top:8px"><input type="radio" name="zealSource" value="official" id="zealSrcOfficial"><label for="zealSrcOfficial">Official Zeal — CoastalRedwood's latest release</label></div>
+  <div class="row"><input type="radio" name="zealSource" value="wolfpack" id="zealSrcWolfpack"><label for="zealSrcWolfpack">Wolf Pack — official Zeal plus the guild's tested fixes (beta)</label></div>
   <div class="row"><input type="radio" name="zealSource" value="test" id="zealSrcTest"><label for="zealSrcTest">Test build — our Zeal fork: the current Zeal plus the tag changes we're testing (shapes, pictures, corpses, tags that survive zoning). May be unstable</label></div>
   <div class="hint">Switching installs nothing by itself: Check then offers that build. To go back, pick Official and install.</div>
 
@@ -167,7 +208,7 @@
     <div class="hint" id="zealStatusLine">Checking your Zeal install…</div>
     <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <button id="zealCheckBtn" type="button" style="background:#21262d;border:1px solid #2a3140">🔄 Check for the latest Zeal</button>
-      <button id="zealInstallBtn" type="button" style="display:none;background:#1f6feb;color:#fff;border:0;border-radius:5px;padding:6px 14px;cursor:pointer;font-weight:600">⬇ Install</button>
+      <button id="zealInstallBtn" type="button" style="display:none;background:var(--wp-accent);color:#fff;border:0;border-radius:5px;padding:6px 14px;cursor:pointer;font-weight:600">⬇ Install</button>
       <span id="zealMsg" style="font-size:11px;color:#8b949e"></span>
     </div>
   </div>
@@ -200,7 +241,7 @@
   </div>
   <div style="display:flex;gap:8px;margin-top:6px">
     <input id="layoutNote" type="text" maxlength="140" placeholder="What it is for (optional)" style="flex:1" />
-    <select id="layoutMode" style="background:#161b22;border:1px solid #2a3140;border-radius:4px;color:#c9d1d9;padding:5px 8px;font-size:12px">
+    <select id="layoutMode" style="background:var(--wp-panel);border:1px solid #2a3140;border-radius:4px;color:var(--wp-text);padding:5px 8px;font-size:12px">
       <option value="">Mode (optional)</option><option value="raid">Raid</option><option value="group">Group</option><option value="pvp">PvP</option>
       <option value="charm">Charm</option><option value="leveling">Leveling</option><option value="solo">Solo</option><option value="other">Other</option>
     </select>
@@ -317,9 +358,9 @@
     <span id="voicePitchVal" style="min-width:44px;text-align:right;color:#8b949e">1.0</span>
   </div>
   <div class="row" style="gap:8px">
-    <button id="voiceHear" type="button" style="background:#1f6feb;color:#fff;border:0;border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">&#9654; Hear it</button>
-    <button id="voiceReset" type="button" style="background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">Back to the pack's own</button>
-    <button id="soundsFolder" type="button" style="background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">Open my sounds folder</button>
+    <button id="voiceHear" type="button" style="background:var(--wp-accent);color:#fff;border:0;border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">&#9654; Hear it</button>
+    <button id="voiceReset" type="button" style="background:#21262d;color:var(--wp-text);border:1px solid var(--wp-border);border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">Back to the pack's own</button>
+    <button id="soundsFolder" type="button" style="background:#21262d;color:var(--wp-text);border:1px solid var(--wp-border);border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">Open my sounds folder</button>
   </div>
   <div class="hint">A pack whose voices are not installed on this PC still sets the speed and pitch. Add your own trigger sounds (.wav, .mp3, .ogg) to the sounds folder; the dashboard's Voice tab lists them. How your characters' names are said is under <b>Voice &amp; names</b> there too.</div>
 
@@ -336,7 +377,7 @@
     EverQuest while you play — which is when the question actually comes up.
   </div>
   <button id="openResourcesBtn" type="button"
-    style="margin-top:4px;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">
+    style="margin-top:4px;background:#21262d;color:var(--wp-text);border:1px solid var(--wp-border);border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">
     📊 Open Resource use…
   </button>
 
@@ -356,7 +397,7 @@
     </div>
     <div id="parserDetail" class="hint" style="margin-bottom:8px;font-family:ui-monospace,Consolas,monospace">checking…</div>
     <button id="parserBtn" type="button"
-      style="margin-top:2px;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">
+      style="margin-top:2px;background:#21262d;color:var(--wp-text);border:1px solid var(--wp-border);border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">
       🧹 Retire the old Parser and let Mimic take over
     </button>
     <div id="parserResult" class="hint" style="margin-top:6px"></div>
@@ -375,7 +416,7 @@
   </div>
   <div id="defenderPaths" class="hint" style="margin-bottom:8px;font-family:ui-monospace,Consolas,monospace">checking…</div>
   <button id="defenderBtn" type="button"
-    style="margin-top:2px;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">
+    style="margin-top:2px;background:#21262d;color:var(--wp-text);border:1px solid var(--wp-border);border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">
     🛡 Add Windows Defender EQ Exceptions
   </button>
   <div id="defenderResult" class="hint" style="margin-top:6px"></div>
@@ -393,7 +434,7 @@
   </div>
   <div id="clockState" class="hint" style="margin-bottom:8px;font-family:ui-monospace,Consolas,monospace">checking…</div>
   <button id="clockBtn" type="button"
-    style="margin-top:2px;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">
+    style="margin-top:2px;background:#21262d;color:var(--wp-text);border:1px solid var(--wp-border);border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">
     🕐 Fix Windows clock sync
   </button>
   <div id="clockResult" class="hint" style="margin-top:6px"></div>
@@ -473,7 +514,7 @@
       list.innerHTML = _foundCandidates.map((c, i) => {
         const checked = _checkedFound.has(_norm(c.path));
         const meta = [];
-        if (c.hasEqgame) meta.push('<span style="color:#56d364">eqgame.exe</span>');
+        if (c.hasEqgame) meta.push('<span style="color:var(--wp-green)">eqgame.exe</span>');
         if (c.hasLogs)   meta.push(c.logCount + ' log file' + (c.logCount === 1 ? '' : 's'));
         else             meta.push('<span style="color:#6b7280">no logs yet</span>');
         return '<div class="row" style="margin:4px 0">' +
@@ -499,7 +540,7 @@
     } else {
       ml.innerHTML = _manualFolders.map((p, i) =>
         '<div class="row" style="margin:4px 0;justify-content:space-between">' +
-          '<code style="font-size:12px;color:#c9d1d9">' + p.replace(/</g,'&lt;') + '</code>' +
+          '<code style="font-size:12px;color:var(--wp-text)">' + p.replace(/</g,'&lt;') + '</code>' +
           '<button type="button" class="eqRemove" data-idx="' + i + '" style="background:#2a1212;border:1px solid #a3260a;color:#f87171;padding:2px 8px;font-size:11px;margin:0">✕ Remove</button>' +
         '</div>'
       ).join('');
@@ -580,6 +621,7 @@
   async function _renderUiStudio() {
     const status = document.getElementById('uiStudioStatus');
     const list   = document.getElementById('uiStudioCharList');
+    _uiRenderSync(); _uiRenderThisPc();
     try { _uiStudioChars = await window.mimic.uiStudioListCharacters(); }
     catch (e) { status.textContent = '✕ ' + (e && e.message ? e.message : String(e)); return; }
     if (!_uiStudioChars || _uiStudioChars.length === 0) {
@@ -612,6 +654,132 @@
     return '';
   }
 
+  // ── Compare-first restore, Keep in sync, This PC (the guild lead, 2026-11-01) ──
+  function _uiEsc(t) { return String(t == null ? '' : t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+  function _uiRes(w, h) { return w && h ? w + '×' + h : 'unknown size'; }
+  function _uiThumb(rects) {
+    return '<div class="scr">' + (rects || []).map(r =>
+      '<i style="left:' + (r.x * 100).toFixed(1) + '%;top:' + (r.y * 100).toFixed(1) + '%;width:' + (r.w * 100).toFixed(1) +
+      '%;height:' + (r.h * 100).toFixed(1) + '%"></i>').join('') + '</div>';
+  }
+  // A backup compared with this PC's files, part by part. Keep mine / Backup per part; nothing is written until
+  // the button, and then only the parts set to Backup, merged into the files as they are (main.js ui-restore-parts).
+  async function _uiRenderCompare(box, t) {
+    box.innerHTML = '<div class="uicmp"><span style="color:var(--wp-dim)">Comparing with this PC…</span></div>';
+    let p;
+    try { p = await window.mimic.uiRestorePlan(t); } catch (err) { p = { ok: false, error: err && err.message }; }
+    if (!p || !p.ok) { box.innerHTML = '<div class="uicmp" style="color:var(--wp-red)">✕ ' + _uiEsc(p && p.error ? p.error : 'could not compare') + '</div>'; return; }
+    const use = {};
+    // Default: take the backup where it differs, except keybinds (shared by every character on this PC).
+    p.parts.forEach(x => { use[x.key] = x.inBackup && !x.same && x.scope !== 'all' ? 'backup' : 'mine'; });
+    const when = p.busy === 'camp' ? ' when ' + t.character + ' camps' : p.busy === 'close' ? ' when EverQuest closes' : ' now';
+    function paint() {
+      const n = p.parts.filter(x => use[x.key] === 'backup').length;
+      box.innerHTML = '<div class="uicmp">' +
+        '<div class="src"><span>📦 <b>' + _uiEsc(p.source.machine || 'backup') + '</b> <span class="m">' + _uiRes(p.source.w, p.source.h) + '</span></span>' +
+          '<span style="color:var(--wp-gold)">vs</span><span>💻 <b>This PC</b> <span class="m">' + _uiRes(p.target.w, p.target.h) + '</span></span></div>' +
+        (p.preview.backup.length || p.preview.mine.length
+          ? '<div class="thumbs"><div>' + _uiThumb(p.preview.backup) + '<div class="cap">backup, fitted to this screen</div></div>' +
+            '<div>' + _uiThumb(p.preview.mine) + '<div class="cap">this PC now</div></div></div>' : '') +
+        '<table><tr><th>Part</th><th>Difference</th><th>Use</th></tr>' + p.parts.map(x => {
+          const can = x.inBackup > 0 && !x.same;
+          const diff = x.summary + (x.scope === 'all' && x.inBackup ? ' · all characters' : '');
+          return '<tr><td>' + _uiEsc(x.label) + '</td><td class="d' + (can ? ' chg' : '') + '">' + _uiEsc(diff) + '</td><td>' +
+            (can ? '<span class="seg"><button type="button" data-part="' + x.key + '" data-use="mine" class="' + (use[x.key] === 'mine' ? 'on' : '') + '">Keep mine</button>' +
+                   '<button type="button" data-part="' + x.key + '" data-use="backup" class="' + (use[x.key] === 'backup' ? 'on' : '') + '">Backup</button></span>'
+                 : '<span style="color:var(--wp-dim)">—</span>') + '</td></tr>';
+        }).join('') + '</table>' +
+        '<div class="never">🔒 Never copied between PCs: screen mode and resolution, chat-channel passwords. Your current files are kept as .bak copies.</div>' +
+        '<div class="acts"><span class="msg" style="font-size:11px;margin-right:auto"></span><button type="button" class="sec" data-act="cancel">Cancel</button>' +
+          '<button type="button" data-act="go"' + (n ? '' : ' disabled') + '>Restore ' + n + ' part' + (n === 1 ? '' : 's') + _uiEsc(when) + '</button></div></div>';
+      box.querySelectorAll('[data-part]').forEach(b => b.addEventListener('click', () => { use[b.dataset.part] = b.dataset.use; paint(); }));
+      box.querySelector('[data-act="cancel"]').addEventListener('click', () => { box.innerHTML = ''; if (box.parentNode && box.parentNode.dataset.restoreFor) box.parentNode.style.display = 'none'; if (t.onDone) t.onDone(false); });
+      box.querySelector('[data-act="go"]').addEventListener('click', async (e) => {
+        const msg = box.querySelector('.msg');
+        e.target.disabled = true; msg.style.color = 'var(--wp-dim)'; msg.textContent = 'Restoring…';
+        let r;
+        try { r = await window.mimic.uiRestoreParts({ character: t.character, eqDir: t.eqDir, id: t.id, parts: p.parts.filter(x => use[x.key] === 'backup').map(x => x.key) }); }
+        catch (err) { r = { ok: false, error: err && err.message }; }
+        if (r && r.ok) {
+          msg.style.color = 'var(--wp-green)';
+          msg.textContent = r.queued
+            ? '✓ Queued. It applies' + (r.busy === 'camp' ? ' when ' + t.character + ' camps.' : ' when EverQuest closes.')
+            : '✓ Restored (' + (r.written ? r.written.length : 0) + ' file' + (r.written && r.written.length === 1 ? '' : 's') + ' changed).';
+          if (t.onDone) t.onDone(true);
+        } else { msg.style.color = 'var(--wp-red)'; msg.textContent = '✕ ' + (r && r.error ? r.error : 'restore failed'); e.target.disabled = false; }
+      });
+    }
+    paint();
+  }
+  const _UI_SYNC_PARTS = [['layout', 'Layout'], ['hotkeys', 'Hotkeys'], ['socials', 'Socials'], ['spellsets', 'Spell sets'], ['keybinds', 'Keybinds'], ['zeal', 'Zeal'], ['other', 'Other']];
+  async function _uiRenderSync() {
+    const box = document.getElementById('uiSyncPanel');
+    let s;
+    try { s = await window.mimic.uiSyncGet(); } catch { return; }
+    if (!s) return;
+    box.innerHTML = '<div style="color:var(--wp-gold);font-size:13px;margin-bottom:4px">Keep in sync</div>' +
+      '<div class="hint" style="margin:0 0 6px">Backs up when you camp or close EQ (chat-channel passwords left out). A newer copy from another PC is only ever applied while that character is signed out.</div>' +
+      '<div class="row"><input type="checkbox" id="uiSyncAuto"' + (s.autoBackup ? ' checked' : '') + '><label for="uiSyncAuto">Back up each character when it camps</label></div>' +
+      '<div class="uikv" style="margin-top:6px"><span class="k">Newer copy from another PC</span><span><select id="uiSyncNewer" style="background:var(--wp-panel);color:var(--wp-text);border:1px solid var(--wp-border);border-radius:4px;padding:3px 6px;font-family:inherit">' +
+        [['ask', 'Ask me'], ['quiet', 'Apply quietly'], ['never', 'Never']].map(o => '<option value="' + o[0] + '"' + (s.newer === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select></span></div>' +
+      '<div class="hint" style="margin-top:8px">Bring over from another PC:</div><div class="uichips">' +
+        _UI_SYNC_PARTS.map(([k, l]) => '<label><input type="checkbox" data-syncpart="' + k + '"' + (s.parts.includes(k) ? ' checked' : '') + '>' + l + '</label>').join('') + '</div>' +
+      '<div class="hint">Keybinds are shared by every character on a PC, so they are off unless you tick them. "Ask me" opens the comparison so you choose each time.</div>';
+    const save = async () => {
+      const parts = [...box.querySelectorAll('[data-syncpart]')].filter(i => i.checked).map(i => i.dataset.syncpart);
+      try { await window.mimic.uiSyncSet({ autoBackup: document.getElementById('uiSyncAuto').checked, newer: document.getElementById('uiSyncNewer').value, parts }); } catch {}
+    };
+    box.querySelectorAll('input,select').forEach(el => el.addEventListener('change', save));
+    _uiRenderPrompts(s.prompts || []);
+  }
+  // "Ask me": a newer backup from another PC waits here (and in a Windows notification that opens this page).
+  function _uiRenderPrompts(prompts) {
+    const box = document.getElementById('uiSyncPrompts');
+    box.innerHTML = prompts.map((q, i) =>
+      '<div data-qwrap style="border:1px solid color-mix(in srgb, var(--wp-blue) 40%, var(--wp-bg));background:color-mix(in srgb, var(--wp-blue) 8%, var(--wp-bg));border-radius:6px;padding:8px 10px;margin:8px 0;font-size:12px">' +
+        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span>🔄 <b>' + _uiEsc(q.character) + '</b> has a newer UI from <b>' + _uiEsc(q.machine) + '</b>' +
+          (q.created_at ? ' <span style="color:var(--wp-dim)">(' + _uiEsc(new Date(q.created_at).toLocaleString()) + ')</span>' : '') + '</span>' +
+          '<button type="button" data-q="' + i + '" data-qa="cmp" style="margin:0 0 0 auto;padding:3px 10px;font-size:11px">Compare</button>' +
+          '<button type="button" data-q="' + i + '" data-qa="no" style="margin:0;padding:3px 10px;font-size:11px;background:transparent;border:1px solid var(--wp-border);color:var(--wp-text)">Not now</button></div>' +
+        '<div data-qbox="' + i + '" style="margin-top:8px"></div></div>').join('');
+    box.querySelectorAll('[data-qa]').forEach(b => b.addEventListener('click', () => {
+      const q = prompts[parseInt(b.dataset.q, 10)];
+      if (b.dataset.qa === 'no') { window.mimic.uiSyncDismiss(q.character).catch(() => {}); b.closest('[data-qwrap]').remove(); return; }
+      _uiRenderCompare(box.querySelector('[data-qbox="' + b.dataset.q + '"]'), { ...q, onDone: (ok) => { if (ok) window.mimic.uiSyncDismiss(q.character).catch(() => {}); } });
+    }));
+  }
+  async function _uiRenderThisPc() {
+    const box = document.getElementById('uiThisPc');
+    let t;
+    try { t = await window.mimic.uiThisPc(); } catch { return; }
+    if (!t) return;
+    const scr = (t.displays || []).map(d => _uiRes(d.w, d.h) + (d.scale && d.scale !== 1 ? ' at ' + Math.round(d.scale * 100) + '%' : '') + (d.id === t.homeId ? ' (overlays)' : '')).join(', ');
+    const sizes = [21, 22, 24, 27, 28, 32, 34, 38, 42, 48];
+    const sg = t.suggestion;
+    box.innerHTML = '<div style="color:var(--wp-gold);font-size:13px;margin-bottom:6px">This PC</div><div class="uikv">' +
+      '<span class="k">EQ runs at</span><span>' + (t.eq ? _uiRes(t.eq.w, t.eq.h) + ' <span class="hint">(read from EQ\'s settings)</span>' : '<span class="hint">not found in eqclient.ini</span>') + '</span>' +
+      '<span class="k">Screens</span><span>' + (t.displays || []).length + ' · ' + _uiEsc(scr) + '</span>' +
+      '<span class="k">Overlay screen size</span><span><select id="uiInches" style="background:var(--wp-panel);color:var(--wp-text);border:1px solid var(--wp-border);border-radius:4px;padding:3px 6px;font-family:inherit">' +
+        '<option value="">not set</option>' + sizes.map(n => '<option value="' + n + '"' + (t.inches === n ? ' selected' : '') + '>' + n + ' in</option>').join('') +
+        (t.inches && !sizes.includes(t.inches) ? '<option value="' + t.inches + '" selected>' + t.inches + ' in</option>' : '') +
+      '</select> <span class="hint">optional</span></span></div>' +
+      (sg ? '<div class="uisugg"><span>💡 Suggested overlay size: <b>' + sg.percent + '%</b>' + (Math.round((t.scale || 1) * 100) === sg.percent ? ' (what you have)' : ' (now ' + Math.round((t.scale || 1) * 100) + '%)') +
+        '<br><span class="hint">' + _uiEsc(sg.why) + '</span></span>' +
+        (Math.round((t.scale || 1) * 100) === sg.percent ? '' : '<button type="button" id="uiSuggApply">Apply</button>') + '</div>' : '') +
+      '<div class="hint" style="margin-top:6px">Backups made on this PC now record ' + (t.eq ? 'EQ\'s ' + _uiRes(t.eq.w, t.eq.h) : 'this screen\'s size') + ', so a restore elsewhere knows how to fit the layout.</div>';
+    document.getElementById('uiInches').addEventListener('change', async (e) => {
+      try { await window.mimic.uiThisPcInches(e.target.value ? Number(e.target.value) : null); } catch {}
+      _uiRenderThisPc();
+    });
+    const ap = document.getElementById('uiSuggApply');
+    if (ap) ap.addEventListener('click', async () => {
+      try { await window.mimic.setOverlayScale(sg.scale); } catch {}
+      const sl = document.getElementById('overlayScale');
+      if (sl) { sl.value = String(sg.percent); const v = document.getElementById('overlayScaleVal'); if (v) v.textContent = sg.percent + '%'; }
+      _uiRenderThisPc();
+    });
+  }
+
   function _paintUiStudio() {
     const status = document.getElementById('uiStudioStatus');
     const list   = document.getElementById('uiStudioCharList');
@@ -621,14 +789,14 @@
     status.textContent = 'Showing ' + shown.length + ' of ' + chars.length +
       ' character' + (chars.length === 1 ? '' : 's') + ' — largest logs first.';
     list.innerHTML = shown.map((c, i) =>
-      '<div data-charrow="' + i + '" style="border:1px solid #2a3140;border-radius:6px;padding:8px 10px;margin:6px 0;background:#161b22">' +
+      '<div data-charrow="' + i + '" style="border:1px solid #2a3140;border-radius:6px;padding:8px 10px;margin:6px 0;background:var(--wp-panel)">' +
         '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
-          '<div><b style="color:#c9d1d9;font-size:13px">' + c.character.replace(/</g,'&lt;') + '</b>' +
+          '<div><b style="color:var(--wp-text);font-size:13px">' + c.character.replace(/</g,'&lt;') + '</b>' +
           '<span style="color:#6b7280;font-size:10px;margin-left:8px">' + c.ini_count + ' per-char ini file' + (c.ini_count === 1 ? '' : 's') +
             (c.has_eqclient ? ' · eqclient.ini' : '') + ' · <code>' + c.eqDir.replace(/</g,'&lt;') + '</code></span></div>' +
           '<div style="display:flex;gap:6px">' +
-            '<button type="button" class="ui-capture" data-idx="' + i + '" style="margin:0;background:#1f6feb;padding:5px 10px;font-size:11px">📦 Back up</button>' +
-            '<button type="button" class="ui-snapshots" data-idx="' + i + '" style="margin:0;background:#21262d;border:1px solid #2a3140;padding:5px 10px;font-size:11px;color:#c9d1d9">🔄 Backups</button>' +
+            '<button type="button" class="ui-capture" data-idx="' + i + '" style="margin:0;background:var(--wp-accent);padding:5px 10px;font-size:11px">📦 Back up</button>' +
+            '<button type="button" class="ui-snapshots" data-idx="' + i + '" style="margin:0;background:#21262d;border:1px solid #2a3140;padding:5px 10px;font-size:11px;color:var(--wp-text)">🔄 Backups</button>' +
           '</div>' +
         '</div>' +
         '<div class="ui-snapshots-list" data-snaps="' + i + '"></div>' +
@@ -636,7 +804,7 @@
       '</div>'
     ).join('')
     + (remaining > 0
-        ? '<button type="button" id="uiShowMore" style="margin:8px 0 0;background:#21262d;border:1px solid #2a3140;color:#c9d1d9;padding:6px 12px;font-size:11px;border-radius:6px;cursor:pointer">⬇ Show ' +
+        ? '<button type="button" id="uiShowMore" style="margin:8px 0 0;background:#21262d;border:1px solid #2a3140;color:var(--wp-text);padding:6px 12px;font-size:11px;border-radius:6px;cursor:pointer">⬇ Show ' +
           Math.min(5, remaining) + ' more (' + remaining + ' remaining)</button>'
         : '');
 
@@ -665,7 +833,7 @@
             msg.style.color = '#f6c365';
             msg.textContent = '✓ Backed up ' + r.file_count + ' file(s) — held pending officer approval to add ' + c.character + ' to your account. It’ll be restorable once an officer approves.';
           } else if (r && r.ok) {
-            msg.style.color = '#56d364';
+            msg.style.color = 'var(--wp-green)';
             msg.textContent = '✓ Backed up ' + r.file_count + ' file(s) to wolfpack.quest.';
           } else {
             msg.style.color = '#f87171';
@@ -698,17 +866,18 @@
               '<tr style="color:#8b949e"><th style="text-align:left;padding:2px 4px">When</th><th style="text-align:left;padding:2px 4px">Name</th><th style="text-align:left;padding:2px 4px">Source res.</th><th style="text-align:left;padding:2px 4px">Files</th><th style="text-align:right;padding:2px 4px">Restore</th></tr>' +
               r.snapshots.map(s =>
                 '<tr style="border-top:1px solid #2a3140">' +
-                  '<td style="padding:3px 4px;color:#c9d1d9">' + new Date(s.created_at).toLocaleString() + '</td>' +
+                  '<td style="padding:3px 4px;color:var(--wp-text)">' + new Date(s.created_at).toLocaleString() + '</td>' +
                   // A named layout's backup carries "Layout: <name>" in its label (UI Studio); show the name.
                   '<td style="padding:3px 4px;color:#7ee7c7">' + String(s.label == null ? '' : s.label).replace(/^Layout: /, '🗂 ').replace(/[&<>"]/g, function (ch) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]; }) + '</td>' +
                   '<td style="padding:3px 4px;color:#8b949e">' + (s.source_width && s.source_height ? s.source_width + '×' + s.source_height : '—') + '</td>' +
                   '<td style="padding:3px 4px;color:#8b949e">' + s.file_count + '</td>' +
                   '<td style="padding:3px 4px;text-align:right;white-space:nowrap">' +
-                    '<button type="button" class="ui-files" data-id="' + s.id + '" data-charidx="' + idx + '" style="margin:0 4px 0 0;padding:3px 9px;font-size:10px;background:#21262d;border:1px solid #2a3140;color:#c9d1d9">📄 Files</button>' +
-                    '<button type="button" class="ui-restore" data-id="' + s.id + '" data-charidx="' + idx + '" style="margin:0;padding:3px 9px;font-size:10px;background:#1a7f37">↩ Restore</button>' +
+                    '<button type="button" class="ui-files" data-id="' + s.id + '" data-charidx="' + idx + '" style="margin:0 4px 0 0;padding:3px 9px;font-size:10px;background:#21262d;border:1px solid #2a3140;color:var(--wp-text)">📄 Files</button>' +
+                    '<button type="button" class="ui-restore" data-id="' + s.id + '" data-charidx="' + idx + '" data-machine="' + _uiEsc(s.machine_name || '') + '" style="margin:0;padding:3px 9px;font-size:10px;background:#1a7f37">↩ Restore</button>' +
                   '</td>' +
                 '</tr>' +
-                '<tr data-files-for="' + s.id + '" style="display:none"><td colspan="5" style="padding:4px 6px 8px"></td></tr>'
+                '<tr data-files-for="' + s.id + '" style="display:none"><td colspan="5" style="padding:4px 6px 8px"></td></tr>' +
+                '<tr data-restore-for="' + s.id + '" style="display:none"><td colspan="5" style="padding:4px 0 8px"></td></tr>'
               ).join('') +
             '</table>';
             // 📄 Files: what is inside a backup (the guild lead, 2026-10-04: "What 19 files were
@@ -736,7 +905,7 @@
                   cell.innerHTML = '<div style="font-size:11px;line-height:1.6">' + names.map(n => {
                     const kb = Math.max(1, Math.round(String(r3.files[n] || '').length / 1024));
                     const what = _uiFileWhat(n, ch.character);
-                    return '<div><code style="color:#c9d1d9">' + e(n) + '</code> <span style="color:#6b7280">' + kb + ' KB</span>' +
+                    return '<div><code style="color:var(--wp-text)">' + e(n) + '</code> <span style="color:#6b7280">' + kb + ' KB</span>' +
                       (what ? ' <span style="color:#8b949e">— ' + e(what) + '</span>' : '') + '</div>';
                   }).join('') + '</div>';
                 } catch (err) {
@@ -746,28 +915,15 @@
             });
             slot.querySelectorAll('.ui-restore').forEach(b => {
               b.addEventListener('click', async (ev) => {
-                const sid     = ev.target.dataset.id;
-                const charIdx = parseInt(ev.target.dataset.charidx, 10);
-                const ch      = chars[charIdx];
-                if (!confirm('Restore this backup to ' + ch.eqDir + '?\n\nExisting files will be backed up with a .bak-<timestamp> suffix. EQ must be closed.')) return;
-                const msg = list.querySelector('[data-msg="' + charIdx + '"]');
-                msg.style.color = '#8b949e'; msg.textContent = 'Restoring…';
-                ev.target.disabled = true;
-                try {
-                  const r2 = await window.mimic.uiStudioRestore({ character: ch.character, id: sid, eqDir: ch.eqDir, clamp: true });
-                  if (r2 && r2.ok) {
-                    msg.style.color = '#56d364';
-                    msg.textContent = '✓ ' + (r2.note || ('Restored ' + (r2.written ? r2.written.length : 0) + ' file(s).'));
-                  } else {
-                    msg.style.color = '#f87171';
-                    msg.textContent = '✕ ' + (r2 && r2.error ? r2.error : 'restore failed');
-                  }
-                } catch (err) {
-                  msg.style.color = '#f87171';
-                  msg.textContent = '✕ ' + (err && err.message ? err.message : String(err));
-                } finally {
-                  ev.target.disabled = false;
-                }
+                // Compare first (the guild lead, 2026-11-01, picked B): what each part would change, and a
+                // Keep mine / Backup choice per part, before anything is written.
+                const sid = ev.target.dataset.id;
+                const ch  = chars[parseInt(ev.target.dataset.charidx, 10)];
+                const row = slot.querySelector('[data-restore-for="' + sid + '"]');
+                if (!row) return;
+                if (row.style.display !== 'none') { row.style.display = 'none'; return; }
+                row.style.display = '';
+                _uiRenderCompare(row.firstChild, { character: ch.character, eqDir: ch.eqDir, id: sid, machine: ev.target.dataset.machine || null });
               });
             });
           }
@@ -831,12 +987,12 @@
     box.innerHTML = '';
     for (const p of _voicePacks) {
       const row = document.createElement('label');
-      row.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;padding:3px 6px;border:1px solid ' + (cur && cur.id === p.id ? '#1f6feb' : '#30363d') + ';border-radius:5px';
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;padding:3px 6px;border:1px solid ' + (cur && cur.id === p.id ? 'var(--wp-accent)' : 'var(--wp-border)') + ';border-radius:5px';
       const r = document.createElement('input'); r.type = 'radio'; r.name = 'voicePack'; r.value = p.id; r.checked = !!cur && cur.id === p.id;
       const b = document.createElement('b'); b.textContent = p.label;
       const d = document.createElement('span'); d.style.cssText = 'flex:1;color:#6b7280'; d.textContent = p.blurb || '';
       const hear = document.createElement('button'); hear.type = 'button'; hear.textContent = '▶'; hear.title = 'Hear this pack';
-      hear.style.cssText = 'background:#21262d;color:#56d364;border:1px solid #30363d;border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px';
+      hear.style.cssText = 'background:#21262d;color:var(--wp-green);border:1px solid var(--wp-border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px';
       hear.addEventListener('click', (e) => { e.preventDefault(); window.WPVoice.sample('Enrage soon. Heal up.', _voicePacks, _voice, p.id); });
       r.addEventListener('change', () => { _voice.pack = p.id; _saveVoice(); _renderVoicePacks(); _renderVoiceNumbers(); });
       row.append(r, b, d, hear);
@@ -936,7 +1092,8 @@
     setTimeout(() => { try { el.scrollIntoView({ block: 'start' }); } catch {} }, 700);
   }
   // Already open: main sends the part to show instead of reloading.
-  if (window.mimic && window.mimic.onSettingsGoto) window.mimic.onSettingsGoto(_gotoSection);
+  // A "newer UI on another PC" notification opens UI Studio here: show its prompt, then scroll to it.
+  if (window.mimic && window.mimic.onSettingsGoto) window.mimic.onSettingsGoto((sec) => { if (sec === 'uistudio') _uiRenderSync(); _gotoSection(sec); });
 
   // Overlay scale — label follows the drag; the scale applies on RELEASE
   // ('change'), and main glides every overlay's zoom + window bounds to the
@@ -1220,9 +1377,54 @@
   }
   let _linkRemainingTimer = null;
   let _lastLinkUrl = null;
+  let _hub = { slug: 'wolfpack', display_name: 'Wolf Pack', site: 'https://wolfpack.quest' };
+  let _signedInNow = false;
+  // The Guild choice. The list is the hub directory (Wolf Pack first); a guild that is not listed is pasted as an address.
+  // Switching writes the guild's server address through main (the Bot URL field above follows it) and signs this PC out.
+  async function _loadHubs(){
+    try {
+      const r = await window.mimic.hubList();
+      if (!r || !Array.isArray(r.hubs)) return;
+      _hub = r.current || _hub;
+      const sel = document.getElementById('hubSel');
+      const opts = r.hubs.slice();
+      if (!opts.some(x => x.slug === _hub.slug)) opts.push(_hub);
+      sel.innerHTML = '';
+      for (const x of opts) { const o = document.createElement('option'); o.value = x.slug; o.textContent = x.display_name; sel.appendChild(o); }
+      const p = document.createElement('option'); p.value = '__paste'; p.textContent = 'Paste a guild address…'; sel.appendChild(p);
+      sel.value = _hub.slug;
+    } catch (e) { /* the directory is a convenience: the Bot URL field below still works */ }
+  }
+  async function _chooseHub(choice){
+    const note = document.getElementById('hubNote');
+    if (_signedInNow && !confirm('Switching guilds signs you out of ' + _hub.display_name + ' on this PC. You will need to link again. Continue?')) { document.getElementById('hubSel').value = _hub.slug; return; }
+    const wasClean = _settingsSig() === _cleanSig;
+    let r;
+    try { r = await window.mimic.hubSet(choice); } catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
+    if (!r || r.ok === false) { note.textContent = (r && r.error) || 'Could not switch guilds.'; document.getElementById('hubSel').value = _hub.slug; return; }
+    _hub = r.hub;
+    document.getElementById('hubPasteRow').style.display = 'none';
+    document.getElementById('hubAddr').value = '';
+    await _loadHubs();
+    // main wrote the new server address; show it in the Bot URL field without turning the form dirty.
+    const c = await window.mimic.getConfig();
+    document.getElementById('botUrl').value = c.botUrl || '';
+    _loaded.botUrl = c.botUrl || '';
+    if (wasClean) _markClean();
+    note.textContent = r.signedOut ? 'Switched to ' + r.hub.display_name + '. You are signed out here. Link Mimic again with this guild.' : (r.changed ? 'Switched to ' + r.hub.display_name + '.' : 'Already on ' + r.hub.display_name + '.');
+  }
+  document.getElementById('hubSel').addEventListener('change', (e) => {
+    const v = e.target.value;
+    if (v === '__paste') { document.getElementById('hubPasteRow').style.display = 'flex'; document.getElementById('hubAddr').focus(); return; }
+    document.getElementById('hubPasteRow').style.display = 'none';
+    if (v !== _hub.slug) _chooseHub({ slug: v });
+  });
+  document.getElementById('hubUseBtn').addEventListener('click', () => _chooseHub({ address: document.getElementById('hubAddr').value }));
   function _renderAccount(status){
     const linking = status && status.mimicLinking;
     const session = status && status.mimicSession;
+    _signedInNow = !!session;
+    if (status && status.hub) _hub = status.hub;
     document.getElementById('acctSignedOut').style.display = (!linking && !session) ? '' : 'none';
     document.getElementById('acctLinking').style.display   = linking ? '' : 'none';
     document.getElementById('acctSignedIn').style.display  = session ? '' : 'none';
@@ -1230,7 +1432,7 @@
     if (linking) {
       document.getElementById('acctLinkCode').textContent = linking.user_code;
       document.getElementById('acctLinkUrl').textContent  =
-        (linking.verification_url || 'wolfpack.quest/auth/mimic-link').replace(/^https?:\/\//, '');
+        (linking.verification_url || ((_hub.site || 'https://wolfpack.quest') + '/auth/mimic-link')).replace(/^https?:\/\//, '');
       // Mimic asks the OS to open your browser; that can fail silently (a
       // broken default-browser association, a sandboxed Firefox). Say so
       // rather than leaving a code on screen with no instruction — the code
@@ -1260,9 +1462,15 @@
       document.getElementById('acctName').textContent =
         session.display_name || session.discord_id || 'your Discord account';
       document.getElementById('acctOfficerBadge').style.display = session.is_officer ? '' : 'none';
-      document.getElementById('acctLinkedAt').textContent =
-        session.linked_at ? 'Linked ' + new Date(session.linked_at).toLocaleString() : '';
+      document.getElementById('acctLinkedAt').textContent = [
+        _guildLine(session.guild),
+        session.linked_at ? 'Linked ' + new Date(session.linked_at).toLocaleString() : '',
+      ].filter(Boolean).join(' · ');
     }
+  }
+  // A hub guild's session names its guild and role; a Wolf Pack session has no guild and keeps the old wording.
+  function _guildLine(g){
+    return g ? 'Linked to ' + g.display_name + ' (' + (g.role === 'officer' ? 'officer' : 'member') + ')' : '';
   }
   document.getElementById('acctSignInBtn').addEventListener('click', async () => {
     const btn = document.getElementById('acctSignInBtn');
@@ -1300,6 +1508,7 @@
   });
   // Live-update on every status push (linking completes, polling expires).
   window.mimic.getStatus().then(_renderAccount).catch(() => {});
+  _loadHubs();
   window.mimic.onStatus(_renderAccount);
 
   load();
@@ -1362,17 +1571,19 @@
     if (!line) return;
     try {
       var s = await window.mimic.zealStatus();
-      var srcRadio = document.getElementById(s && s.source === 'test' ? 'zealSrcTest' : 'zealSrcOfficial');
+      var srcRadio = document.getElementById(s && s.source === 'test' ? 'zealSrcTest' : s && s.source === 'wolfpack' ? 'zealSrcWolfpack' : 'zealSrcOfficial');
       if (srcRadio) srcRadio.checked = true;
       if (!s || !s.eqDir) {
         line.innerHTML = 'No EverQuest folder set yet — add one above and Mimic can manage Zeal for you.';
         return;
       }
       // A test build's tag is "testall-<commit>", the same label Zeal's options window shows.
+      // The Wolf Pack build's is "wolfpack-<run>-<commit>", which /zeal version prints too.
       var isTestBuild = /^testall-/.test(String(s.installedTag || ''));
+      var isWolfpack = /^wolfpack-/.test(String(s.installedTag || ''));
       var installed = s.installedTag
         ? 'Installed via Mimic: <b style="color:#7ee787">' + String(s.installedTag).replace(/</g,'&lt;') + '</b>'
-          + (isTestBuild ? ' (test build)' : '')
+          + (isTestBuild ? ' (test build)' : isWolfpack ? ' (Wolf Pack build)' : '')
         : (s.hasZealAsi
             ? '<b style="color:#f6c365">Zeal.asi present</b> (version unknown — install below to be sure you\'re current)'
             : '<b style="color:#ff9b9b">Zeal not installed</b> in this folder');
@@ -1386,7 +1597,7 @@
     var installBtn = document.getElementById('zealInstallBtn');
     var msg        = document.getElementById('zealMsg');
     if (!checkBtn) return;
-    // Official ↔ test build: saved at once (main.js zeal-set-source), then Check
+    // Official ↔ Wolf Pack ↔ test build: saved at once (main.js zeal-set-source), then Check
     // runs so the Install button offers the chosen source's build.
     document.querySelectorAll('input[name=zealSource]').forEach(function(r){
       r.addEventListener('change', async function(){
@@ -1406,7 +1617,7 @@
         var r = await window.mimic.zealCheckUpdate();
         if (!r || !r.ok) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((r && r.error) || 'check failed'); return; }
         _zealLatestTag = r.latestTag;
-        var what = r.source === 'test' ? 'test build' : 'Zeal';
+        var what = r.source === 'test' ? 'test build' : r.source === 'wolfpack' ? 'Wolf Pack build' : 'Zeal';
         if (r.updateAvailable) {
           msg.style.color = '#7ee787';
           msg.textContent = 'Latest ' + what + ' is ' + (r.latestTag || '?') + (r.installedTag ? ' (you have ' + r.installedTag + ')' : '') + '.';
@@ -1475,7 +1686,7 @@
       var card = document.createElement('div');
       card.style.cssText = 'margin:0 0 10px;padding:10px 12px;background:#0f1420;border:1px solid #223;border-radius:6px';
       var badge = p.installed
-        ? '<span style="background:#0f2a1a;color:#56d364;border:1px solid #1a7f37;border-radius:3px;font-size:9px;padding:1px 6px;margin-left:8px;vertical-align:middle">INSTALLED' + (p.installedTag ? ' ' + _esc(p.installedTag) : '') + '</span>'
+        ? '<span style="background:#0f2a1a;color:var(--wp-green);border:1px solid #1a7f37;border-radius:3px;font-size:9px;padding:1px 6px;margin-left:8px;vertical-align:middle">INSTALLED' + (p.installedTag ? ' ' + _esc(p.installedTag) : '') + '</span>'
         : '';
       var opts = p.options || { ready: false, choices: [] };
       var boxes = opts.choices.filter(function(c){ return !c.noop; });
@@ -1490,24 +1701,24 @@
               return '<label style="display:flex;gap:6px;align-items:baseline;font-size:12px;padding:2px 0;cursor:pointer">' +
                 '<input type="checkbox" class="uiOptBox" data-id="' + _esc(c.id) + '"' + (c.applied ? ' checked' : '') + (opts.ready ? '' : ' disabled') + ' style="margin:0">' +
                 '<span>' + _esc(_uiLabel(c)) + '</span>' +
-                '<span class="uiOptWhy" data-what="' + _esc(_uiWhat(c.files)) + '" style="font-size:10px;color:#6e7681">' + _esc(_uiWhat(c.files)) + '</span>' +
+                '<span class="uiOptWhy" data-what="' + _esc(_uiWhat(c.files)) + '" style="font-size:10px;color:var(--wp-dim)">' + _esc(_uiWhat(c.files)) + '</span>' +
               '</label>';
             }).join('') +
             (noops.length ? '<div class="hint" style="margin-top:2px">' + _esc(noops.map(_uiLabel).join(', ')) + (noops.length === 1 ? ' is' : ' are') + ' what you have with nothing ticked.</div>' : '') +
             '<div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
               '<button type="button" class="uiOptApply" disabled style="background:#21262d;border:1px solid #2a3140;color:#8b949e;padding:5px 14px;font-size:12px;font-weight:600;border-radius:5px;cursor:pointer">Apply</button>' +
-              '<button type="button" class="uiOptReset" style="background:#21262d;border:1px solid #2a3140;color:#c9d1d9;padding:4px 10px;font-size:11px;border-radius:4px;cursor:pointer">Untick all (the pack as it ships)</button>' +
-              '<span class="uiOptPending" style="font-size:11px;color:#d29922"></span>' +
+              '<button type="button" class="uiOptReset" style="background:#21262d;border:1px solid #2a3140;color:var(--wp-text);padding:4px 10px;font-size:11px;border-radius:4px;cursor:pointer">Untick all (the pack as it ships)</button>' +
+              '<span class="uiOptPending" style="font-size:11px;color:var(--wp-gold)"></span>' +
             '</div>' +
           '</div>';
       } else if (p.installed) {
         optHtml = '<div class="hint" style="margin-top:6px;font-style:italic">No alternate layouts in this pack.</div>';
       }
       card.innerHTML =
-        '<div style="font-size:13px;font-weight:600;color:#c9d1d9">' + _esc(p.name) + badge + '</div>' +
+        '<div style="font-size:13px;font-weight:600;color:var(--wp-text)">' + _esc(p.name) + badge + '</div>' +
         '<div class="hint" style="margin-top:2px">' + _esc(p.notes || '') + '</div>' +
         '<div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
-          '<button type="button" class="uiPackBtn" style="background:' + (p.installed ? '#21262d' : '#1f6feb') + ';color:#fff;border:' + (p.installed ? '1px solid #2a3140' : '0') + ';border-radius:5px;padding:6px 12px;cursor:pointer;font-weight:600;font-size:12px">' +
+          '<button type="button" class="uiPackBtn" style="background:' + (p.installed ? '#21262d' : 'var(--wp-accent)') + ';color:#fff;border:' + (p.installed ? '1px solid #2a3140' : '0') + ';border-radius:5px;padding:6px 12px;cursor:pointer;font-weight:600;font-size:12px">' +
             (p.installed ? '🔄 Check for update' : '⬇ Install') + '</button>' +
           '<span class="uiPackMsg" style="font-size:11px;color:#8b949e"></span>' +
         '</div>' +
@@ -1561,7 +1772,7 @@
             ? 'off while ' + _uiLabel(byId[clash.id] || { option: clash.id }) + ' is on (' +
               (clash.files.length ? 'both change the ' + _uiWhat(clash.files) : 'pick one') + ')'
             : why.getAttribute('data-what');
-          why.style.color = clash ? '#d29922' : '#6e7681';
+          why.style.color = clash ? 'var(--wp-gold)' : 'var(--wp-dim)';
         });
       }
       async function setOpts(ids){
@@ -1592,7 +1803,7 @@
                  + appliedNow.filter(function(id){ return want.indexOf(id) < 0; }).length;
         if (!applyBtn) return;
         applyBtn.disabled = !diff || !opts.ready;
-        applyBtn.style.background = diff ? '#1f6feb' : '#21262d';
+        applyBtn.style.background = diff ? 'var(--wp-accent)' : '#21262d';
         applyBtn.style.color = diff ? '#fff' : '#8b949e';
         applyBtn.style.border = diff ? '0' : '1px solid #2a3140';
         if (pendingEl) pendingEl.textContent = diff ? diff + ' change' + (diff === 1 ? '' : 's') + ' not applied yet' : '';
@@ -1628,7 +1839,7 @@
   function _setsMsg(r){
     var m = document.getElementById('overlaySetMsg');
     if (!m) return;
-    m.style.color = r && r.ok ? '#56d364' : '#ff9b9b';
+    m.style.color = r && r.ok ? 'var(--wp-green)' : '#ff9b9b';
     m.textContent = r ? (r.ok ? '✓ ' : '✕ ') + r.message + (r.nudge ? ' ' + r.nudge : '') : '';
   }
   // 📤📥 A layout as a file: the same two functions the tray runs (main.js _exportLayoutFile / _importLayoutFile).
@@ -1659,12 +1870,12 @@
     catch (e) { host.innerHTML = '<div class="hint">Could not read overlay sets.</div>'; return; }
     var sets = (data && data.sets) || [];
     if (!sets.length) { host.innerHTML = '<div class="hint">No sets yet. Lay your overlays out, name the layout below, and save it.</div>'; return; }
-    var btn = 'margin-top:0;background:#21262d;border:1px solid #2a3140;color:#c9d1d9;padding:3px 10px;font-size:11px;border-radius:4px';
+    var btn = 'margin-top:0;background:#21262d;border:1px solid #2a3140;color:var(--wp-text);padding:3px 10px;font-size:11px;border-radius:4px';
     host.innerHTML = sets.map(function(s){
-      return '<div style="display:flex;gap:8px;align-items:center;padding:5px 8px;margin:0 0 4px;background:#0f1420;border:1px solid ' + (s.current ? '#1f6feb' : '#223') + ';border-radius:5px">' +
-        '<span style="flex:1;font-size:12px;color:#c9d1d9">' + _esc(s.name) +
-          (s.current ? ' <span style="color:#58a6ff;font-size:10px">· on now' + (data.char ? ' for ' + _esc(data.char) : '') + '</span>' : '') +
-          ' <span style="color:#6e7681;font-size:10px">· ' + s.overlays + ' overlay' + (s.overlays === 1 ? '' : 's') + '</span></span>' +
+      return '<div style="display:flex;gap:8px;align-items:center;padding:5px 8px;margin:0 0 4px;background:#0f1420;border:1px solid ' + (s.current ? 'var(--wp-accent)' : '#223') + ';border-radius:5px">' +
+        '<span style="flex:1;font-size:12px;color:var(--wp-text)">' + _esc(s.name) +
+          (s.current ? ' <span style="color:var(--wp-blue);font-size:10px">· on now' + (data.char ? ' for ' + _esc(data.char) : '') + '</span>' : '') +
+          ' <span style="color:var(--wp-dim);font-size:10px">· ' + s.overlays + ' overlay' + (s.overlays === 1 ? '' : 's') + '</span></span>' +
         '<button type="button" data-set-load="' + _esc(s.name) + '" style="' + btn + '">Load</button>' +
         '<button type="button" data-set-save="' + _esc(s.name) + '" style="' + btn + '" title="Replace this set with the layout on screen now">Save over</button>' +
         '<button type="button" data-set-export="' + _esc(s.name) + '" style="' + btn + '" title="Save this set\'s Canvas layout to a file you can send, with the details typed below">📤</button>' +
@@ -1765,7 +1976,7 @@
       out.textContent = 'Working…';
       window.mimic.parserRetire().then(function (r) {
         var lines = [];
-        (r.done || []).forEach(function (d) { lines.push('<span style="color:#56d364">✓</span> ' + esc(d)); });
+        (r.done || []).forEach(function (d) { lines.push('<span style="color:var(--wp-green)">✓</span> ' + esc(d)); });
         (r.fail || []).forEach(function (f) { lines.push('<span style="color:#ff9b9b">✕</span> ' + esc(f)); });
         if (!lines.length) lines.push(esc(r.error || 'Nothing to do.'));
         if (r.ok) lines.push('<span style="opacity:.75">Mimic takes over uploading within about 15 seconds.</span>');
@@ -1805,7 +2016,7 @@
         btn.disabled = false;
         var allDone = s.ok && s.paths.every(function (p) { return p.excluded; });
         list.innerHTML = s.paths.map(function (p) {
-          var mark = !s.ok ? '·' : (p.excluded ? '<span style="color:#56d364">✓</span>' : '<span style="color:#f6c365">+</span>');
+          var mark = !s.ok ? '·' : (p.excluded ? '<span style="color:var(--wp-green)">✓</span>' : '<span style="color:#f6c365">+</span>');
           return mark + ' ' + esc(p.path) + ' <span style="opacity:.6">— ' + esc(p.why) + '</span>';
         }).join('<br>');
         if (allDone) {
@@ -1820,7 +2031,7 @@
       if (out) out.textContent = '';
       window.mimic.defenderAddExclusions().then(function (r) {
         if (r && r.ok) {
-          if (out) out.innerHTML = '<span style="color:#56d364">✓ Added ' + (r.added || []).length + ' exclusion(s).</span>';
+          if (out) out.innerHTML = '<span style="color:var(--wp-green)">✓ Added ' + (r.added || []).length + ' exclusion(s).</span>';
         } else if (r && r.cancelled) {
           if (out) out.innerHTML = '<span style="opacity:.8">' + esc((r && r.error) || 'Cancelled — nothing was changed.') + '</span>';
         } else {
@@ -1853,7 +2064,7 @@
         if (!s || !s.ok) { state.textContent = (s && s.error) || 'Could not read the Windows Time service.'; return; }
         var good = s.running && s.automatic;
         state.innerHTML =
-          (good ? '<span style="color:#56d364">✓</span>' : '<span style="color:#f6c365">!</span>')
+          (good ? '<span style="color:var(--wp-green)">✓</span>' : '<span style="color:#f6c365">!</span>')
           + ' Windows Time service: <b>' + esc(s.status || '?') + '</b>, starts <b>' + esc(s.startType || '?') + '</b>'
           + (s.source ? '<br><span style="opacity:.6">source: ' + esc(s.source) + '</span>' : '')
           + (good ? '' : '<br><span style="opacity:.8">That is why the clock drifts back after you correct it.</span>');
@@ -1866,7 +2077,7 @@
       if (out) out.textContent = '';
       window.mimic.clockResync().then(function (r) {
         if (r && r.ok) {
-          if (out) out.innerHTML = '<span style="color:#56d364">✓ Clock synced and the service is set to keep it synced.</span>'
+          if (out) out.innerHTML = '<span style="color:var(--wp-green)">✓ Clock synced and the service is set to keep it synced.</span>'
             + (r.source ? '<br><span style="opacity:.6">source: ' + esc(r.source) + '</span>' : '');
         } else if (r && r.cancelled) {
           if (out) out.innerHTML = '<span style="opacity:.8">' + esc((r && r.error) || 'Cancelled — nothing was changed.') + '</span>';

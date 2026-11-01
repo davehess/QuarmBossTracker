@@ -512,7 +512,7 @@ describe('chat.html: the switch, the poll, the mark and the hint', () => {
     expect(lineHtml({ ...base, via: 'guild' })).toContain('pull in five');
   });
   it('the mark is dim and small in CSS', () => {
-    expect(stripCssComments(CHAT_HTML)).toMatch(/\.ln \.via\{[^}]*font-size:0\.75em[^}]*color:#6e7681/);
+    expect(stripCssComments(CHAT_HTML)).toMatch(/\.ln \.via\{[^}]*font-size:0\.75em[^}]*color:var\(--wp-dim\)/);
   });
   // paintAway against stand-in elements: the three display states
   function away(a, prefsAway = true) {

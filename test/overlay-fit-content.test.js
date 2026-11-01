@@ -43,6 +43,8 @@ function mainEnv({ growsUp = false, work = { x: 0, y: 0, width: 1920, height: 10
     const _heightFloorFor = () => ${floor};
     const _setupChromeFor = () => 0;
     const _overlayGrowsUp = () => ${growsUp};
+    const _boundsKeyForWindow = () => 'commandBounds';   // overlay-auto-height asks (🔒 Lock size is the alerts window's alone)
+    const loadConfig = () => ({});
     const _overlayEntries = () => [];
     const _holdForMove = (w) => !!(w && w.__wpDragging);   // the real one is tested in mimic-window-move.test.js
     const _GROW_UP_DEFAULT_KEYS = new Set();
@@ -369,6 +371,7 @@ function canvasEnv(panels, { H = 1000 } = {}) {
     function placeGbox() {} function placeMenu() {}
     function save() { saves++; }
     function embedWant() { return null; }
+    function isMin() { return false; }   // ▭ Minimize: fitStep leaves a collapsed strip alone
     ${fitCode}
     return { window: window, layout: _layout, els: _els, set: function (k, v) { eval(k + ' = v'); }, fitStep: fitStep, saves: function () { return saves; }, placed: placed,
       empty: _fitEmpty, intervals: intervals, widen: _widen, fitAdd: _fitAdd };

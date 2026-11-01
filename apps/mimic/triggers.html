@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>triggers</title>
+<link rel="stylesheet" href="theme.css">
 <style>
   /* Centered trigger-alert overlay (GINA / DnDOverlay style). Transparent,
      click-through, always-on-top. Flashes the trigger text big and speaks it
@@ -56,9 +57,9 @@
   .fb-btn:hover{ background:rgba(31,111,235,0.55); border-color:#79c0ff }
   .fb-btn.voted{ opacity:0.45; cursor:default; pointer-events:none }
   .fb-btn.earlier:hover{ background:rgba(240,165,45,0.55); border-color:#f0a52d }
-  .fb-btn.good:hover{    background:rgba(86,211,100,0.55); border-color:#56d364 }
+  .fb-btn.good:hover{    background:rgba(86,211,100,0.55); border-color:var(--wp-green) }
   .fb-btn.off{ padding:5px 7px }
-  .fb-btn.off:hover{     background:rgba(110,118,129,0.55); border-color:#6e7681 }
+  .fb-btn.off:hover{     background:rgba(110,118,129,0.55); border-color:var(--wp-dim) }
   .fb-btn.late:hover{    background:rgba(248,113,113,0.55); border-color:#f87171 }
   #fbThanks{display:none; font-size:11px; color:#8b949e; text-shadow:0 1px 2px #000; margin-left:6px}
   #fbThanks.show{display:inline}
@@ -81,8 +82,8 @@
      mob / this session / permanently"); while they are open they take the place of the timing votes. */
   #feedback.enragemenu .enrage-opt{ display:inline-block }
   #feedback.enragemenu .fb-btn, #feedback.enragemenu #fbThanks{ display:none }
-  .mute-btn:hover, .enrage-opt:hover, .voice-btn:hover{ background:rgba(110,118,129,0.55); border-color:#6e7681 }
-  .mute-btn.done, .voice-btn.done{ border-color:#56d364; color:#56d364 }
+  .mute-btn:hover, .enrage-opt:hover, .voice-btn:hover{ background:rgba(110,118,129,0.55); border-color:var(--wp-dim) }
+  .mute-btn.done, .voice-btn.done{ border-color:var(--wp-green); color:var(--wp-green) }
   /* Sticky critical callouts (#76). A trigger flagged `sticky` pins here and
      stays until the user clicks it away (or a generous ~5min timeout) instead
      of fading with the normal 3.5s flash. Loud red so a life-or-death callout
@@ -166,7 +167,7 @@
   /* "+N more" overflow tail — dimmer than a real row so it reads as a count,
      not a countdown. Sits at the top of the stack (furthest from the anchor). */
   .timer-row.timer-more{justify-content:center;color:#8b949e;font-size:11px;
-    border-left-color:#6e7681;padding:2px 8px;animation:none}
+    border-left-color:var(--wp-dim);padding:2px 8px;animation:none}
   .timer-row{position:relative;display:flex;align-items:baseline;gap:8px;
     padding:3px 8px 5px;background:rgb(0 0 0 / var(--bg-alpha));border-radius:4px;
     color:#fff;font-size:13px;line-height:1.25;
@@ -183,7 +184,7 @@
     white-space:nowrap}
   .timer-row .timer-target{color:#fff;font-weight:600}
   .timer-row .timer-sep{color:rgba(255,255,255,0.45);margin:0 4px}
-  .timer-row .timer-effect{color:#c9d1d9}
+  .timer-row .timer-effect{color:var(--wp-text)}
   /* Progress bar at the bottom of each row — visual countdown so duration is
      readable at a glance without parsing the digits. Width tweened in JS so
      the 100 ms paint loop keeps it smooth between 700 ms server polls. */
@@ -221,7 +222,7 @@
      on Ssra) was the overlay's top complaint. */
   .timer-row .timer-x{flex-shrink:0;width:16px;height:16px;display:flex;
     align-items:center;justify-content:center;border-radius:3px;margin-left:2px;
-    background:rgba(0,0,0,0.35);color:#c9d1d9;border:1px solid rgba(255,255,255,0.18);
+    background:rgba(0,0,0,0.35);color:var(--wp-text);border:1px solid rgba(255,255,255,0.18);
     font-size:11px;line-height:1;cursor:pointer;pointer-events:auto}
   .timer-row .timer-x:hover{color:#fff;background:rgba(248,113,113,0.6);border-color:#f87171}
   /* A 16px target is small on a shrunk overlay (the size slider is a zoom): the invisible ring around it takes
@@ -232,9 +233,9 @@
      press target as the ✕; the row itself stays click-through. */
   .timer-row .timer-menu{flex-shrink:0;width:16px;height:16px;display:flex;position:relative;
     align-items:center;justify-content:center;border-radius:3px;margin-left:2px;
-    background:rgba(0,0,0,0.35);color:#c9d1d9;border:1px solid rgba(255,255,255,0.18);
+    background:rgba(0,0,0,0.35);color:var(--wp-text);border:1px solid rgba(255,255,255,0.18);
     font-size:12px;line-height:1;cursor:pointer;pointer-events:auto}
-  .timer-row .timer-menu:hover{color:#fff;background:rgba(88,166,255,0.55);border-color:#58a6ff}
+  .timer-row .timer-menu:hover{color:#fff;background:rgba(88,166,255,0.55);border-color:var(--wp-blue)}
   .timer-row .timer-menu::before{content:'';position:absolute;inset:-5px}
   /* The row's menu when there is no Canvas page to draw it (the standalone Timers window). */
   #row-menu{position:fixed;z-index:80;min-width:190px;max-width:260px;box-sizing:border-box;pointer-events:auto;
@@ -274,7 +275,7 @@
     display:flex;align-items:center;justify-content:center;border-radius:4px;
     background:rgba(14,17,22,0.6);color:#6b7280;border:1px solid rgba(110,118,129,0.3);
     font-size:11px;line-height:1;cursor:move;opacity:0.4;transition:opacity .12s}
-  #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
+  #move-btn:hover{opacity:1;color:var(--wp-blue);border-color:var(--wp-blue)}
   body.setup #move-btn{top:30px}
 
   /* ── Timers canvas part (?part=timers | ?part=callouts) ─────────────────
@@ -285,6 +286,11 @@
      panel's bottom edge (or its top, per panel). */
   body.part #move-btn, body.part #clear-btn, body.part #hide-btn,
   body.part #drag-controls, body.part #setupbar{display:none !important}
+  /* The window's name chip ("Alerts & timers", with its own dark plate) is the window's title. A canvas panel has no
+     window title: its name is in its own tab while arranging, and its plate is the panel's Background switch alone
+     (FB-105: "display their window title background and you can't turn it off"). Hidden here, in the page, so it does not
+     depend on the preload's docked-frame rule having run. */
+  body.part .wp-name-chip{display:none !important}
   body.part-timers #alertcol, body.part-timers #placeholder{display:none !important}
   body.part-callouts #timers{display:none !important}
   body.part #timers{top:auto;bottom:4px;left:4px;right:auto;max-height:none;overflow:hidden;
@@ -311,7 +317,7 @@
      and canvas panels (body.part) never draw it. Click-through like the stack. */
   #tline{position:fixed;bottom:8px;left:8px;right:8px;z-index:41;display:none;
     pointer-events:none;font-family:ui-monospace,Menlo,Consolas,monospace;
-    background:rgb(0 0 0 / var(--bg-alpha));border-radius:4px;border-left:3px solid #58a6ff;
+    background:rgb(0 0 0 / var(--bg-alpha));border-radius:4px;border-left:3px solid var(--wp-blue);
     padding:4px 8px 5px;text-shadow:0 1px 2px #000;color:#fff;--tl-s:1}
   body.has-tline #tline{display:flex;align-items:flex-start;gap:6px}
   body.part #tline{display:none !important}
@@ -329,7 +335,7 @@
   #tline .tl-d span{color:#9fb3c8;margin-left:4px;font-variant-numeric:tabular-nums}
   #tline .tl-gap{color:#f6c365;font-weight:700;font-variant-numeric:tabular-nums}
   #tline .tl-more{color:#9fb3c8}
-  #tline .tl-since{margin-left:auto;color:#58a6ff;font-weight:700;font-variant-numeric:tabular-nums}
+  #tline .tl-since{margin-left:auto;color:var(--wp-blue);font-weight:700;font-variant-numeric:tabular-nums}
   /* Controls (the guild lead, 2026-10-21: "minimizable, text size scalable"): ▾/▸ at the left edge, A−/A+ at the
      right. Real <button>s, so the preload's hover handshake arms them; the strip itself stays click-through. */
   #tline #tl-body{flex:1;min-width:0}
@@ -349,7 +355,7 @@
   #tline .tl-up-row.plan .tl-up-lbl{color:#9fd0ff;white-space:normal}
   #tline .tl-one{display:flex;align-items:baseline;gap:8px;font-size:calc(16px * var(--tl-s));font-weight:700;line-height:1.3;min-height:20px;white-space:nowrap;overflow:hidden}
   #tline .tl-one-main{color:#ffc14d;flex-shrink:0}
-  #tline .tl-one-main.since{color:#58a6ff}
+  #tline .tl-one-main.since{color:var(--wp-blue)}
   #tline .tl-one-sep{color:#9fb3c8}
   #tline .tl-one-next{color:#e6edf3;font-weight:600;overflow:hidden;text-overflow:ellipsis;min-width:0}
   #tline .tl-one-next i{font-style:normal;font-variant-numeric:tabular-nums;font-weight:800;color:#ffc14d;margin-left:10px}
@@ -359,6 +365,7 @@
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>
   <button id="clear-btn" title="Clear every countdown + pinned callout on screen (yours only — never the raid's)">🗑</button>
   <button id="hide-btn" title="Hide trigger alerts + timers (turn back on from the tray → Overlays)">✕</button>
+  <div class="wp-name-chip" data-wp-name title="Press to fold this window to its title; right-click for the overlay picker">🔔 Alerts &amp; timers</div>
   <div id="drag-controls">
     <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
     <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
@@ -1503,16 +1510,56 @@
   // auction chips are EXEMPT — an open bid window is actionable and must stay
   // visible (#129), so it can never be pushed out by trigger countdowns.
   const MAX_TIMER_ROWS = 6;
+  // 🔒 Lock size (FB-110): the window is the size the raider gave it, so the countdown rows are what FITS it, with the
+  // rest folded into "+N more" (the stack is click-through, so a scroll bar inside it could never be reached). The
+  // callouts win: the centred callout column is lifted clear of the stack by twice the stack's height (--timers-space),
+  // so the stack may take only (window - column - gutters) / 2 — whatever is on the screen as a callout shrinks the
+  // rows, never the other way. Pure: all measurements in, a row count (0..14) out.
+  function lockedRowCap(innerH, colH, tlBlock, rowH, topReserve){
+    var byTop = innerH - topReserve - 8 - tlBlock;
+    var byColumn = (innerH - colH - 24) / 2 - 8 - tlBlock;
+    var room = Math.min(byTop, byColumn);
+    var n = Math.floor((room + 3) / ((rowH || 24) + 3));
+    return Math.max(0, Math.min(14, n));
+  }
+  var _sizeLocked = false, _lastTimers = null, _lastLockedCap = -1;
+  function lockedRowCapNow(){
+    var first = timersEl.querySelector('.timer-row:not(.timer-more)');
+    var tlH = (tlineEl && document.body.classList.contains('has-tline') && tlineEl.offsetHeight) ? tlineEl.offsetHeight + 4 : 0;
+    var topReserve = document.body.classList.contains('setup') ? 58 : 34;
+    _lastLockedCap = lockedRowCap(window.innerHeight, _alertColEl ? _alertColEl.scrollHeight : 0, tlH, (first && first.offsetHeight) || 24, topReserve);
+    return _lastLockedCap;
+  }
+  // The right-click 🔒 (or the dashboard's) arrives on the status the window already listens to.
+  function applySizeLock(s){
+    if (PART) return;   // a canvas panel is sized on the canvas
+    var on = !!(s && s.triggerLockSize);
+    if (on === _sizeLocked) return;
+    _sizeLocked = on;
+    _lastLockedCap = -1;
+    if (_lastTimers) renderTimers(_lastTimers);
+    requestAutoHeight();
+  }
+  // A callout coming or going changes how many rows fit: redraw only when the count moved.
+  function relockRows(){
+    if (!_sizeLocked || !_lastTimers) return;
+    var was = _lastLockedCap;
+    if (lockedRowCapNow() !== was) renderTimers(_lastTimers);
+  }
   function splitVisible(list){
     const loot = [], rest = [];
     for (const t of list) ((t.kind === 'loot') ? loot : rest).push(t);
     // A canvas panel holds as many rows as its height fits, keeping the last
     // slot for "+N more" when it overflows — the raider sized it, so the
-    // panel's edge is the cap, not a fixed six.
-    const cap = PART === 'timers' ? _partRowCap() : MAX_TIMER_ROWS;
-    const shown = rest.slice(0, (PART === 'timers' && rest.length > cap) ? Math.max(1, cap - 1) : cap);
+    // panel's edge is the cap, not a fixed six. A locked window does the same
+    // (lockedRowCap), and may fold every row into the one "+N more" line.
+    const cap = PART === 'timers' ? _partRowCap() : (_sizeLocked ? lockedRowCapNow() : MAX_TIMER_ROWS);
+    const folds = PART === 'timers' || _sizeLocked;
+    const shown = rest.slice(0, (folds && rest.length > cap) ? Math.max(_sizeLocked ? 0 : 1, cap - 1) : cap);
     return { visible: loot.concat(shown), hidden: rest.length - shown.length };
   }
+  if (window.mimic && window.mimic.getStatus) window.mimic.getStatus().then(applySizeLock).catch(function(){});
+  if (window.mimic && window.mimic.onStatus)  window.mimic.onStatus(applySizeLock);
   function _partScale(){
     var s = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--part-scale'));
     return (s > 0) ? s : 1;
@@ -1581,6 +1628,7 @@
     return _moreRow;
   }
   function renderTimers(serverTimers){
+    _lastTimers = serverTimers;
     const seen = new Set();
     const list = collapseTimers(serverTimers).filter(function(t){ return !_isDismissed(t.id) && _partWants(t); });
     for (const t of list){
@@ -1875,7 +1923,7 @@
   // and not tied to the 100 ms paint tick.
   try {
     if (window.ResizeObserver){
-      var _ro = new ResizeObserver(function(){ requestAutoHeight(); });
+      var _ro = new ResizeObserver(function(){ relockRows(); requestAutoHeight(); });
       if (_alertColEl) _ro.observe(_alertColEl);
       if (timersEl)    _ro.observe(timersEl);
     }

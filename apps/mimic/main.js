@@ -35,8 +35,12 @@ const uiPacks = require('./uiPacks');
 const { applyIniKeyEdits } = require('./iniKeyEdits');
 const { visibleUiRects, zealAreas, applyPicks, cleanPicks } = require('./uiClearRects');
 const uiLayouts = require('./uiLayouts');
+const { restorableName, filterRestorable } = require('./uiRestoreGuard');
+const uiRestorePlan = require('./uiRestorePlan');
+const uiSync = require('./uiSync');
 const soundLib = require('./sounds');
 const neuralVoice = require('./neuralVoice');
+const hubs = require('./hubs');
 
 // Hide the default File/Edit/View/Window/Help menubar — this is a focused
 // tray app, those entries just look unfinished. Must run before window
@@ -273,6 +277,10 @@ function defaultConfig() {
     // the Logsync tab edits that list directly.
     importedLogPaths: [],
     botUrl: 'https://wolfpackparse.up.railway.app/api/agent/encounter',
+    // The guild this install points at (hubs.js; DECISIONS §475). Wolf Pack until someone picks another, which is what every
+    // install before the picker is. cfg.botUrl stays what the agent is launched with; the picker writes both. A literal, not
+    // hubs.WOLFPACK_HUB, because tests evaluate this function on its own; test/mimic-guild-picker.test.js holds the two equal.
+    hub: { slug: 'wolfpack', display_name: 'Wolf Pack', url: 'https://wolfpackparse.up.railway.app', site: 'https://wolfpack.quest' },
     token: null,
     // Overlays default OFF on a fresh install — a brand-new user shouldn't be
     // ambushed by floating windows before they've opted in. They turn these on
@@ -1563,25 +1571,34 @@ function _startWindowResize(win) {
     if (s.win.isDestroyed() || Date.now() - s.startedAt > 30_000) { _stopWindowDrag(); return; }
     try {
       const cur = screen.getCursorScreenPoint(), wa = screen.getDisplayMatching(b0).workArea;
-      const nb = {
-        x: b0.x, y: b0.y,
-        width:  Math.max(120, Math.min(wa.x + wa.width - b0.x,  b0.width  + cur.x - c0.x)),
-        height: Math.max(60,  Math.min(wa.y + wa.height - b0.y, b0.height + cur.y - c0.y)),
-      };
+      const nb = _resizeBounds(b0, cur.x - c0.x, cur.y - c0.y, wa, !!s.win.__wpFolded);
       _noteUserResize(s.win, nb);
       s.win.setBounds(nb);
     } catch {}
   }, 16);
 }
+// The ◢ grip's size for a cursor travel of (dx, dy) from b0: top-left fixed, kept inside the screen's work area, 120x60
+// at the least. A FOLDED window (▭ Fold) is its title row tall on purpose, so it sizes in width alone: the height stays
+// the row's, and the 60px floor that would stretch a 32px window on the first step does not apply (the guild lead,
+// 2026-10-28: "minimized overlays need to be draggable and resizable still"). Pure, so a test can run it.
+function _resizeBounds(b0, dx, dy, wa, folded) {
+  return {
+    x: b0.x, y: b0.y,
+    width:  Math.max(120, Math.min(wa.x + wa.width - b0.x, b0.width + dx)),
+    height: folded ? b0.height : Math.max(60, Math.min(wa.y + wa.height - b0.y, b0.height + dy)),
+  };
+}
 // The top-right grip a grow-upward overlay gets (the guild lead, 2026-10-14: "when grow upwards is on, we should be
 // able to drag the top right corner of overlays while not hitting the X button"). A grow-upward overlay is parked
 // by its BOTTOM edge, so that edge and the left edge stay put: the cursor's right/up travel widens the window and
 // raises its top. Pure, so the bottom-edge rule and the minimums are testable. `min` is the window's own minimum
-// size where it sets one; the floor of 120x60 is the same one the bottom-right grip uses.
-function _resizeUpBounds(b0, dx, dy, wa, min) {
+// size where it sets one; the floor of 120x60 is the same one the bottom-right grip uses. `folded` (▭ Fold): width alone,
+// the window keeps the row's height and both its edges (see _resizeBounds).
+function _resizeUpBounds(b0, dx, dy, wa, min, folded) {
   const bottom = b0.y + b0.height;
   const minW = Math.max(120, (min && min.width) || 0), minH = Math.max(60, (min && min.height) || 0);
   const width  = Math.max(minW, Math.min(wa.x + wa.width - b0.x, b0.width + dx));
+  if (folded) return { x: b0.x, y: b0.y, width, height: b0.height };
   const height = Math.max(minH, Math.min(bottom - wa.y,          b0.height - dy));
   return { x: b0.x, y: bottom - height, width, height };
 }
@@ -1598,7 +1615,7 @@ function _startWindowResizeUp(win) {
     if (s.win.isDestroyed() || Date.now() - s.startedAt > 30_000) { _stopWindowDrag(); return; }
     try {
       const cur = screen.getCursorScreenPoint(), wa = screen.getDisplayMatching(b0).workArea;
-      const nb = _resizeUpBounds(b0, cur.x - c0.x, cur.y - c0.y, wa, { width: mw, height: mh });
+      const nb = _resizeUpBounds(b0, cur.x - c0.x, cur.y - c0.y, wa, { width: mw, height: mh }, !!s.win.__wpFolded);
       _noteUserResize(s.win, nb);
       s.win.setBounds(nb);
     } catch {}
@@ -1774,7 +1791,10 @@ function _loadUiDeferred() {
   // on-camp save with that stale copy — the bug key edits exist to end (the
   // guild lead, 2026-10-05) — so it is dropped, never applied.
   // A queued layout switch (kind 'layout') holds a layout id, not file texts, so it is not the old format.
-  const keep = _uiDeferred.filter(e => e && ((e.kind === 'layout' && e.layoutId) || (Array.isArray(e.edits) && e.edits.length)));
+  // A queued restore (kind 'restore') holds a backup's files, but it is merged part by part into the files as
+  // EQ leaves them when it applies (_applyDeferredRestore), so it is not the old format either.
+  const keep = _uiDeferred.filter(e => e && ((e.kind === 'layout' && e.layoutId) ||
+    (e.kind === 'restore' && e.files && Array.isArray(e.parts) && e.parts.length) || (Array.isArray(e.edits) && e.edits.length)));
   const dropped = _uiDeferred.length - keep.length;
   if (dropped) {
     const msg = `[ui-studio] dropped ${dropped} pending deferred save(s) in the old whole-file format — applying one would overwrite EQ's own save with a stale copy; open UI Studio and Save again\n`;
@@ -1823,6 +1843,7 @@ function _applyDeferredLayout(entry) {
 }
 function _applyDeferredEntry(entry) {
   if (entry && entry.kind === 'layout') return _applyDeferredLayout(entry);
+  if (entry && entry.kind === 'restore') return _applyDeferredRestore(entry);
   let written = 0;
   // Key edits only, applied to the file as EQ just wrote it on logout (its copy
   // → .bak-eq). An old whole-text entry is refused even if one got past
@@ -1856,6 +1877,12 @@ async function _tickUiDeferred() {
     for (const entry of _uiDeferred) {
       const charLower = String(entry.character || '').toLowerCase();
       if (_uiCharActiveInZeal(charLower)) { entry.sawActive = true; keep.push(entry); continue; }
+      // Keybinds live in eqclient.ini, which EVERY running EverQuest writes on exit: a restore that carries
+      // them waits for all of EverQuest to close, not just this character's camp.
+      if (entry.kind === 'restore' && (entry.parts || []).includes('keybinds')) {
+        if (eqUp === null) { try { eqUp = await _isEqRunning(); } catch { eqUp = false; } }
+        if (eqUp) { keep.push(entry); continue; }
+      }
       // Not in Zeal. Apply when we previously saw it in-game (logged out now),
       // or it was never in-game AND no EverQuest is running (nothing to clobber).
       if (!entry.sawActive) {
@@ -2044,6 +2071,7 @@ function _retireZealChar(character, why, swappedTo) {
   if (!_zealLiveByChar.has(character)) return;
   _zealLiveByChar.delete(character);
   appendAgentLog(`[zeal] retired live state for ${character}${why ? ' (' + why + ')' : ''}\n`);
+  try { _uiScheduleAutoBackup(character); } catch { /* Keep in sync is optional */ }
   if (!agentPort) return;
   // swapped_to = the character that took over this client (same-pid swap).
   // The agent forwards it to the bot so /raid can show "(swapped to X)".
@@ -2614,16 +2642,24 @@ async function startMimicLink() {
   }
   const cfg = loadConfig();
   const base = _botBaseUrl(cfg);
+  const hub = hubs.hubOf(cfg);
   let resp;
   try {
-    resp = await _httpsJsonPost(base, '/api/mimic-link/start', { agent_version: 'mimic ' + app.getVersion() });
+    // `hub` names the guild the raider picked, for a guild other than Wolf Pack only (hubs.linkStartBody): the commons bot
+    // answers for many guilds and puts the slug on the link code; Wolf Pack's request is the one every Mimic has sent.
+    resp = await _httpsJsonPost(base, '/api/mimic-link/start', hubs.linkStartBody(hub, 'mimic ' + app.getVersion()));
   } catch (e) {
-    return { ok: false, error: 'Could not reach the Wolf Pack server: ' + (e && e.message || e) };
+    return { ok: false, error: 'Could not reach the ' + hub.display_name + ' server: ' + (e && e.message || e) };
   }
   if (resp.status !== 200 || !resp.body || !resp.body.device_code) {
     return { ok: false, error: 'Server rejected the link request' + (resp.body?.error ? ': ' + resp.body.error : '') };
   }
-  const { user_code, device_code, verification_url, verification_url_complete, expires_in, poll_interval } = resp.body;
+  // The address to open comes from the guild's server, and Mimic opens it in a browser: https only, and moved onto the
+  // guild's own site when it is a listed guild (hubs.linkUrls), unless the reply names the hub (the bot chose the site).
+  const links = hubs.linkUrls(hub, resp.body);
+  if (!links) return { ok: false, error: 'The ' + hub.display_name + ' server gave a sign-in address Mimic will not open.' };
+  const { user_code, device_code, expires_in, poll_interval } = resp.body;
+  const { verification_url, verification_url_complete } = links;
   const expiresAt = Date.now() + (expires_in * 1000);
   const pub = { user_code, verification_url, verification_url_complete, expires_at: expiresAt };
   _linkInFlight = { device_code, user_code, expires_at: expiresAt, _pub: pub, timer: null };
@@ -2663,15 +2699,11 @@ async function startMimicLink() {
           const c = loadConfig();
           // The session token IS the per-user upload token now — store it
           // encrypted at rest and retire any legacy plaintext.
-          storeUploadToken(c, p.body.session_token, {
-            user_id:      p.body.user_id,
-            discord_id:   p.body.discord_id,
-            display_name: p.body.display_name,
-            is_officer:   !!p.body.is_officer,
-            role_names:   Array.isArray(p.body.role_names) ? p.body.role_names : [],
-          });
+          // A member of a hub guild also keeps that guild's slug and role (hubs.identityFromPoll), which Settings names.
+          storeUploadToken(c, p.body.session_token, hubs.identityFromPoll(p.body));
           c.session.linked_at = Date.now();
           saveConfig(c);
+          try { _guildThemeSet(p.body.theme); } catch (e) { void e; }   // the guild's colours ride the sign-in reply
           _linkInFlight = null;
           pushMimicSession();
           pushStatus();
@@ -2716,6 +2748,7 @@ async function signOutMimic() {
   delete cfg.session;
   delete cfg.token;     // also clear any legacy top-level token
   saveConfig(cfg);
+  try { _guildThemeSet(null); } catch (e) { void e; }   // the guild's colours go with its session
   pushMimicSession();
   pushStatus();
   // Drop the agent back to local-only by relaunching without a token.
@@ -2725,6 +2758,67 @@ async function signOutMimic() {
     try { await _httpsJsonPost(_botBaseUrl(cfg), '/api/mimic-link/revoke', {}, { 'X-Wolfpack-Mimic-Session': token }); } catch (e) { void e; }
   }
 }
+// ── Guild picker (DECISIONS §475, first slice) ──────────────────────────────────────────────────────────────────────
+// Which guild's bot this install talks to. The list comes from the hub directory (raidmimic.com/api/hubs until the hosted
+// bot serves one), cached in userData and refreshed at most daily; a guild that is not listed is pasted as an address.
+// The pure parts (cleaning the list, the stored shape, the link addresses) are in hubs.js. A session belongs to one
+// guild's bot, so switching signs out first: the old bot is told (best effort), the Chat cache's grace window starts, and
+// the raider links again.
+const HUB_CACHE_FILE = () => path.join(app.getPath('userData'), 'hubs.json');
+function _readHubCache() {
+  try { const c = JSON.parse(fs.readFileSync(HUB_CACHE_FILE(), 'utf8')); if (c && Array.isArray(c.hubs)) return c; } catch (e) { void e; }
+  return null;
+}
+async function getHubDirectory(force) {
+  const cached = _readHubCache();
+  const now = Date.now();
+  if (!force && hubs.directoryFresh(cached, now)) return hubs.sanitizeDirectory(cached.hubs);
+  try {
+    const raw = await Promise.race([
+      _httpsJson(hubs.HUB_DIRECTORY_URL, { headers: { Accept: 'application/json' } }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 6000)),
+    ]);
+    const list = hubs.sanitizeDirectory(raw);
+    try { fs.writeFileSync(HUB_CACHE_FILE(), JSON.stringify({ fetched_at: now, hubs: list })); } catch (e) { void e; }
+    return list;
+  } catch (e) {
+    void e;   // offline or the directory is down: the last copy, or just Wolf Pack
+    return hubs.sanitizeDirectory(cached ? cached.hubs : []);
+  }
+}
+// choice is { slug } (a listed guild, looked up in the directory here rather than trusted from the page) or { address }.
+async function setHub(choice) {
+  const c = choice || {};
+  let next = null;
+  if (c.address) next = hubs.parseGuildAddress(c.address);
+  else if (c.slug) next = (await getHubDirectory(false)).find(h => h.slug === String(c.slug)) || null;
+  if (!next) return { ok: false, error: c.address ? 'That is not a guild address Mimic can use. Paste the https address your officer gave you.' : 'That guild is not in the list.' };
+  const cfg = loadConfig();
+  const prev = hubs.hubOf(cfg);
+  if (hubs.sameHub(prev, next)) {
+    // Same bot: only the name or site may differ, and a session stays valid.
+    cfg.hub = { slug: next.slug, display_name: next.display_name, url: next.url, site: next.site || '' };
+    saveConfig(cfg); pushStatus();
+    return { ok: true, changed: false, signedOut: false, hub: hubs.hubOf(cfg) };
+  }
+  const oldToken = resolveUploadToken(cfg) || '';
+  const oldBase = _botBaseUrl(cfg);
+  cancelMimicLink();
+  if (oldToken) { try { _chatCacheOnLogout(); } catch (e) { void e; } }
+  const after = loadConfig();
+  hubs.applyHub(after, next);
+  saveConfig(after);
+  try { _guildThemeSet(null); } catch (e) { void e; }   // another guild: its own colours arrive with its sign-in
+  pushMimicSession();
+  pushStatus();
+  appendAgentLog('[mimic] guild changed to ' + next.display_name + ' — restarting agent without a token\n');
+  if (agentProc) { try { agentProc.kill(); } catch (e) { void e; } }
+  if (oldToken) {
+    try { await _httpsJsonPost(oldBase, '/api/mimic-link/revoke', {}, { 'X-Wolfpack-Mimic-Session': oldToken }); } catch (e) { void e; }
+  }
+  return { ok: true, changed: true, signedOut: !!oldToken, hub: hubs.hubOf(loadConfig()) };
+}
+// ── end Guild picker ──
 // ── Chat cache: the Chat overlay's feed, kept across a restart ───────────────────────────────────────────
 // The guild lead, 2026-10-17: "cache the filled in chat overlay data encrypted locally and invalidate it on logout if a
 // fresh session isn't established within a reasonable timeframe, and wipe before revoking access". The agent owns the file
@@ -2996,6 +3090,11 @@ function _pollBlindState() {
       // Per-character overlay profiles — swap the visibility set when the
       // active toon changes (cheap; only acts on an actual change).
       try { _onActiveCharacter(s && s.activeCharacter); } catch {}
+      // The guild's colour theme, as the agent holds it from the bot's poll (the cache covers the rest of the time).
+      // A null theme counts only once the agent has heard from the bot (themeKnown): a fresh agent holds none yet.
+      try { if (s && s.themeKnown) _guildThemeSet(s.theme); } catch {}
+      // …and their last layout (screen, Canvas and all), unless another client is still live (see _lastLayoutObserve).
+      try { _lastLayoutObserve(s && s.activeCharacter, s && s.zealClients); } catch {}
       // Fresh-install class seeding (one-shot; no-ops instantly once done).
       try { _maybeSeedClassSet(s); } catch {}
       const a = s && s.blind && s.blind.active;
@@ -3093,14 +3192,30 @@ function _captureCharProfile(charLower) {
   _saveLayoutSnapshot();
   return charLower;
 }
+// The Canvas is a choice, and a saved layout is a snapshot: one saved while the Canvas was off put it back OFF at
+// every launch and every character change (_applyCharProfile writes the saved flag over the live one), whatever the
+// person had chosen since; one saved while it was on brought it back after they closed it (the guild lead,
+// 2026-10-30: "overlay sets aren't remembering if a character wanted to use canvas or not"). So when the person
+// switches the Canvas on or off themselves, the active character's saved layout takes the answer too. Only a layout
+// that exists is touched (saving one stays the person's call), and only the Canvas flag in it. Returns whether the
+// profile changed; the caller's own saveConfig(cfg) writes it.
+function _noteCanvasChoice(cfg) {
+  const k = _activeCharName ? String(_activeCharName).toLowerCase() : null;
+  const prof = k && cfg && cfg.charProfiles && cfg.charProfiles[k];
+  if (!prof || !prof.show || typeof prof.show !== 'object') return false;
+  const on = !!cfg.showCanvas;
+  if (prof.show.showCanvas === on) return false;
+  prof.show.showCanvas = on;
+  return true;
+}
 // FB-101 (a member, 2026-10-27): "The overlays do not save when the windows are set up to one's liking and then
 // manually saved in the interface". 💾 Save current layout kept ONLY which overlays are on (the profile above), so
 // nothing the person arranged was in it. It now also writes where each overlay sits, how big, how it is drawn and
 // the heights dragged to, as the overlay set "Saved layout" — the same snapshot and store as 🗂 Overlay sets.
-// It is NOT applied when the character changes (_applyCharProfile stays visibility-only: with two clients open the
-// active character flips as you alt-tab and the screen must not rearrange itself); ↩ Restore saved layout, on the
-// tray and the Overlays tab, is the ask for it. Positions belong to the screen setup, not the character, so there
-// is one snapshot, not one per character.
+// It is NOT applied by the profile on a character change (_applyCharProfile stays visibility-only); ↩ Restore saved
+// layout, on the tray and the Overlays tab, is the ask for it. What follows a character is their LAST layout
+// (_lastLayoutObserve, below the overlay sets), which waits while another client is live. This one is the manual
+// snapshot: one, not one per character.
 const _SAVED_LAYOUT_SET = 'Saved layout';
 function _saveLayoutSnapshot() {
   try {
@@ -3162,10 +3277,13 @@ function _onActiveCharacter(name) {
   _activeCharName = name;
   if (cl === _lastProfileChar) { if (shownChanged) { try { buildTrayMenu(); } catch {} } return; }
   _lastProfileChar = cl;
+  try { _applyCharOverlayState(_charStateKey(cl)); } catch (e) { void e; }   // their folded/mini overlays come back; the picker order follows them
   const cfg = loadConfig();
   // _applyCharProfile rebuilds the tray itself; when the feature is off we
   // still rebuild so the "Save layout for <toon>" label tracks the new char.
-  if (cfg.charProfilesEnabled && _applyCharProfile(cl)) return;
+  // A character with a last layout is handled by _lastLayoutObserve (which waits while another client is live);
+  // the visibility-only profile is for one that has none yet.
+  if (cfg.charProfilesEnabled && !_hasLastLayout(cl) && _applyCharProfile(cl)) return;
   try { buildTrayMenu(); } catch {}
 }
 
@@ -3246,7 +3364,7 @@ function _charProfileTrayItems() {
   const cfg = loadConfig();
   const char  = _activeCharName;
   const charLc = char ? char.toLowerCase() : null;
-  const hasProfile = !!(charLc && cfg.charProfiles && cfg.charProfiles[charLc]);
+  const hasProfile = !!(charLc && ((cfg.charProfiles && cfg.charProfiles[charLc]) || _hasLastLayout(charLc)));
   const items = [
     { type: 'separator' },
     { label: 'Per-character overlay layouts', type: 'checkbox',
@@ -3272,6 +3390,7 @@ function _charProfileTrayItems() {
       click: () => {
         const c = loadConfig();
         if (c.charProfiles) { delete c.charProfiles[charLc]; saveConfig(c); }
+        _forgetLastLayout(charLc);
         buildTrayMenu();
       } });
   }
@@ -3287,10 +3406,9 @@ function _charProfileTrayItems() {
 // canvas panels; overlaySets.js keeps them in overlay-sets.json beside the
 // config, so they work with no network. The hotkey is EverQuest's own: a social
 // with `/pipe mimic next` on a hotbar button.
-// Loading is always asked for — /pipe, the tray or Settings — never done on a
-// character switch: with two clients open the active character flips as you
-// alt-tab, and the screen must not rearrange itself under you. The
-// per-character layouts above stay until sets replace them.
+// Loading a NAMED set is always asked for — /pipe, the tray or Settings. A character switch brings back that
+// character's own last layout instead (_lastLayoutObserve), and only when the other client has gone quiet: with two
+// clients open the active character flips as you alt-tab, and the screen must not rearrange itself under you.
 const overlaySets = require('./overlaySets');
 // The XS … XL width presets: one table for the window's right-click menu (overlay-resize-preset) and the Canvas's Width row.
 const overlaySizes = require('./overlaySizes');
@@ -3378,6 +3496,7 @@ function _applyOverlaySet(set) {
     }
   }
   if (set.canvas) cfg.canvasLayouts = set.canvas;
+  _noteCanvasChoice(cfg);   // a set that turns the Canvas on or off is that character's answer too
   saveConfig(cfg);
   applyAllVisibility();
   for (const [key, win] of _overlayEntries()) {
@@ -3400,6 +3519,149 @@ function _applyOverlaySet(set) {
   try { buildTrayMenu(); } catch { /* */ }
   return true;
 }
+// ── Each character's LAST layout (the guild lead, 2026-10-30, after raiders said overlay setup "has become a lot"):
+// "save the state for each character as changes are made, make them a 'last overlay' that comes back up when you
+// swap to that character. Make sure we remember if someone was using the canvas, and don't automatically move other
+// overlays into canvas unless the user wants it."
+// It is the overlay-set snapshot (_captureOverlaySet: which overlays are on, where, how drawn, the Canvas and its
+// panels), kept per character in overlay-last.json beside the sets, written by itself and applied by itself:
+//  • SAVE: _lastLayoutWatch looks at the config once a second. A change that has held still for 2 s is written for the
+//    character being played. Never while everything is hidden, while an overlay is in the person's hand, or in the 3 s
+//    after Mimic itself applied a layout (the windows echo their new bounds back as config writes, and that is not an edit).
+//  • SWAP: _lastLayoutObserve, from the 1 s state poll. The screen belongs to one character at a time (_lastOwner).
+//    MULTI-BOX GUARD: with two clients open the active character flips as you alt-tab, and the screen must not
+//    rearrange itself under you (the long comment above _saveLayoutSnapshot). So a new active character's layout is
+//    applied only when the character the screen belongs to has gone quiet (no Zeal sample for 60 s: logged out, or
+//    camped to switch), or at the first look after launch. Both live: nothing moves, and it is looked at again every
+//    poll, so the layout lands once the other box closes. An agent that does not report its clients never counts as quiet.
+//  • A character with no memory yet keeps the screen as it is: nothing is invented for them, and nothing moves into
+//    the Canvas on their behalf. Their first change starts their record.
+//  • The Canvas: its on/off and its panels are in the snapshot, so a character who used it gets it back and one who did
+//    not stays without it. A layout with no Canvas panels clears the stored ones (cfg.canvasLayouts is one shared slot;
+//    left alone, the next character to switch the Canvas on would inherit this one's pieces and their overlays would
+//    leave the screen for it).
+//  • The older "Save layout for <character>" (visibility only) stays as a manual snapshot, and is used for a character
+//    only until they have a last layout. cfg.charLastLayoutOff = true switches all of this off (no control; a field escape).
+const _LAST_FILE = () => path.join(app.getPath('userData'), 'overlay-last.json');
+const _LAST_QUIET_MS = 60 * 1000;    // the agent's own activeCharacter window
+const _LAST_SETTLE_MS = 2000;
+const _LAST_HOLD_MS = 3000;
+let _lastOwner = null;               // lowercase name of the character the screen belongs to
+let _lastBaseFp = null;              // fingerprint of the screen as last written, applied or adopted
+let _lastSeenFp = null;              // the previous look, to tell a change that is still moving
+let _lastChangedAt = 0;
+let _lastHoldUntil = 0;
+let _lastEditedBeforeChar = false;   // the person arranged things before Mimic knew who was playing
+let _lastClients = null;             // zealClients from the latest state poll; null = the agent did not say
+// Everything a layout is made of, as one string, read from the config alone (cheap enough for once a second).
+function _layoutFingerprint(cfg) {
+  const parts = [];
+  for (const f of _HIDEALL_FLAGS) parts.push(f === 'showTriggerOverlay' ? cfg[f] !== false : !!cfg[f]);
+  for (const bk of _SET_BOUNDS_KEYS) parts.push(cfg[bk], cfg[bk + 'Sig'], cfg[bk + 'Floor']);
+  for (const k of _SET_LOOK_KEYS) parts.push(cfg[k]);
+  parts.push(cfg.canvasLayouts);
+  return JSON.stringify(parts);
+}
+function _lastWho() { return _activeCharName ? String(_activeCharName).toLowerCase() : null; }
+// Did this character's Zeal send a sample in the last minute? An unknown client list answers yes: not knowing is never
+// a reason to move the screen.
+function _charIsLive(lower, clients, now) {
+  if (!Array.isArray(clients)) return true;
+  return clients.some(c => c && String(c.character || '').toLowerCase() === lower && c.updatedAt > 0 && (now - c.updatedAt) < _LAST_QUIET_MS);
+}
+function _hasLastLayout(cl) {
+  try { return !!overlaySets.lastFor(overlaySets.loadLast(_LAST_FILE()), cl); } catch { return false; }
+}
+function _saveLastLayout(cl) {
+  try {
+    const file = _LAST_FILE();
+    const store = overlaySets.loadLast(file);
+    const snap = _captureOverlaySet();
+    snap.fp = _layoutFingerprint(loadConfig());   // lets a swap skip re-applying the screen that is already there
+    const r = overlaySets.putLast(store, cl, snap);
+    if (!r.ok) { appendAgentLog(`[layout] last layout not kept: ${r.error}\n`); return false; }
+    overlaySets.save(file, store);
+    return true;
+  } catch (e) {
+    appendAgentLog(`[layout] last layout not kept: ${e && e.message}\n`);
+    return false;
+  }
+}
+function _forgetLastLayout(cl) {
+  try {
+    const file = _LAST_FILE();
+    const store = overlaySets.loadLast(file);
+    if (!overlaySets.removeLast(store, cl)) return false;
+    overlaySets.save(file, store);
+    return true;
+  } catch { return false; }
+}
+// Write the screen now if it has changed since the last write: the swap does it for the character being left, and
+// shutdown for the one being played, so an edit inside the 2 s wait is not lost.
+function _lastLayoutFlush(cl) {
+  if (!cl || _agentOnly() || _hideAllActive || _lastBaseFp === null) return false;
+  const cfg = loadConfig();
+  if (cfg.charLastLayoutOff === true) return false;
+  const fp = _layoutFingerprint(cfg);
+  if (fp === _lastBaseFp) return false;
+  _lastBaseFp = _lastSeenFp = fp;
+  return _saveLastLayout(cl);
+}
+// Once a second. → true when it wrote a layout.
+function _lastLayoutWatch(now) {
+  now = now || Date.now();
+  if (_agentOnly()) return false;
+  const cfg = loadConfig();
+  if (cfg.charLastLayoutOff === true) return false;
+  const fp = _layoutFingerprint(cfg);
+  if (_lastBaseFp === null || now < _lastHoldUntil) {   // the first look, or a layout Mimic applied settling: this IS the baseline
+    _lastBaseFp = _lastSeenFp = fp; _lastChangedAt = now;
+    return false;
+  }
+  if (_hideAllActive) return false;                     // everything hidden on purpose is not a layout
+  if (fp !== _lastSeenFp) { _lastSeenFp = fp; _lastChangedAt = now; }
+  if (fp === _lastBaseFp) return false;
+  if (now - _lastChangedAt < _LAST_SETTLE_MS || _dragSession) return false;   // still moving, or in the person's hand
+  const cl = _lastWho();
+  if (!cl) { _lastEditedBeforeChar = true; return false; }   // _lastLayoutObserve files it under whoever turns up first
+  _lastBaseFp = fp;
+  _lastOwner = cl;                                       // an edit makes the screen this character's
+  return _saveLastLayout(cl);
+}
+function _switchLastLayout(cl, now) {
+  const prev = _lastOwner;
+  if (prev) _lastLayoutFlush(prev);                      // the screen being left keeps its last edit
+  _lastOwner = cl;
+  const fp0 = _layoutFingerprint(loadConfig());
+  if (_lastEditedBeforeChar && !prev) {                  // arranged before anyone was known: that arrangement is theirs
+    _lastEditedBeforeChar = false;
+    _lastBaseFp = _lastSeenFp = fp0;
+    _saveLastLayout(cl);
+    return false;
+  }
+  let snap = null;
+  try { snap = overlaySets.lastFor(overlaySets.loadLast(_LAST_FILE()), cl); } catch { /* none */ }
+  if (!snap || (snap.fp && snap.fp === fp0)) return false;   // no memory of them yet, or the screen is already theirs
+  _lastHoldUntil = now + _LAST_HOLD_MS;
+  _applyOverlaySet(Object.assign({}, snap, { canvas: snap.canvas || {} }));
+  _lastBaseFp = _lastSeenFp = _layoutFingerprint(loadConfig());
+  appendAgentLog(`[layout] ${cl}'s last layout is back on screen\n`);
+  return true;
+}
+// From the state poll: who is being played, and every client the agent has heard from (zealClients). → true when a
+// layout was applied.
+function _lastLayoutObserve(name, clients, now) {
+  now = now || Date.now();
+  _lastClients = Array.isArray(clients) ? clients : null;   // a poll that does not say is "unknown", never last poll's answer
+  const cl = name ? String(name).toLowerCase() : null;
+  if (!cl || cl === _lastOwner || _agentOnly()) return false;
+  if (loadConfig().charLastLayoutOff === true) return false;
+  if (_lastOwner && _charIsLive(_lastOwner, _lastClients, now)) return false;   // multi-box: both live, the screen stays
+  if (_hideAllActive || setupMode || _dragSession) return false;                // not under the person's hands; the next poll asks again
+  return _switchLastLayout(cl, now);
+}
+// ── end of the last layout ──
+
 // A short line on the trigger overlay — where a raider is already looking; a
 // Windows notification does not show over full-screen EverQuest. It goes
 // through the agent's own preview path (/api/triggers/fire), so nothing new
@@ -5215,6 +5477,7 @@ function _settledBounds(b, stash) {
 // graceful shutdown applies every pending window to ONE cfg and writes the file once.
 function _applyBounds(cfg, key, win) {
   const b = _settledBounds(win.getBounds(), win.__wpPreMenuBounds);
+  if (win.__wpFolded && win.__wpFoldPrev) b.height = win.__wpFoldPrev.h;   // a folded window is saved at the height it will unfold to
   cfg[key] = { x: b.x, y: b.y, width: b.width, height: b.height };
   cfg[key + 'Sig'] = _screenSignature();
   // Remembered per screen setup — but not while the screens are settling,
@@ -5292,26 +5555,46 @@ function _floorWith(prev, sig, h) {
 // every page tick and the config read is a file read.
 function _heightFloorFor(win) {
   try {
-    if (win.__wpFloor === undefined) {
+    const slot = _floorSlot(win);
+    if (win[slot] === undefined) {
       const key = _boundsKeyForWindow(win);
-      win.__wpFloor = (key && loadConfig()[key + 'Floor']) || null;
+      win[slot] = (key && loadConfig()[_floorField(win, key)]) || null;
     }
-    return _floorFor(win.__wpFloor, _screenSignature());
+    return _floorFor(win[slot], _screenSignature());
   } catch { return 0; }
 }
+// A designed mini (win.__wpMini, set by _sendOverlayMini) is a different SHAPE of window, so the height dragged on it is
+// its own floor (<key>MiniFloor, cached as __wpMiniFloor) and the full-size floor is neither read nor overwritten there.
+// Without the split a height dragged on a mini became the full-size floor the moment it unminimized, and the full-size
+// floor held the mini open at its tall height (the guild lead, 2026-10-28: "minimized overlays need to be draggable and
+// resizable still"). A folded window records and reads neither (see _noteUserResize, overlay-auto-height).
+function _floorSlot(win) { return win && win.__wpMini ? '__wpMiniFloor' : '__wpFloor'; }
+function _floorField(win, key) { return key + (win && win.__wpMini ? 'MiniFloor' : 'Floor'); }
 function _setFloor(win, key, h) {
-  const cfg = loadConfig();
-  const next = _floorWith(cfg[key + 'Floor'], _screenSignature(), h);
-  if (next) cfg[key + 'Floor'] = next;
-  else delete cfg[key + 'Floor'];
+  const cfg = loadConfig(), field = _floorField(win, key);
+  const next = _floorWith(cfg[field], _screenSignature(), h);
+  if (next) cfg[field] = next;
+  else delete cfg[field];
   saveConfig(cfg);
-  win.__wpFloor = next;
+  win[_floorSlot(win)] = next;
 }
 // A drag ends when 'will-resize' has been quiet for 400 ms (the bounds save's
 // debounce). startH is the height before the gesture's first step: a drag that
 // left the height where it was (an edge pulled sideways) sets no floor.
 function _noteUserResize(win, nb) {
   try {
+    // A folded window (▭ Fold) is one row tall by design: a height pulled on it (a native edge in setup; the grips pin
+    // theirs) is no height choice and must never become a floor, or it would hold the window open once it unfolds. Its
+    // width is a choice and is saved with the bounds. The height goes back to the row when the gesture is quiet, through
+    // the same exact refit ↕ Fit height uses.
+    if (win && win.__wpFolded) {
+      clearTimeout(win.__wpRefoldT);
+      win.__wpRefoldT = setTimeout(() => {
+        win.__wpRefoldT = null;
+        try { if (!win.isDestroyed() && win.__wpFolded) { win.__wpFitNowAt = Date.now(); win.webContents.send('wp-refit'); } } catch { /* mid-close */ }
+      }, 400);
+      return;
+    }
     if (!nb || win.__wpHeightMode !== 'fit' || !_boundsKeyForWindow(win)) return;
     const g = win.__wpResizeGesture || (win.__wpResizeGesture = { startH: win.getBounds().height, lastH: 0, timer: null });
     g.lastH = nb.height;
@@ -5401,6 +5684,7 @@ function _gracefulShutdown(reason, cfgPatch) {
   try { appendAgentLog(`[mimic] shutting down cleanly (${reason})\n`); } catch { /* log only */ }
   try { _flushAllBounds(cfgPatch); }
   catch (e) { try { appendAgentLog(`[mimic] saving window positions failed: ${e && e.message}\n`); } catch { /* log only */ } }
+  try { _lastLayoutFlush(_lastWho()); } catch { /* the 2 s watcher already kept everything before this */ }
   try { _stopEqPolling(); _stopFocusWatcher(); } catch { /* best effort */ }
   _shutdownP = _stopAgentGracefully(AGENT_STOP_TIMEOUT_MS).then((clean) => {
     _shutdownDone = true;
@@ -6503,7 +6787,7 @@ ipcMain.handle('ui-studio-write-bundle', (_e, eqDir, bundle, opts) => {
       if (typeof contents !== 'string' || contents.length === 0) continue;
       // Sanity: only allow plain ini filenames in the EQ dir — no path
       // traversal, no overwriting files outside the directory.
-      if (!/^[\w.-]+\.ini$/i.test(name)) continue;
+      if (!restorableName(name)) continue;
       const target = path.join(d, name);
       _backupAndWriteFile(target, contents, backupTag);
       written.push(name);
@@ -6787,6 +7071,7 @@ ipcMain.handle('ui-studio-write-pages', (_e, eqDir, edits) => {
     const byFile = new Map();
     for (const e of edits) {
       if (!e || !e.file || !e.section || !e.key) continue;
+      if (!restorableName(String(e.file))) continue;   // settings (.ini) files only
       const fp = path.join(d, String(e.file));
       // Path-traversal guard: must resolve inside eqDir.
       const resolved = path.resolve(fp);
@@ -7976,7 +8261,7 @@ function _canvasStatePayload() {
   // screens: the displays this window covers, relative to its corner (one while not spanning); span / spanWhy:
   // the switch and, when it cannot be on, why; rev: bumped when main rewrote the layout under the Canvas.
   const scrs = screen.getAllDisplays(), span = _canvasSpanOn(cfg);
-  return { res, layout, edit: _canvasArrange, displays: scrs.length,
+  return { res, layout, edit: _canvasArrange, displays: scrs.length, splitFitOff: !!cfg.canvasSplitFitOff,
     screens: _canvasScreens(scrs, d, span), span, spanWhy: _canvasSpanWhy(scrs) || '', rev: _canvasLayoutRev,
     backdrop: !!((cfg.overlayBackdrop && typeof cfg.overlayBackdrop === 'object') ? cfg.overlayBackdrop : {}).canvas };
 }
@@ -7990,7 +8275,7 @@ function _setCanvasArrange(on, consented) {
     return false;
   }
   _canvasArrange = !!on;
-  if (_canvasArrange && !cfg.showCanvas) { cfg.showCanvas = true; saveConfig(cfg); }
+  if (_canvasArrange && !cfg.showCanvas) { cfg.showCanvas = true; _noteCanvasChoice(cfg); saveConfig(cfg); }
   if (_canvasArrange && !canvasWindow) createCanvasWindow();
   applyCanvasVisibility();
   applyTriggerVisibility();
@@ -9825,6 +10110,8 @@ app.on('browser-window-created', (_e, win) => {
   // Overlays follow EverQuest's z-order: a window that comes up (or comes back from hide) while another app is in front
   // must not appear on top of it. Non-overlays resolve no entry and fall straight through.
   try { win.on('show', () => { try { _applyOverlayZ(win); } catch (e) { void e; } }); } catch (e) { void e; }
+  // A shown overlay is "used" by whoever is playing: it orders the overlay picker (see _noteOverlayShown).
+  try { win.on('show', () => { try { _noteOverlayShown(win); } catch (e) { void e; } }); } catch (e) { void e; }
 });
 
 // ── Hide-all-overlays toggle ────────────────────────────────────────────────
@@ -10390,7 +10677,7 @@ function currentStatus() {
     hotkeysBlocked: Object.assign({}, _blockedHotkeys),
     // ▭ Mini mode for the dashboard's Overlays table: which overlays have a
     // mini, which are mini now, which are pinned mini (📌), and the Ctrl+Shift+M latch.
-    miniCapable: _MINI_KEYS.slice(),
+    miniCapable: _MINI_KEYS.concat(_FOLD_KEYS),
     overlayMini: Object.assign({}, (cfg.overlayMini && typeof cfg.overlayMini === 'object') ? cfg.overlayMini : {}),
     overlayMiniPinned: Object.assign({}, (cfg.overlayMiniPinned && typeof cfg.overlayMiniPinned === 'object') ? cfg.overlayMiniPinned : {}),
     miniAllActive: !!_miniAllActive,
@@ -10410,6 +10697,7 @@ function currentStatus() {
     showHud: !!cfg.showHud,
     enableTriggerTts: !!cfg.enableTriggerTts,
     triggerTimersTopDown: !!cfg.triggerTimersTopDown,
+    triggerLockSize: !!cfg.triggerLockSize,   // 🔒 the alerts window keeps the size it was given
     showCharm: !!cfg.showCharm,
     showPets: !!cfg.showPets,
     showMobInfo: !!cfg.showMobInfo,
@@ -10483,6 +10771,8 @@ function currentStatus() {
     // crash-loop auto-rollback so the dashboard/settings can surface it).
     lkgReverted: _lkgReverted && (Date.now() - _lkgReverted.at < 30 * 60_000) ? _lkgReverted : null,
     botUrl: cfg.botUrl,
+    // The guild this install points at ({ slug, display_name, url, site }); the pages name it in the sign-in copy.
+    hub: hubs.hubOf(cfg),
     // Mimic Discord login (v1). `mimicSession` is the cached identity if
     // we've completed the device-code dance; `mimicLinking` is the in-flight
     // user code so the Settings window can show it while polling.
@@ -10490,6 +10780,8 @@ function currentStatus() {
       discord_id:   cfg.session.identity?.discord_id   || null,
       display_name: cfg.session.identity?.display_name || null,
       is_officer:   !!cfg.session.identity?.is_officer,
+      // The guild a hub session belongs to ({ slug, display_name, role }); null for a Wolf Pack session.
+      guild:        hubs.sessionGuild(cfg.session.identity, hubs.hubOf(cfg)),
       linked_at:    cfg.session.linked_at || null,
     } : null,
     mimicLinking: _linkInFlight ? {
@@ -11732,22 +12024,50 @@ function _fitHeldWidth(win, readW) {
   win.__wpFitW = readW;
   return readW;
 }
+// 🔒 Lock size on the alerts window (FB-110, a raider: "the alerts window keeps growing as countdowns and callouts
+// appear and can't be resized"). cfg.triggerLockSize: overlay-auto-height leaves the window's bounds alone, so the
+// size set by dragging (the ◢ / ◥ grips, a native edge) or a size preset is the size, across restarts too (the
+// bounds are saved as always). The page keeps its countdown rows inside the window (triggers.html lockedRowCap).
+// The one setter: the right-click menu, the dashboard and any later tray item land here. Unlocking is "↕ Fit height
+// to content" (overlay-fit-height): the height dragged to is forgotten, and the next fit takes the content exactly.
+function _setTriggerLockSize(on) {
+  const cfg = loadConfig();
+  cfg.triggerLockSize = !!on;
+  saveConfig(cfg);
+  if (_live(triggerWindow)) {
+    if (!cfg.triggerLockSize) {
+      const key = _boundsKeyForWindow(triggerWindow);
+      triggerWindow.__wpResizeGesture = null;   // a drag still settling must not set the floor back
+      if (key) _setFloor(triggerWindow, key, 0);
+      triggerWindow.__wpFitNowAt = Date.now();
+    }
+    try {
+      triggerWindow.webContents.send('status', Object.assign(currentStatus(), hideAllStatusForRenderer()));
+      if (!cfg.triggerLockSize) triggerWindow.webContents.send('wp-refit');
+    } catch { /* mid-close */ }
+  }
+  try { pushStatus(); } catch { /* */ }
+  return !!cfg.triggerLockSize;
+}
 ipcMain.handle('overlay-auto-height', (e, h) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return false;
     win.__wpHeightMode = 'fit';   // this page fits its window: a drag can set a height floor
+    // 🔒 Lock size (FB-110): the alerts window is the size the person gave it; the page keeps its rows inside it.
+    if (_boundsKeyForWindow(win) === 'triggerBounds' && loadConfig().triggerLockSize) return true;
     // Not under a drag: the drag writes its own bounds every 16 ms. Held, and asked for again when it ends.
     if (_holdForMove(win, 'fit')) { win.__wpFitPending = true; return true; }
     // ↕ Fit height to content asks for an exact fit, once (see overlay-fit-height).
     const fitNow = (Date.now() - (win.__wpFitNowAt || 0)) < 3000;
     win.__wpFitNowAt = 0;
-    let wanted = Math.max(50, Math.round(+h || 0));
+    let wanted = Math.max(win.__wpFolded ? 24 : 50, Math.round(+h || 0));
     if (!wanted) return false;
     // The height the user dragged this overlay to is a floor (see "Height floor"):
     // content grows the window above it, and shrinking content stops there.
     // Compared in CSS px, before the zoom multiply, because the floor is stored unscaled.
-    wanted = Math.round(Math.max(wanted, _heightFloorFor(win)));
+    // A folded window (▭ Fold) is one row tall on purpose, so the floor does not apply to it.
+    if (!win.__wpFolded) wanted = Math.round(Math.max(wanted, _heightFloorFor(win)));
     // Setup chrome allowance: overlays measure #wrap.scrollHeight, which has
     // never included the setup bar — and now that the bar is position:fixed
     // with #wrap pushed 102 painted px down (preload counter-zoom CSS), a
@@ -11856,6 +12176,127 @@ function _overlayGrowsUp(win) {
 // whose stylesheet has never heard of it, which would be a no-op the user reads
 // as a broken hotkey. Adding one here without adding its CSS is that bug.
 const _MINI_KEYS = ['hud', 'tank', 'mobinfo', 'chchain', 'charm', 'exttarget', 'pets', 'popraid', 'buffQueue'];
+// ▭ Fold (the guild lead, 2026-10-28: "everything can minimize"). These have no DESIGNED mini, so a mini one folds to its
+// title row (preload's body.wp-fold: everything but the row with the name goes, the window shrinks to the row, and the old
+// height comes back on un-mini). Same cfg.overlayMini, same _setOverlayMini, same wp-mini push as the nine above.
+// ⚠ _MINI_KEYS stays the nine: Ctrl+Shift+M (toggleMinimizeAllOverlays) and the 📌 are theirs alone. Folding the alerts
+// window mid-raid would hide the callouts, so the hotkey must never reach it; pressing a window's name, the right-click
+// row and the dashboard's switch are the ways to fold these. NOT here: the Timers canvas (a screen-sized window) and the dock.
+const _FOLD_KEYS = ['trigger', 'who', 'chat', 'melody', 'zeal', 'threat', 'command', 'me', 'map', 'maptimers'];
+function _miniCapable(key) { return !!key && (_MINI_KEYS.includes(key) || _FOLD_KEYS.includes(key)); }
+
+// ── Per-character overlay state (the guild lead, 2026-10-28) ────────────────────
+// cfg.overlayCharState[<character, lower-case>] = { mini: { <overlay>: bool }, used: { <overlay>: last-shown ms }, at }.
+// The character is the same one the per-character layout saves use (_activeCharName, the agent's activeCharacter off
+// the 1s state poll). `mini` is put back when that character becomes active; with no entry the global cfg.overlayMini
+// stands. `used` orders the overlay picker (most recently shown first). Capped, oldest dropped, so the config stays small.
+const _CHAR_STATE_CAP = 40;
+function _charStateKey(name) {
+  const k = String(name || '').toLowerCase();
+  return /^[a-z]{1,24}$/.test(k) ? k : null;
+}
+function _charStateNote(cfg, charKey, field, key, value, now) {
+  if (!charKey || (field !== 'mini' && field !== 'used')) return;
+  const all = (cfg.overlayCharState && typeof cfg.overlayCharState === 'object') ? cfg.overlayCharState : {};
+  const ent = (all[charKey] && typeof all[charKey] === 'object') ? all[charKey] : {};
+  ent[field] = (ent[field] && typeof ent[field] === 'object') ? ent[field] : {};
+  ent[field][key] = value;
+  ent.at = now;
+  all[charKey] = ent;
+  const names = Object.keys(all);
+  if (names.length > _CHAR_STATE_CAP) {
+    names.sort((a, b) => ((all[b] && all[b].at) || 0) - ((all[a] && all[a].at) || 0));
+    for (const n of names.slice(_CHAR_STATE_CAP)) delete all[n];
+  }
+  cfg.overlayCharState = all;
+}
+// Put a character's remembered mini flags over the global map; keys they never set keep the global value.
+// Returns true when anything changed.
+function _charMiniRestore(cfg, charKey) {
+  const ent = charKey && cfg.overlayCharState && cfg.overlayCharState[charKey];
+  if (!ent || !ent.mini || typeof ent.mini !== 'object') return false;
+  const map = (cfg.overlayMini && typeof cfg.overlayMini === 'object') ? cfg.overlayMini : {};
+  let changed = false;
+  for (const k of Object.keys(ent.mini)) {
+    if (!_miniCapable(k)) continue;
+    const v = !!ent.mini[k];
+    if (!!map[k] !== v) { map[k] = v; changed = true; }
+  }
+  cfg.overlayMini = map;
+  return changed;
+}
+// The overlays offered by the picker (right-click or long-press an overlay's name). STANDARD first, then ▸ MORE.
+// `toggle` is the name main's _toggleOverlay takes ('pet', not 'pets'); `flag` is the cfg switch that says it is on.
+const _PICKER_STANDARD = [
+  { key: 'hud',       toggle: 'hud',       flag: 'showHud',          label: 'DPS/Tank meter' },
+  { key: 'tank',      toggle: 'tank',      flag: 'showTank',         label: 'Tank' },
+  { key: 'mobinfo',   toggle: 'mobinfo',   flag: 'showMobInfo',      label: 'Target Info' },
+  { key: 'buffQueue', toggle: 'buffQueue', flag: 'showBuffQueue',    label: 'Buff queue' },
+  { key: 'chchain',   toggle: 'chchain',   flag: 'showChChain',      label: 'CH chain' },
+  { key: 'charm',     toggle: 'charm',     flag: 'showCharm',        label: 'Charm' },
+  { key: 'pets',      toggle: 'pet',       flag: 'showPets',         label: 'Pets' },
+  { key: 'trigger',   toggle: 'trigger',   flag: 'enableTriggerTts', label: 'Alerts & timers' },
+  { key: 'map',       toggle: 'map',       flag: 'showMap',          label: 'Map' },
+];
+const _PICKER_MORE = [
+  { key: 'exttarget', toggle: 'exttarget', flag: 'showExtTarget',    label: 'Extended Target' },
+  { key: 'who',       toggle: 'who',       flag: 'showWho',          label: '/who' },
+  { key: 'chat',      toggle: 'chat',      flag: 'showChat',         label: 'Chat' },
+  { key: 'melody',    toggle: 'melody',    flag: 'showMelody',       label: 'Melody' },
+  { key: 'zeal',      toggle: 'zeal',      flag: 'showZeal',         label: 'Tick' },
+  { key: 'threat',    toggle: 'threat',    flag: 'showThreat',       label: 'Threat meter' },
+  { key: 'command',   toggle: 'command',   flag: 'showCommand',      label: 'Command Center' },
+  { key: 'popraid',   toggle: 'popraid',   flag: 'showPopRaid',      label: 'PoP raids' },
+  { key: 'me',        toggle: 'me',        flag: 'showMe',           label: 'HUD' },
+  { key: 'maptimers', toggle: 'maptimers', flag: 'showMapTimers',    label: 'Map timers' },
+  { key: 'dock',      toggle: 'dock',      flag: 'showDock',         label: 'Dock' },
+];
+// Catalog order, except what THIS character has shown before comes first, most recent first (ties keep catalog order).
+// `alpha` sorts by name instead (leading punctuation ignored, so "/who" files under W).
+function _pickerOrder(items, used, alpha) {
+  const u = (used && typeof used === 'object') ? used : {};
+  const idx = new Map(items.map((c, i) => [c.key, i]));
+  const name = (c) => String(c.label).replace(/^\W+/, '').toLowerCase();
+  return items.slice().sort((a, b) => {
+    if (alpha) return name(a) < name(b) ? -1 : name(a) > name(b) ? 1 : idx.get(a.key) - idx.get(b.key);
+    const ta = +u[a.key] || 0, tb = +u[b.key] || 0;
+    if ((ta > 0) !== (tb > 0)) return ta > 0 ? -1 : 1;
+    if (ta !== tb) return tb - ta;
+    return idx.get(a.key) - idx.get(b.key);
+  });
+}
+// A window that just came up counts as "used" by whoever is playing, at most once a minute per overlay (a show on an
+// already-visible window repeats, and each note is a config write).
+const _usedNotedAt = {};
+function _noteOverlayShown(win) {
+  const ck = _charStateKey(_activeCharName);
+  if (!ck || !win || win.isDestroyed()) return;
+  let key = null;
+  for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
+  if (!key || ![..._PICKER_STANDARD, ..._PICKER_MORE].some(c => c.key === key)) return;
+  const now = Date.now();
+  if (now - (_usedNotedAt[ck + ':' + key] || 0) < 60_000) return;
+  _usedNotedAt[ck + ':' + key] = now;
+  const cfg = loadConfig();
+  _charStateNote(cfg, ck, 'used', key, now, now);
+  saveConfig(cfg);
+}
+// The character has just become active: its mini flags come back, and whatever is on screen counts as theirs.
+function _applyCharOverlayState(charKey) {
+  const cfg = loadConfig();
+  const changed = _charMiniRestore(cfg, charKey);
+  const now = Date.now();
+  for (const [k, w] of _overlayEntries()) {
+    if (!w || w.isDestroyed() || !w.isVisible()) continue;
+    if ([..._PICKER_STANDARD, ..._PICKER_MORE].some(c => c.key === k)) _charStateNote(cfg, charKey, 'used', k, now, now);
+  }
+  if (changed && _miniAllActive && !_MINI_KEYS.some(k => cfg.overlayMini[k])) {
+    _miniAllActive = false; _miniAllPrev = null;
+    cfg.miniAllActive = false; cfg.miniAllPrev = null;
+  }
+  saveConfig(cfg);
+  if (changed) { applyAllOverlayMini(); pushStatus(); }
+}
 
 function _miniSetting(cfg, key) {
   if (!key) return false;
@@ -11874,7 +12315,34 @@ function _miniPinSetting(cfg, key) {
 // a window created while mini was on must come up mini, or the setting silently
 // resets itself every time an overlay is re-enabled.
 function _sendOverlayMini(key, win, on) {
-  try { win.webContents.send('wp-mini', { key, mini: !!on }); } catch { /* window mid-close */ }
+  const fold = _FOLD_KEYS.includes(key);
+  try { if (win) win.__wpMini = !!on; } catch { /* window mid-close */ }   // which height floor the window reads (_floorSlot)
+  if (fold) _foldWindow(win, !!on);
+  try { win.webContents.send('wp-mini', { key, mini: !!on, fold }); } catch { /* window mid-close */ }
+}
+// A folded window is only its title row tall. The height it had is kept, and is what _applyBounds saves while it is
+// folded, so a restart never reopens the window one row tall. The height floor and the window's minimum height step
+// aside while folded, and un-folding gives the height back (a page that fits itself then fits again). Idempotent: it
+// runs on every push, including the load-time pull.
+function _foldWindow(win, on) {
+  try {
+    if (!win || win.isDestroyed()) return;
+    if (on && !win.__wpFolded) {
+      const min = win.getMinimumSize();
+      win.__wpFoldPrev = { h: win.getBounds().height, minH: min[1] };
+      win.__wpFolded = true;
+      win.setMinimumSize(min[0], 24);
+    } else if (!on && win.__wpFolded) {
+      const prev = win.__wpFoldPrev;
+      win.__wpFolded = false;
+      win.__wpFoldPrev = null;
+      if (prev) {
+        win.setMinimumSize(win.getMinimumSize()[0], prev.minH);
+        const b = win.getBounds();
+        if (b.height < prev.h) win.setBounds({ x: b.x, y: b.y, width: b.width, height: prev.h });
+      }
+    }
+  } catch { /* window mid-close */ }
 }
 // An overlay hosted on the Canvas has no window to push to; the Canvas reads the flag back (canvas-state) on this ping.
 function _pingCanvasMini() {
@@ -11888,7 +12356,7 @@ function applyOverlayMini(win, key, cfg) {
 function applyAllOverlayMini() {
   const cfg = loadConfig();
   for (const [k, w] of _overlayEntries()) {
-    if (!_MINI_KEYS.includes(k)) continue;
+    if (!_miniCapable(k)) continue;
     applyOverlayMini(w, k, cfg);
   }
   _pingCanvasMini();
@@ -12265,7 +12733,7 @@ function _toggleOverlay(name) {
     case 'canvas':
       // The Timers canvas. On, the trigger overlay hands it the timers and
       // callouts; off, they come back to the trigger overlay.
-      cfg.showCanvas = !cfg.showCanvas; saveConfig(cfg);
+      cfg.showCanvas = !cfg.showCanvas; _noteCanvasChoice(cfg); saveConfig(cfg);
       if (!cfg.showCanvas) _canvasArrange = false;
       if (cfg.showCanvas && !canvasWindow) createCanvasWindow(); else applyCanvasVisibility();
       applyTriggerVisibility();
@@ -12351,6 +12819,9 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
   let key = null;
   for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
   const cfg = loadConfig();
+  // The page pulls this at load, so it is also where a window that CAME UP folded learns it (before the page asks
+  // for its folded height, which the height floor must not stretch).
+  if (key && _FOLD_KEYS.includes(key)) _foldWindow(win, _miniSetting(cfg, key));
   return {
     key,
     screens: key && !_coversScreen(key) ? _otherScreensFor(win) : [],
@@ -12360,10 +12831,15 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
     pointer: cfg.standInPointer !== false,  // the stand-in mouse pointer switch (preload _wpPointerOn)
     growUp: _growUpSetting(cfg, key),
     timersTopDown: !!cfg.triggerTimersTopDown,
+    triggerLockSize: !!cfg.triggerLockSize,
     theme: cfg.overlayTheme || 'default',
     // ▭ / 📌 rows are built only for overlays that HAVE a mini rendition, so
-    // the menu never offers a switch that would do nothing (see _MINI_KEYS).
-    miniCapable: !!key && _MINI_KEYS.includes(key),
+    // the menu never offers a switch that would do nothing (see _MINI_KEYS). Every
+    // foldable overlay (_FOLD_KEYS) is capable too; the 📌 is the nine designed ones' alone (miniDesigned).
+    miniCapable: _miniCapable(key),
+    miniDesigned: !!key && _MINI_KEYS.includes(key),
+    fold: !!key && _FOLD_KEYS.includes(key),
+    label: key ? ((_PICKER_STANDARD.concat(_PICKER_MORE).find(c => c.key === key) || {}).label || null) : null,
     mini: _miniSetting(cfg, key),
     miniPinned: _miniPinSetting(cfg, key),
     // "Stay on top" is offered only where it does something: Windows with follow-EQ on.
@@ -12410,6 +12886,40 @@ ipcMain.handle('wp-bg-alpha-all', (_e, v) => _setOpacityAll('overlayBgAlpha', v)
 // Direct theme set (dashboard Overlays-tab picker) — same broadcast path.
 // All-overlay backdrop flip — same as the Ctrl+Shift+B hotkey.
 ipcMain.handle('wp-backdrop-toggle-all', () => { try { toggleAllBackdrops(); return true; } catch { return false; } });
+// ── The guild theme (docs/DESIGN-theming.md section 4) ───────────────────────────────────────────────────────────────
+// The guild's colour slots reach Mimic twice: in the sign-in reply (the bot's `linked` answer) and then every ~10 min on
+// the agent's /api/state as `theme`. The last good copy sits in userData/brand/theme.json so a cold start paints before
+// the first poll. It goes to every window as 'wp-guild-theme'; preload.js injects it as :root variables and only on a page
+// that loads theme.css. It sits BELOW the raider's own look (cfg.overlayTheme is a body filter and still applies on top)
+// and a null theme removes it. Sign-out and a guild switch clear it: a theme belongs to one guild's session.
+const guildTheme = require('./guildTheme');
+const GUILD_THEME_FILE = () => path.join(app.getPath('userData'), 'brand', 'theme.json');
+let _guildThemeNow;   // undefined = not read yet, null = none
+function _guildThemeGet() {
+  if (_guildThemeNow === undefined) {
+    try { _guildThemeNow = guildTheme.clean(JSON.parse(fs.readFileSync(GUILD_THEME_FILE(), 'utf8'))); }
+    catch { _guildThemeNow = null; }
+  }
+  return _guildThemeNow;
+}
+function _guildThemeSet(raw) {
+  const next = guildTheme.clean(raw);
+  if (JSON.stringify(next) === JSON.stringify(_guildThemeGet())) return false;
+  _guildThemeNow = next;
+  try {
+    if (next) {
+      fs.mkdirSync(path.dirname(GUILD_THEME_FILE()), { recursive: true });
+      fs.writeFileSync(GUILD_THEME_FILE(), JSON.stringify(next));
+    } else {
+      fs.rmSync(GUILD_THEME_FILE(), { force: true });
+    }
+  } catch (e) { void e; /* a read-only profile still paints for this run */ }
+  for (const win of BrowserWindow.getAllWindows()) {
+    try { win.webContents.send('wp-guild-theme', next); } catch { /* mid-close */ }
+  }
+  return true;
+}
+ipcMain.handle('wp-guild-theme-get', () => _guildThemeGet());
 ipcMain.handle('wp-theme-set', (_e, theme) => {
   if (!_WP_THEMES.includes(theme)) return false;
   const cfg = loadConfig();
@@ -12474,6 +12984,23 @@ ipcMain.handle('wp-timers-order-toggle', () => {
   }
   return cfg.triggerTimersTopDown;
 });
+// 🔒 Lock size (right-click menu on the alerts window, and the dashboard's Overlays tab — same setter).
+ipcMain.handle('wp-trigger-lock-size', (_e, on) => _setTriggerLockSize(on === undefined ? !loadConfig().triggerLockSize : !!on));
+// 🧩 Split callouts and timers into their own boxes (FB-110): the Timers canvas, on. The SAME internals as the
+// tray's Canvas checkbox (_toggleOverlay('canvas') + buildTrayMenu); the person's click on this item is the yes
+// the Canvas being a choice asks for. A first-time Canvas starts from its default Callouts / Timers / Charm panels
+// with Fit height off (cfg.canvasSplitFitOff, read by canvas.html when it has no saved layout), so a size the
+// person gives a box sticks; a layout of their own is left exactly as it was. Already on: nothing to switch, the
+// menus say "Open the Timers canvas to arrange" and that row is canvas-edit.
+function _splitCalloutsAndTimers() {
+  const cfg = loadConfig();
+  if (cfg.showCanvas) return { ok: true, already: true };
+  if (!_canvasLayoutNow(cfg).layout) { cfg.canvasSplitFitOff = true; saveConfig(cfg); }
+  _toggleOverlay('canvas');
+  buildTrayMenu();
+  return { ok: true, already: false };
+}
+ipcMain.handle('canvas-split', () => _splitCalloutsAndTimers());
 ipcMain.handle('wp-backdrop-toggle', (e) => {
   const win = BrowserWindow.fromWebContents(e.sender);
   let key = null;
@@ -12495,7 +13022,7 @@ ipcMain.handle('wp-mini-toggle', (e) => {
   const win = BrowserWindow.fromWebContents(e.sender);
   let key = null;
   for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
-  if (!key || !_MINI_KEYS.includes(key)) return false;
+  if (!_miniCapable(key)) return false;
   return _setOverlayMini(key, !_miniSetting(loadConfig(), key));
 });
 // Single writer for one overlay's mini flag — the chrome menu, the dashboard
@@ -12510,6 +13037,8 @@ function _setOverlayMini(key, next) {
     _miniAllActive = false; _miniAllPrev = null;
     cfg.miniAllActive = false; cfg.miniAllPrev = null;
   }
+  // Remembered for whoever is playing, and put back when they next become the active character (_charMiniRestore).
+  _charStateNote(cfg, _charStateKey(_activeCharName), 'mini', key, !!next, Date.now());
   saveConfig(cfg);
   for (const [k, w] of _overlayEntries()) if (k === key) applyOverlayMini(w, k, cfg);
   _pingCanvasMini();
@@ -12536,13 +13065,15 @@ ipcMain.handle('wp-mini-state', (e) => {
   const win = BrowserWindow.fromWebContents(e.sender);
   let key = null;
   for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
-  if (!key || !_MINI_KEYS.includes(key)) return { key, mini: false, capable: false };
-  return { key, mini: _miniSetting(loadConfig(), key), capable: true };
+  if (!_miniCapable(key)) return { key, mini: false, capable: false };
+  const mini = _miniSetting(loadConfig(), key);
+  try { win.__wpMini = mini; } catch { /* window mid-close */ }   // a window that comes up mini reads the mini floor from its first fit
+  return { key, mini, capable: true, fold: _FOLD_KEYS.includes(key) };
 });
 // Dashboard-driven flip (Overlays tab). Named rather than sender-derived,
 // because the caller is the dashboard window, not the overlay.
 ipcMain.handle('wp-mini-set', (_e, name, on) => {
-  if (!_MINI_KEYS.includes(name)) return null;
+  if (!_miniCapable(name)) return null;
   return _setOverlayMini(name, !!on);
 });
 // …and its 📌, named for the same reason (the right-click menu's pin toggle
@@ -12559,6 +13090,44 @@ ipcMain.handle('wp-mini-pin-set', (_e, name, on) => {
   return !!map[name];
 });
 ipcMain.handle('wp-mini-all', () => { try { toggleMinimizeAllOverlays(); return true; } catch { return false; } });
+
+// ☰ Overlay picker (right-click, or long-press, an overlay's name). The rows only NAME overlays and say which are on; a
+// click flips one through the existing 'toggle-overlay' (_toggleOverlay), the dashboard's and the hotkeys' own path.
+// Ordered per character: what the active character has shown before comes first, most recent first (_pickerOrder).
+ipcMain.handle('wp-overlay-picker', () => {
+  const cfg = loadConfig();
+  const ck = _charStateKey(_activeCharName);
+  const ent = ck && cfg.overlayCharState && cfg.overlayCharState[ck];
+  const used = (ent && ent.used) || {};
+  const alpha = !!cfg.pickerMoreAlpha;
+  const row = (c) => ({ key: c.key, toggle: c.toggle, label: c.label, on: !!cfg[c.flag] });
+  return {
+    standard: _pickerOrder(_PICKER_STANDARD, used, false).map(row),
+    more: _pickerOrder(_PICKER_MORE, used, alpha).map(row),
+    alpha,
+    canvasOn: !!cfg.showCanvas,
+    // ▸ MORE and ▸ CANVAS are sections that start collapsed and remember how the person left them.
+    open: _pickerOpenOf(cfg),
+  };
+});
+function _pickerOpenOf(cfg) {
+  const o = (cfg && cfg.pickerOpen && typeof cfg.pickerOpen === 'object') ? cfg.pickerOpen : {};
+  return { more: o.more === true, canvas: o.canvas === true };
+}
+ipcMain.handle('wp-picker-open-set', (_e, name, on) => {
+  if (name !== 'more' && name !== 'canvas') return null;
+  const cfg = loadConfig();
+  cfg.pickerOpen = Object.assign(_pickerOpenOf(cfg), { [name]: !!on });
+  saveConfig(cfg);
+  return cfg.pickerOpen[name];
+});
+// ▸ MORE's "A–Z" switch, kept in the config.
+ipcMain.handle('wp-picker-alpha-toggle', () => {
+  const cfg = loadConfig();
+  cfg.pickerMoreAlpha = !cfg.pickerMoreAlpha;
+  saveConfig(cfg);
+  return !!cfg.pickerMoreAlpha;
+});
 
 // Hide the overlay that sent this — the ✕ in an overlay's corner. For the
 // named overlays (hud/trigger/charm) we flip the matching pref OFF (so it
@@ -12630,6 +13199,7 @@ ipcMain.handle('canvas-save', (e, layout) => {
   const before = _canvasHostedKeys(cfg);
   cfg.canvasLayouts = Object.assign({}, (cfg.canvasLayouts && typeof cfg.canvasLayouts === 'object') ? cfg.canvasLayouts : {}, { [res]: JSON.parse(json) });
   cfg.canvasLastRes = res;
+  delete cfg.canvasSplitFitOff;   // the split's one-shot: the layout it seeded is saved now
   const after = _canvasHostedKeys(cfg);
   // An overlay newly on the canvas: its own switch goes on, so removing the
   // panel later gives it its window back visible (undocking's rule), and it
@@ -13003,7 +13573,7 @@ ipcMain.handle('hide-overlay', (e) => {
     } else if (win === canvasWindow) {
       // Turning the canvas off gives the timers and callouts back to the
       // trigger overlay — same as the tray / dashboard switch.
-      cfg.showCanvas = false; _canvasArrange = false; saveConfig(cfg);
+      cfg.showCanvas = false; _canvasArrange = false; _noteCanvasChoice(cfg); saveConfig(cfg);
       try { canvasWindow.hide(); } catch {}
       applyTriggerVisibility();
       try { buildTrayMenu(); } catch {}
@@ -13171,6 +13741,324 @@ ipcMain.handle('ui-studio-cancel-defer', (_e, params) => {
   return { ok: true, removed: before - _uiDeferred.length };
 });
 
+// ── UI Studio: compare-first restore + Keep in sync + This PC (the guild lead, 2026-11-01) ────────────────────
+// "UI studio should also bring over keybinds, socials, hotkeys, and zeal options. give the user a prompt to update
+// those too when updating the UI from backup or from another system. add options to keep them up to date whenever
+// signed out, and set the current machines expectations for screen size." Picked B: compare first.
+// The part rules (which file and section is hotkeys, what is never copied) live in uiRestorePlan.js; the sync
+// decisions in uiSync.js. Everything here is timing and disk.
+
+// The game's resolution from a bundle's eqclient.ini [VideoMode] (same reading as UI Studio's _videoModeRes).
+function _eqResOf(files) {
+  const name = Object.keys(files || {}).find(k => /^eqclient\.ini$/i.test(k));
+  if (!name) return null;
+  let inVm = false, w = 0, h = 0;
+  for (const line of String(files[name]).split(/\r?\n/)) {
+    const sec = /^\s*\[([^\]]+)\]/.exec(line);
+    if (sec) { inVm = /^videomode$/i.test(sec[1].trim()); continue; }
+    if (!inVm) continue;
+    const kv = /^\s*(width|height)\s*=\s*(-?\d+)/i.exec(line);
+    if (kv) { if (/^width$/i.test(kv[1])) w = parseInt(kv[2], 10); else h = parseInt(kv[2], 10); }
+  }
+  return w > 0 && h > 0 ? { w, h } : null;
+}
+function _primarySize() {
+  try { const d = screen.getPrimaryDisplay(); return { w: d.size.width, h: d.size.height }; } catch { return null; }
+}
+function _thisMachine() { try { return require('os').hostname(); } catch { return null; } }
+function _uiEqDirs() {
+  const cfg = loadConfig();
+  const dirs = (Array.isArray(cfg.eqPaths) && cfg.eqPaths.length ? cfg.eqPaths : (cfg.eqPath ? [cfg.eqPath] : [])).filter(p => _dirHasEqLogs(p));
+  if (!dirs.length) { const auto = detectEqDir(null); if (auto) dirs.push(auto); }
+  return dirs;
+}
+// Other characters with files in this EQ folder: a restore never touches their zeal.ini sections.
+function _knownCharsIn(eqDir, except) {
+  const out = new Set();
+  let entries = [];
+  try { entries = fs.readdirSync(eqDir); } catch { return []; }
+  for (const f of entries) {
+    const m = f.match(/^eqlog_([A-Za-z]+)_/i) || f.match(/^UI_([A-Za-z]+)_/i) || f.match(/^([A-Za-z]+)_pq\.proj\.ini$/i);
+    if (m && m[1].toLowerCase() !== String(except || '').toLowerCase()) out.add(m[1]);
+  }
+  return [...out];
+}
+function _uiDirForChar(character) {
+  const c = String(character || '').toLowerCase();
+  if (!/^[a-z]+$/.test(c)) return null;
+  for (const d of _uiEqDirs()) {
+    try {
+      if (fs.readdirSync(d).some(f => { const l = f.toLowerCase(); return l === `${c}_pq.proj.ini` || l.startsWith(`ui_${c}_`); })) return d;
+    } catch { /* next folder */ }
+  }
+  return null;
+}
+async function _fetchUiSnapshot(cfg, token, character, id) {
+  const snap = await _httpsJson(`${_botBaseUrl(cfg)}/api/agent/ui_layout/${encodeURIComponent(id)}?character=${encodeURIComponent(character)}`,
+    { headers: { 'Authorization': `Bearer ${token}` } });
+  if (!snap || !snap.files) throw new Error('snapshot empty');
+  return { ...snap, files: filterRestorable(snap.files).files };   // UI settings files only (uiRestoreGuard.js)
+}
+// The character's main layout file (UI_<char>_pq.proj.ini, else any UI_<char>*.ini), for the preview.
+function _uiMainLayoutText(files, character) {
+  const c = String(character).toLowerCase();
+  const names = Object.keys(files || {});
+  const name = names.find(n => n.toLowerCase() === `ui_${c}_pq.proj.ini`) ||
+    names.find(n => n.toLowerCase().startsWith(`ui_${c}_`) || n.toLowerCase().startsWith(`ui_${c}.`));
+  return name ? files[name] : null;
+}
+// Why a restore cannot write now: 'camp' (the character is in game), 'close' (EverQuest is running), or null.
+async function _uiEqBusyFor(character) {
+  if (_uiCharActiveInZeal(String(character).toLowerCase())) return 'camp';
+  let up = false;
+  try { up = await _isEqRunning(); } catch { up = false; }
+  return up ? 'close' : null;
+}
+function _uiPartKeys(parts) {
+  return (Array.isArray(parts) ? parts : []).filter(k => uiRestorePlan.PARTS.some(p => p.key === k));
+}
+// Merge the chosen parts of a backup into the files as they are on disk NOW, and write what changed.
+function _uiWriteRestore(entry, backupTag) {
+  const local = _readUiBundle(entry.eqDir, entry.character);
+  const target = _eqResOf(local) || _primarySize();
+  const r = uiRestorePlan.buildRestore({
+    backupFiles: entry.files, localFiles: local, character: entry.character,
+    parts: _uiPartKeys(entry.parts), knownChars: _knownCharsIn(entry.eqDir, entry.character), target,
+  });
+  const written = [];
+  for (const [name, text] of Object.entries(r.writes || {})) {
+    if (!restorableName(name) || typeof text !== 'string') continue;
+    _backupAndWriteFile(path.join(entry.eqDir, name), text, backupTag || null);
+    written.push(name);
+  }
+  return written;
+}
+function _queueUiRestore(entry) {
+  const cl = String(entry.character).toLowerCase();
+  _uiDeferred = _uiDeferred.filter(e => !(e.kind === 'restore' && String(e.character).toLowerCase() === cl && e.eqDir === entry.eqDir));
+  _uiDeferred.push({ ...entry, kind: 'restore', queuedAt: Date.now(), sawActive: _uiCharActiveInZeal(cl) });
+  _saveUiDeferred();
+}
+function _applyDeferredRestore(entry) {
+  let written;
+  try { written = _uiWriteRestore(entry, 'eq'); }
+  catch (err) { appendAgentLog(`[ui-studio] queued restore for ${entry.character} not applied: ${err && err.message}\n`); return false; }
+  _uiSyncPatchState(entry.character, { lastSyncAt: Date.now() });
+  appendAgentLog(`[ui-studio] restored ${entry.parts.join(', ')} for ${entry.character} (${written.length} file(s)) after logout\n`);
+  try {
+    if (Notification.isSupported()) new Notification({
+      title: 'UI Studio — restore applied',
+      body: `${entry.character} is signed out, so the backup was applied (${written.length} file(s)). Log in to see it.`,
+      silent: true,
+    }).show();
+  } catch {}
+  return true;
+}
+
+ipcMain.handle('ui-restore-plan', async (_e, params) => {
+  const character = String(params?.character || '').trim(), eqDir = String(params?.eqDir || '').trim(), id = String(params?.id || '').trim();
+  if (!character || !eqDir || !id) return { ok: false, error: 'character + eqDir + id required' };
+  const cfg = loadConfig();
+  const token = resolveUploadToken(cfg);
+  if (!token) return { ok: false, error: 'no token configured' };
+  try {
+    const snap = await _fetchUiSnapshot(cfg, token, character, id);
+    const local = _readUiBundle(eqDir, character);
+    const knownChars = _knownCharsIn(eqDir, character);
+    const target = _eqResOf(local) || _primarySize();
+    const parts = uiRestorePlan.PARTS.map(p => ({ key: p.key, label: p.label, scope: p.scope,
+      ...uiRestorePlan.compare(p.key, snap.files, local, character, { knownChars, target }) }));
+    const bl = _uiMainLayoutText(snap.files, character), ml = _uiMainLayoutText(local, character);
+    const fitted = bl && target ? uiRestorePlan.fitLayout(bl, target.w, target.h).text : null;
+    return {
+      ok: true,
+      source: { machine: params?.machine ? String(params.machine).slice(0, 64) : null,
+        w: snap.source_width || null, h: snap.source_height || null, label: snap.label || null },
+      target: { machine: _thisMachine(), w: target ? target.w : null, h: target ? target.h : null },
+      parts,
+      preview: {
+        backup: fitted ? uiRestorePlan.windowRects(fitted, target.w, target.h) : [],
+        mine: ml && target ? uiRestorePlan.windowRects(ml, target.w, target.h) : [],
+      },
+      busy: await _uiEqBusyFor(character),
+    };
+  } catch (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
+});
+// Restore the chosen parts: now when nothing can overwrite them, else queued for after the character camps
+// (or, for keybinds, after every EverQuest closes; _tickUiDeferred).
+ipcMain.handle('ui-restore-parts', async (_e, params) => {
+  const character = String(params?.character || '').trim(), eqDir = String(params?.eqDir || '').trim(), id = String(params?.id || '').trim();
+  const parts = _uiPartKeys(params?.parts);
+  if (!character || !eqDir || !id) return { ok: false, error: 'character + eqDir + id required' };
+  if (!parts.length) return { ok: false, error: 'pick at least one part to restore' };
+  const cfg = loadConfig();
+  const token = resolveUploadToken(cfg);
+  if (!token) return { ok: false, error: 'no token configured' };
+  try {
+    const snap = await _fetchUiSnapshot(cfg, token, character, id);
+    _uiSyncPatchState(character, { seenId: id });
+    const busy = await _uiEqBusyFor(character);
+    if (busy) {
+      _queueUiRestore({ character, eqDir, files: snap.files, parts, label: snap.label || null });
+      return { ok: true, queued: true, busy };
+    }
+    const written = _uiWriteRestore({ character, eqDir, files: snap.files, parts });
+    _uiSyncPatchState(character, { lastSyncAt: Date.now() });
+    return { ok: true, queued: false, written };
+  } catch (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
+});
+
+// Keep in sync. cfg.uiSync = the member's choices (uiSync.cleanSyncCfg); cfg.uiSyncState[<char>] = what this PC
+// last did for that character: lastHash (the last automatic backup's files), lastSyncAt (this PC's copy is at least
+// this new), seenId (the newest other-PC backup already offered, so it is offered once).
+function _uiSyncCfg() { return uiSync.cleanSyncCfg(loadConfig().uiSync); }
+function _uiSyncPatchState(character, patch) {
+  const k = String(character || '').toLowerCase();
+  if (!k) return;
+  const cfg = loadConfig();
+  cfg.uiSyncState = cfg.uiSyncState && typeof cfg.uiSyncState === 'object' ? cfg.uiSyncState : {};
+  cfg.uiSyncState[k] = { ...(cfg.uiSyncState[k] || {}), ...patch };
+  saveConfig(cfg);
+}
+const _uiAutoTimers = new Map();
+// Called when a character leaves the Zeal pipe (camped, swapped, client closed). EQ writes its files on the way
+// out, so the backup waits 15 s, and skips itself if the character came straight back.
+function _uiScheduleAutoBackup(character) {
+  if (!_uiSyncCfg().autoBackup) return;
+  const k = String(character || '').toLowerCase();
+  if (!/^[a-z]+$/.test(k)) return;
+  clearTimeout(_uiAutoTimers.get(k));
+  _uiAutoTimers.set(k, setTimeout(() => { _uiAutoTimers.delete(k); _uiAutoBackup(character).catch(() => {}); }, 15000));
+}
+async function _uiAutoBackup(character) {
+  const k = String(character).toLowerCase();
+  if (_uiCharActiveInZeal(k)) return;
+  const eqDir = _uiDirForChar(character);
+  if (!eqDir) return;
+  const files = uiSync.redactForAutoBackup(_readUiBundle(eqDir, character));
+  if (!Object.keys(files).length) return;
+  const hash = uiSync.bundleHash(files);
+  const cfg = loadConfig();
+  if (((cfg.uiSyncState || {})[k] || {}).lastHash === hash) return;   // nothing changed since the last one
+  const token = resolveUploadToken(cfg);
+  if (!token) return;
+  const r = await _uiUploadBundle(cfg, token, character, files, uiSync.AUTO_LABEL);
+  if (!r.ok) { appendAgentLog(`[ui-sync] backup after camp failed for ${character}: ${r.error}\n`); return; }
+  _uiSyncPatchState(character, { lastHash: hash, lastSyncAt: Date.now() });
+  appendAgentLog(`[ui-sync] backed up ${character} after camp (${r.file_count} file(s))\n`);
+}
+// Characters worth checking for a newer copy: played on this PC in the last 14 days, most recent first, 8 at most.
+function _uiSyncCandidates() {
+  const seen = new Map();
+  const cutoff = Date.now() - 14 * 24 * 3600 * 1000;
+  for (const dir of _uiEqDirs()) {
+    let entries = [];
+    try { entries = fs.readdirSync(dir); } catch { continue; }
+    for (const f of entries) {
+      if (!_isEqLogFile(dir, f)) continue;
+      const name = _characterFromLogName(f);
+      if (!name) continue;
+      let mt = 0;
+      try { mt = fs.statSync(path.join(dir, f)).mtimeMs || 0; } catch { continue; }
+      if (mt < cutoff) continue;
+      const prev = seen.get(name.toLowerCase());
+      if (!prev || mt > prev.mt) seen.set(name.toLowerCase(), { character: name, eqDir: dir, mt });
+    }
+  }
+  return [...seen.values()].sort((a, b) => b.mt - a.mt).slice(0, 8);
+}
+const _uiSyncPrompts = new Map();   // char lower → { character, eqDir, id, machine, created_at } waiting for a yes
+let _uiSyncCheckBusy = false;
+async function _uiSyncCheck() {
+  const sc = _uiSyncCfg();
+  if (sc.newer === 'never' || !sc.since || _uiSyncCheckBusy) return;
+  const cfg = loadConfig();
+  const token = resolveUploadToken(cfg);
+  if (!token) return;
+  _uiSyncCheckBusy = true;
+  try {
+    const me = _thisMachine();
+    for (const { character, eqDir } of _uiSyncCandidates()) {
+      const k = character.toLowerCase();
+      if (_uiCharActiveInZeal(k)) continue;
+      const st = (loadConfig().uiSyncState || {})[k] || {};
+      let list;
+      try {
+        list = await _httpsJson(`${_botBaseUrl(cfg)}/api/agent/ui_layout?character=${encodeURIComponent(character)}`,
+          { headers: { 'Authorization': `Bearer ${token}` } });
+      } catch { continue; }
+      const snap = uiSync.newerElsewhere(list && list.snapshots, { machine: me, since: sc.since, lastSyncAt: st.lastSyncAt, seenId: st.seenId });
+      if (!snap) continue;
+      _uiSyncPatchState(character, { seenId: snap.id });
+      const from = String(snap.machine_name).slice(0, 64);
+      if (sc.newer === 'quiet') {
+        const parts = _uiPartKeys(sc.parts);
+        if (!parts.length) continue;
+        try {
+          const full = await _fetchUiSnapshot(cfg, token, character, snap.id);
+          if (await _uiEqBusyFor(character)) _queueUiRestore({ character, eqDir, files: full.files, parts, label: snap.label || null });
+          else {
+            const written = _uiWriteRestore({ character, eqDir, files: full.files, parts });
+            _uiSyncPatchState(character, { lastSyncAt: Date.now() });
+            appendAgentLog(`[ui-sync] applied ${character}'s newer UI from ${from} (${written.length} file(s))\n`);
+          }
+        } catch (err) { appendAgentLog(`[ui-sync] newer UI for ${character} not applied: ${err && err.message}\n`); }
+        continue;
+      }
+      _uiSyncPrompts.set(k, { character, eqDir, id: snap.id, machine: from, created_at: snap.created_at });
+      try {
+        if (Notification.isSupported()) {
+          const n = new Notification({ title: 'UI Studio — newer UI on another PC',
+            body: `${character} has a newer UI backup from ${from}. Click to compare and choose what to bring over.`, silent: true });
+          n.on('click', () => openSettings('uistudio'));
+          n.show();
+        }
+      } catch {}
+    }
+  } finally { _uiSyncCheckBusy = false; }
+}
+ipcMain.handle('ui-sync-get', () => ({ ...(_uiSyncCfg()), machine: _thisMachine(), prompts: [..._uiSyncPrompts.values()] }));
+ipcMain.handle('ui-sync-set', (_e, patch) => {
+  const cfg = loadConfig();
+  const next = uiSync.cleanSyncCfg({ ...(uiSync.cleanSyncCfg(cfg.uiSync)), ...(patch && typeof patch === 'object' ? patch : {}) });
+  // Only backups made after sync was first switched on count as "newer": an old backup from a PC long retired
+  // must not be offered over this one's layout the day sync is turned on.
+  if (!next.since && (next.autoBackup || next.newer !== 'never')) next.since = Date.now();
+  cfg.uiSync = next;
+  saveConfig(cfg);
+  return next;
+});
+ipcMain.handle('ui-sync-dismiss', (_e, character) => { _uiSyncPrompts.delete(String(character || '').toLowerCase()); return true; });
+// This PC: what the game runs at, the screens, and the overlay size they suggest (uiSync.suggestScale).
+ipcMain.handle('ui-this-pc', () => {
+  let eq = null;
+  for (const d of _uiEqDirs()) {
+    try { eq = _eqResOf({ 'eqclient.ini': fs.readFileSync(path.join(d, 'eqclient.ini'), 'utf8') }); } catch { /* none here */ }
+    if (eq) break;
+  }
+  let displays = [], home = null;
+  try {
+    const primary = screen.getPrimaryDisplay();
+    displays = screen.getAllDisplays().map(d => ({ id: d.id, w: d.size.width, h: d.size.height, scale: d.scaleFactor || 1, primary: d.id === primary.id }));
+    const hd = _overlayHomeDisplay();
+    home = hd ? displays.find(d => d.id === hd.id) || null : null;
+  } catch { /* no screens to read */ }
+  const inches = Number(loadConfig().screenInches) || null;
+  const scr = home || displays.find(d => d.primary) || null;
+  return {
+    eq, displays, homeId: scr ? scr.id : null, inches,
+    suggestion: scr ? uiSync.suggestScale({ width: scr.w, height: scr.h, scaleFactor: scr.scale, inches }) : null,
+    scale: overlayScale(),
+  };
+});
+ipcMain.handle('ui-this-pc-inches', (_e, value) => {
+  const n = Number(value);
+  const cfg = loadConfig();
+  cfg.screenInches = n >= 10 && n <= 100 ? Math.round(n * 10) / 10 : null;
+  saveConfig(cfg);
+  return cfg.screenInches;
+});
+
 ipcMain.handle('ui-studio-list-displays', () => {
   try {
     const primary = screen.getPrimaryDisplay();
@@ -13308,33 +14196,33 @@ ipcMain.handle('ui-studio-capture', async (_e, params) => {
   }
   const fileCount = Object.keys(files).length;
   if (fileCount === 0) return { ok: false, error: 'no ini files found for this character' };
-  // Source resolution — we use the primary display as a best-guess. The
-  // user can override at restore time if their tuning resolution differs.
-  let srcW = null, srcH = null;
-  try {
-    const d = screen.getPrimaryDisplay();
-    srcW = d.workAreaSize.width; srcH = d.workAreaSize.height;
-  } catch {}
-
+  return _uiUploadBundle(cfg, _uiToken, character, files, label);
+});
+// One upload for a hand-made and an automatic backup. The resolution stamped on it is the game's own
+// (eqclient.ini [VideoMode]) when the bundle has it, so a restore on another PC knows what the layout was made
+// for; else the main screen's full size (EQ runs fullscreen, so not the work area).
+async function _uiUploadBundle(cfg, token, character, files, label) {
+  const fileCount = Object.keys(files).length;
+  const res = _eqResOf(files) || _primarySize();
   try {
     const result = await _httpsJson(`${_botBaseUrl(cfg)}/api/agent/ui_layout`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_uiToken}` },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       // machine_name: which computer this backup came from. With two machines
       // backing up the same character, a timestamp alone can't tell you whose
       // snapshot you are about to restore (the guild lead, 2026-08-09).
       body: {
         character, label, server_short: 'pq.proj',
-        source_width: srcW, source_height: srcH, files,
+        source_width: res ? res.w : null, source_height: res ? res.h : null, files,
         agent_version: app.getVersion(),
-        machine_name: (() => { try { return require('os').hostname(); } catch { return null; } })(),
+        machine_name: _thisMachine(),
       },
     });
     return { ok: true, id: result?.id, file_count: fileCount, pending_link: !!result?.pending_link };
   } catch (err) {
     return { ok: false, error: err && err.message ? err.message : String(err) };
   }
-});
+}
 
 // List snapshots for a character.
 ipcMain.handle('ui-studio-list-snapshots', async (_e, character) => {
@@ -13372,9 +14260,13 @@ ipcMain.handle('ui-studio-get-snapshot', async (_e, params) => {
       { headers: { 'Authorization': `Bearer ${_uiToken}` } },
     );
     if (!snap || !snap.files) return { ok: false, error: 'snapshot empty' };
+    // Only UI settings files (.ini) go on to the editor, the layout import and any later save.
+    const kept = filterRestorable(snap.files);
     return {
       ok: true,
-      files: snap.files,
+      files: kept.files,
+      skipped: kept.skipped.slice(0, 20).map(n => String(n).slice(0, 80)),
+      skipped_count: kept.skipped.length,
       source_width:  snap.source_width  || null,
       source_height: snap.source_height || null,
       label: snap.label || null,
@@ -13416,23 +14308,29 @@ ipcMain.handle('ui-studio-restore', async (_e, params) => {
   try { const d = screen.getPrimaryDisplay(); targetW = d.workAreaSize.width; targetH = d.workAreaSize.height; } catch {}
   const written = [];
   const errors  = [];
+  const skipped = [];
   for (const [name, contents] of Object.entries(snap.files)) {
+    // Restore writes only the settings files UI Studio backs up (uiRestoreGuard.js): a bare .ini name.
+    // Anything else is skipped, never written, and reported.
+    if (!restorableName(name) || typeof contents !== 'string') { skipped.push(String(name).slice(0, 80)); continue; }
     try {
-      const safeName = path.basename(name); // never let a path escape eqDir
-      const targetPath = path.join(eqDir, safeName);
+      const targetPath = path.join(eqDir, name);
       const body = clamp ? _clampUiIni(contents, targetW, targetH) : contents;
       const backupPath = _backupAndWriteFile(targetPath, body);
-      written.push({ name: safeName, backup: path.basename(backupPath) });
+      written.push({ name, backup: path.basename(backupPath) });
     } catch (err) {
       errors.push({ name, error: err && err.message ? err.message : String(err) });
     }
   }
+  if (skipped.length) appendAgentLog(`[ui-studio] restore skipped ${skipped.length} file(s) that are not UI settings\n`);
+  const skipNote = skipped.length ? ` Skipped ${skipped.length} file(s) that are not UI settings.` : '';
   return {
     ok: errors.length === 0,
     written, errors,
-    note: clamp
+    skipped: skipped.slice(0, 20), skipped_count: skipped.length,
+    note: (clamp
       ? `Wrote ${written.length} file(s). Positions clamped to ${targetW}×${targetH}.`
-      : `Wrote ${written.length} file(s). Resolution unchanged.`,
+      : `Wrote ${written.length} file(s). Resolution unchanged.`) + skipNote,
   };
 });
 
@@ -13499,13 +14397,50 @@ ipcMain.handle('voice:install', async (_e, engine, voice, accept) => {
     return { ok: false, error: e && e.message ? e.message : String(e) };
   }
 });
+// A custom Piper voice (the guild lead, 2026-10-28: "link to a custom one"): two https links, or two files picked from
+// this PC (`src.files` true opens the picker for a .onnx and its .onnx.json). `accept.terms` is the ticked "I am
+// responsible for its licence" box; neuralVoice.addCustomVoice checks the links, size, file shape and that box.
+ipcMain.handle('voice:add-custom', async (e, src, accept) => {
+  try {
+    const a = accept && typeof accept === 'object' ? { terms: accept.terms === true } : {};
+    const s = src && typeof src === 'object' ? src : {};
+    let spec;
+    if (s.files === true) {
+      const early = neuralVoice.acceptanceProblem({ id: neuralVoice.CUSTOM_PREFIX + 'x', tier: 'custom' }, a);
+      if (early) throw new Error(early.replace('Nothing was downloaded', 'Nothing was added'));
+      const win = BrowserWindow.fromWebContents(e.sender);
+      const r = await dialog.showOpenDialog(win || null, {
+        title: 'Select a Piper voice: the .onnx model and its .onnx.json settings file', properties: ['openFile', 'multiSelections'],
+        filters: [{ name: 'Piper voice files', extensions: ['onnx', 'json'] }, { name: 'All files', extensions: ['*'] }],
+      });
+      if (r.canceled || !Array.isArray(r.filePaths) || !r.filePaths.length) return { ok: true, cancelled: true, status: neuralVoice.status(VOICES_DIR()) };
+      const onnxPath = r.filePaths.find(f => /\.onnx$/i.test(f)), configPath = r.filePaths.find(f => /\.onnx\.json$/i.test(f));
+      if (!onnxPath || !configPath) throw new Error('Pick both files at once: the .onnx model and its .onnx.json settings file.');
+      spec = { onnxPath, configPath };
+    } else {
+      spec = { onnxUrl: String(s.onnxUrl || ''), configUrl: String(s.configUrl || '') };
+    }
+    const st = await neuralVoice.addCustomVoice(VOICES_DIR(), spec, a);
+    appendAgentLog(`[voice] added a custom Piper voice\n`);
+    return { ok: true, status: st };
+  } catch (err) {
+    appendAgentLog(`[voice] custom voice failed: ${err && err.message}\n`);
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+});
 ipcMain.handle('voice:remove', (_e, engine, voice) => {
   try { return { ok: true, status: neuralVoice.remove(VOICES_DIR(), String(engine || ''), process.platform, String(voice || '')) }; }
   catch (e) { return { ok: false, error: e && e.message ? e.message : String(e) }; }
 });
 ipcMain.handle('voice:synth', (_e, text, spec) => {
   const s = spec && typeof spec === 'object' ? spec : {};
-  return neuralVoice.synthesize(VOICES_DIR(), { engine: s.engine, voice: s.voice, rate: s.rate, test: s.test === true, text });
+  // A multi-speaker Piper voice: a ▶ Test sends the number being tried; a live callout sends none, so it is read from
+  // the player's saved choice (cfg.voice.piperSpeakers[<voice id>], default 0). neuralVoice.normalizeSpeaker clamps it.
+  let speaker = s.speaker;
+  if (speaker == null && s.engine === 'piper') {
+    try { const m = ((loadConfig() || {}).voice || {}).piperSpeakers; speaker = m && typeof m === 'object' ? m[s.voice] : 0; } catch { speaker = 0; }
+  }
+  return neuralVoice.synthesize(VOICES_DIR(), { engine: s.engine, voice: s.voice, rate: s.rate, speaker, test: s.test === true, text });
 });
 // Mute (cfg.quietMode) reaches every overlay renderer as one boolean, so the
 // three places that speak or play a sound (triggers.html, chchain.html,
@@ -14089,9 +15024,10 @@ ipcMain.handle('char-profile-forget', (_e, name) => {
   const key = String(name || '').trim().toLowerCase();
   if (!key) return false;
   const cfg = loadConfig();
-  if (!(cfg.charProfiles && cfg.charProfiles[key])) return false;
-  delete cfg.charProfiles[key];
-  saveConfig(cfg);
+  const hadProfile = !!(cfg.charProfiles && cfg.charProfiles[key]);
+  if (hadProfile) { delete cfg.charProfiles[key]; saveConfig(cfg); }
+  const hadLast = _forgetLastLayout(key);   // the automatic one goes with it
+  if (!hadProfile && !hadLast) return false;
   buildTrayMenu(); pushStatus();
   return true;
 });
@@ -14103,7 +15039,12 @@ ipcMain.handle('char-profile-forget', (_e, name) => {
 ipcMain.handle('open-external', (_e, url) => {
   if (typeof url !== 'string') return false;
   const ALLOW = /^https:\/\/(wolfpack\.quest|github\.com\/davehess\/QuarmBossTracker|(www\.)?eqprogression\.com\/|(www\.)?pqdi\.cc\/|(www\.)?youtube\.com\/watch|youtu\.be\/|eqmimic\.quest\/feedback(#|$))/i;
-  if (!ALLOW.test(url)) {
+  // The page being linked to right now (the code-prefilled address the guild's server gave, already checked as https) and
+  // the chosen guild's own site open too: a guild's website is not on the list above, and the "Open page" retry needs it.
+  const linkNow = _linkInFlight && (_linkInFlight._pub.verification_url_complete || _linkInFlight._pub.verification_url);
+  const hubSite = hubs.hubOf(loadConfig()).site;
+  const ownGuild = (linkNow && url === linkNow) || (hubSite && (url === hubSite || url.startsWith(hubSite + '/')));
+  if (!ALLOW.test(url) && !ownGuild) {
     appendAgentLog(`[mimic] refused open-external: ${url}\n`);
     return false;
   }
@@ -14701,9 +15642,12 @@ async function checkZealUpdate({ manual = false } = {}) {
     appendAgentLog(`[zeal-update] newer Zeal available: ${latest.tag} (installed: ${cfg.zealInstalledTag || 'unknown'})\n`);
     if (Notification.isSupported()) {
       const n = new Notification({
-        title: latest.source === 'test' ? 'New Zeal test build' : 'Zeal update available',
+        title: latest.source === 'test' ? 'New Zeal test build'
+          : latest.source === 'wolfpack' ? 'New Wolf Pack Zeal build' : 'Zeal update available',
         body: latest.source === 'test'
           ? `Zeal test build ${latest.tag} is ready. Open Mimic Settings → Zeal to install it in one click.`
+          : latest.source === 'wolfpack'
+          ? `Wolf Pack Zeal ${latest.tag} is ready. Open Mimic Settings → Zeal to install it in one click.`
           : `Zeal ${latest.tag} is out. Open Mimic Settings → Zeal to install it in one click.`,
         silent: true,
       });
@@ -14811,6 +15755,9 @@ ipcMain.handle('ui-pack-set-options', async (_e, id, ids) => {
 ipcMain.handle('mimic-link-start',   async () => await startMimicLink());
 ipcMain.handle('mimic-link-cancel',  () => { cancelMimicLink(); return true; });
 ipcMain.handle('mimic-link-signout', async () => { await signOutMimic(); return true; });
+// The guild picker: the directory (cached, at most daily) plus the guild this install points at, and the switch.
+ipcMain.handle('hub-list', async () => ({ hubs: await getHubDirectory(false), current: hubs.hubOf(loadConfig()) }));
+ipcMain.handle('hub-set', async (_e, choice) => await setHub(choice));
 ipcMain.handle('check-for-updates', () => { safeCheckForUpdates(true); checkAgentUpdate({ manual: true }); checkZealUpdate({ manual: true }); return true; });
 // Revert to stable from the dashboard header's link (next to the BETA badge).
 // The native confirm lives HERE so the page-side control is a plain link and
@@ -15140,6 +16087,9 @@ app.whenReady().then(async () => {
   // the background watcher that applies them once the character logs out.
   _loadUiDeferred();
   setInterval(() => { _tickUiDeferred().catch(() => {}); }, 8000);
+  // Keep in sync: look for a newer UI backup from another PC shortly after boot, then every 20 minutes.
+  setTimeout(() => { _uiSyncCheck().catch(() => {}); }, 90 * 1000);
+  setInterval(() => { _uiSyncCheck().catch(() => {}); }, 20 * 60 * 1000);
 
   // First-launch + every-launch nudge: if setup is incomplete, fire a Windows
   // toast notification so the user knows something needs their attention even
@@ -15185,6 +16135,9 @@ app.whenReady().then(async () => {
   // Begin polling eqgame.exe presence so overlays auto-hide when the user
   // isn't in EverQuest. No-op on non-Windows.
   _startEqPolling();
+
+  // Each character's last layout: once a second, write a settled change to the character being played.
+  setInterval(() => { try { _lastLayoutWatch(); } catch (e) { void e; } }, 1000);
 
   // Hide-all overlays global hotkey (Ctrl+Shift+H on Windows). Single-shot
   // toggle: snapshots current prefs, hides everything, restores on second

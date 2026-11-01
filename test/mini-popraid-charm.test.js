@@ -144,12 +144,12 @@ describe('charm mini — two rows per charm', () => {
     const h = await bootCharm({ activeCharacter: 'Aldenmar', charmPets: [pet()], petHealth: [hitting('an elder thought horror')] }, { mini: true });
     const out = h.byId.list.innerHTML;
     expect(count(out, 'class="cm"')).toBe(1);
-    expect(out).toContain('style="color:#56d364">71%</span>');
-    expect(out).toContain('<i style="width:71%;background:#56d364">');
+    expect(out).toContain('style="color:var(--wp-green)">71%</span>');
+    expect(out).toContain('<i style="width:71%;background:var(--wp-green)">');
     expect(out).toContain('<b>a thought horror evoker</b> <span class="cm-arr">→</span> <span class="cm-tg">an elder thought horror</span>');
     // 60s charm, 42s up → 18s left, 30% of the bar, charm purple.
-    expect(out).toContain('style="color:#a371f7">⏳ 0:18</span>');
-    expect(out).toContain('<i style="width:30.0%;background:#a371f7">');
+    expect(out).toContain('style="color:var(--wp-purple)">⏳ 0:18</span>');
+    expect(out).toContain('<i style="width:30.0%;background:var(--wp-purple)">');
     expect(out).not.toContain('recharm');
   });
 
@@ -166,18 +166,18 @@ describe('charm mini — two rows per charm', () => {
     expect(out).toContain('>S —</span>');
     expect(out).toContain('>M —</span>');
     const broken = out.slice(out.indexOf('data-key="aldenmar:gnoll"'));
-    expect(broken).toContain('style="color:#f85149">⏳ 0:00 recharm</span>');
-    expect(broken).toContain('<i style="width:0.0%;background:#f85149">');
+    expect(broken).toContain('style="color:var(--wp-red)">⏳ 0:00 recharm</span>');
+    expect(broken).toContain('<i style="width:0.0%;background:var(--wp-red)">');
   });
 
   it('goes red and says recharm when the full overlay turns imminent (bard: 12s), not before', async () => {
     const at = async (upMs) => (await bootCharm({ activeCharacter: 'Aldenmar', charmPets: [pet({ started_at: NOW - upMs })] }, { mini: true })).byId.list.innerHTML;
-    expect(await at(52000)).toContain('style="color:#f85149">⏳ 0:08 recharm</span>');
+    expect(await at(52000)).toContain('style="color:var(--wp-red)">⏳ 0:08 recharm</span>');
     // 11s: already red — the overlay flashes and speaks at 12s, so the bar
     // must agree with it (the mock's 10s would leave it purple here).
-    expect(await at(49000)).toContain('style="color:#f85149">⏳ 0:11 recharm</span>');
+    expect(await at(49000)).toContain('style="color:var(--wp-red)">⏳ 0:11 recharm</span>');
     const calm = await at(47000);
-    expect(calm).toContain('style="color:#a371f7">⏳ 0:13</span>');
+    expect(calm).toContain('style="color:var(--wp-purple)">⏳ 0:13</span>');
     expect(calm).not.toContain('recharm');
   });
 
@@ -189,8 +189,8 @@ describe('charm mini — two rows per charm', () => {
 
   it('Dire Charm has no timer to drain: a full bar marked dire', async () => {
     const out = (await bootCharm({ activeCharacter: 'Aldenmar', charmPets: [pet({ is_dire_charm: true })] }, { mini: true })).byId.list.innerHTML;
-    expect(out).toContain('style="color:#56d364">∞ dire</span>');
-    expect(out).toContain('<i style="width:100.0%;background:#56d364">');
+    expect(out).toContain('style="color:var(--wp-green)">∞ dire</span>');
+    expect(out).toContain('<i style="width:100.0%;background:var(--wp-green)">');
   });
 
   it('several charms → one two-row block each, in the order full mode lists them', async () => {
@@ -222,7 +222,7 @@ describe('charm mini — two rows per charm', () => {
   });
 
   // ── "B — Mob tick first" (the guild lead, 2026-10-08) ──
-  const MOB_COL = '#2ee6d6', SRV_COL = '#58a6ff', CHARM_PURPLE = '#a371f7';
+  const MOB_COL = '#2ee6d6', SRV_COL = 'var(--wp-blue)', CHARM_PURPLE = 'var(--wp-purple)';
   const miniOut = async (charm, extra) => (await bootCharm(Object.assign({ activeCharacter: 'Aldenmar', charmPets: [pet(charm)] }, extra), { mini: true })).byId.list.innerHTML;
   const lineOf = (out, col, label) => {
     // The tick cell for `label`: its number text and the width of its thin line.
@@ -261,7 +261,7 @@ describe('charm mini — two rows per charm', () => {
 
   it('the charm timer keeps its own colours beside the new cells (grey estimate, red recharm)', async () => {
     expect(await miniOut({ duration_sec: null, charm_class: null, started_at: NOW - 55000, mob_tick_at: NOW + 1000 })).toContain('style="color:#8b94a3">⏳ ~0:05</span>');
-    expect(await miniOut({ started_at: NOW - 52000, mob_tick_at: NOW + 1000 })).toContain('style="color:#f85149">⏳ 0:08 recharm</span>');
+    expect(await miniOut({ started_at: NOW - 52000, mob_tick_at: NOW + 1000 })).toContain('style="color:var(--wp-red)">⏳ 0:08 recharm</span>');
   });
 
   it('an unknown tick shows a dash and an EMPTY line, for each tick on its own', async () => {

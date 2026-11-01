@@ -29,6 +29,7 @@ const EXPORTS = ['_mapServerXY', '_mapZoneShort', '_mapNormName', '_mapAttribute
   '_mapTryPin', '_mapPinGet', '_mapSync', '_mapSyncStop', '_mapSyncFlush', '_mapSyncPull', '_mapApplyRemote', '_mapLocalEvent',
   '_mapSegDist', '_mapRouteDist', '_mapCopy', '_mapCopyNoteWho', '_mapCurrentCopy', '_mapCopyInfo', '_mapCopyWhere', 'whoData',
   '_mapNoteCon', '_mapConsFor', '_mapMe', '_mapQuarmyIds', '_mapNoteLeg', '_mapNotePath', '_mapFocusTarget', '_extTargetCache', '_mapCcStates', '_buffLandingsByTarget', '_spellByNameLower',
+  '_mapSlowOnAt', '_mapSlowRefresh',
   'MAP_TRACKED_PATHS', 'MAP_CORPSE_RE', '_mapDist2', '_mapMergePath', '_mapShownPath', '_mapApplyShared', '_mobInfoByName', '_mobInfoFetches'];
 // The agent's real /consider tiers, for _mapNoteCon (they live outside the map core).
 const CON_DEFS = AGENT.slice(AGENT.indexOf('const CON_STANDINGS = ['), AGENT.indexOf('\n', AGENT.indexOf('const _CON_RX = ')));
@@ -80,20 +81,25 @@ function loadCore({ dir, opts, net }) {
 }
 
 // http / https that record every request and answer from `responder(opts) -> { status, body?, etag? }`.
-function fakeNet(responder) {
+function fakeNet(responder, slowFlag = null) {
   const calls = [];
+  const slowCalls = [];
   const mod = {
     request(o, cb) {
       // The saved raid route's read (test/map-raid-route.test.js owns it) rides the first poll in a zone; it is answered
       // "no route" here and kept out of `calls`, which these tests use to count the zone-data and guild-sync traffic.
+      // The slow-mode read (FB-114) rides the polls the same way: answered with `slowFlag` (404 when null), counted apart.
       const routeRead = /\/raid-route/.test(o.path);
-      if (!routeRead) calls.push(o);
+      const slowRead = /\/slow-mode$/.test(o.path);
+      if (slowRead) slowCalls.push(o);
+      else if (!routeRead) calls.push(o);
       const req = {
         on() { return req; }, destroy() {},
         end(body) {
           o.__body = body ? Buffer.from(body).toString('utf8') : null;   // what a POST sent
           setImmediate(() => {
-            const r = routeRead ? { status: 404 } : responder ? responder(o) : { status: 500 };
+            const r = routeRead ? { status: 404 } : slowRead ? (slowFlag ? { status: 200, body: slowFlag } : { status: 404 })
+              : responder ? responder(o) : { status: 500 };
             const res = new EventEmitter();
             res.statusCode = r.status; res.headers = r.etag ? { etag: r.etag } : {};
             cb(res);
@@ -105,7 +111,7 @@ function fakeNet(responder) {
       return req;
     },
   };
-  return { http: mod, https: mod, calls };
+  return { http: mod, https: mod, calls, slowCalls };
 }
 const tick = () => new Promise(r => setImmediate(() => setImmediate(r)));
 // One zone-in as EverQuest writes it to dbg.txt (shape from members' real files, docs/DESIGN-mimic-2.9-spawn-map.md).
@@ -557,7 +563,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
 describe('the overlay (apps/mimic/map.html)', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, runPct, trailStep, wanderLeg, noteWanderLeg, levelCon, brewallLayer, namedNpc, trailStretch, trailSpeed, targetSpawnGroup, LEG_REACH, legArrow, LEG_ARROW_AT, classifyTrail, homeOf, homeDist, noteKills, trailShown, KILLS_FADE, TRAIL_COL, nearPack, followOffNow, labelMode, routeTwins, headingRay, toolDock, toolBox, nextFollow, spawnDistance, GATE_RANGE, inkStyle, INK_DEFAULT, aeRampageRing, trapHex, trapDefOf };')();
+  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, splitText, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, runPct, trailStep, wanderLeg, noteWanderLeg, levelCon, brewallLayer, namedNpc, trailStretch, trailSpeed, targetSpawnGroup, LEG_REACH, legArrow, LEG_ARROW_AT, classifyTrail, homeOf, homeDist, noteKills, trailShown, KILLS_FADE, TRAIL_COL, nearPack, followOffNow, labelMode, routeTwins, headingRay, toolDock, toolBox, nextFollow, spawnDistance, GATE_RANGE, inkStyle, INK_DEFAULT, aeRampageRing, trapHex, trapDefOf };')();
 
   it('draws north up: screen = (-x, -y), the same as the website', () => {
     expect(H.toScreen(10, 20)).toEqual({ sx: -10, sy: -20 });
@@ -596,6 +602,16 @@ describe('the overlay (apps/mimic/map.html)', () => {
     expect(H.badgeGlyph('triple_attack')).toBe('');
     expect(H.badgeWords(['summon', 'triple_attack', 'dual_wield'])).toBe('triple attack, dual wield');
     expect(H.pointBadges(POINTS[2])).toBe('👁');
+  });
+  // The bot's `splits` (utils/splitSpawns.js; the guild lead, 2026-11-01: "some of these mobs split, we should denote it").
+  it('a mob that splits gets ⑂ on its dot and says into what in the card', () => {
+    expect(H.badgeGlyph('splits')).toBe('⑂');
+    expect(H.badgeWords(['splits'])).toBe('');
+    expect(H.splitText({ into: [{ name: 'A Phoenix Gustlet', min: 3, max: 3 }] })).toBe('⑂ splits into 3× A Phoenix Gustlet');
+    expect(H.splitText({ into: [{ name: 'an incarnate', min: 0, max: 2 }, { name: 'a ward', min: 1, max: 1 }] })).toBe('⑂ splits into up to 2× an incarnate, a ward');
+    expect(H.splitText({ at: '50% HP', into: [{ name: 'Vallon Zek', min: 1, max: 1 }, { name: 'a projection', min: 2, max: null }] })).toBe('⑂ at 50% HP splits into Vallon Zek, 2+× a projection');
+    expect(H.splitText({ into: [{ name: 'a named bat', min: 0, max: 1, unique: true }] })).toBe('on death may bring up a named bat');
+    expect(H.splitText(null)).toBe('');
   });
   it('named and raid targets are told apart; the best name is the boss, not the commonest mob', () => {
     expect(H.pointKind(POINTS[0])).toEqual({ named: false, raid: false });
@@ -3174,5 +3190,62 @@ describe('the target\'s regular Rampage ring (agent 3.7.184)', () => {
       // not the AE ring's colour in any scheme, so the two never read as one
       for (const s of Object.values(H.MAP_SCHEMES)) expect(s.ramp).not.toBe(s.aeRamp);
     });
+  });
+});
+
+// FB-114 (the guild lead, 2026-11-01: "We're in slowmode right now and these spawns should be more like 18 hours not 20
+// minutes"): a Planes of Power point (the bot's `slow_zone`) killed inside the bot's slow-mode window respawns 18 hours
+// after death, judged by the kill's own time; the 🐢 marks it on the overlay.
+describe('slow mode on the Map (FB-114)', () => {
+  const H18 = 18 * 3600 * 1000;
+  const NOW = Date.now();
+  const FLAG = { on: true, set_at: new Date(NOW - 3600e3).toISOString(), auto_off_at: new Date(NOW + 7 * 3600e3).toISOString(), off_at: null };
+  const PT = { id: 77, x: 0, y: 0, z: 0, respawn_s: 1200, variance_s: 60, npcs: [NPC('a_tactics_soldier')] };
+  const live = (flag) => {
+    const net = fakeNet(() => ({ status: 404 }), flag);
+    return { c: loadCore({ dir, opts: { botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: 'tok' }, net }), net };
+  };
+
+  it('the window: from set_at to the earlier of auto-off and an officer\'s off', () => {
+    const c = loadCore({ dir, opts: { botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: '' }, net: fakeNet() });
+    expect(c._mapSlowOnAt(NOW, FLAG)).toBe(true);
+    expect(c._mapSlowOnAt(NOW - 2 * 3600e3, FLAG)).toBe(false);                     // before it was switched on
+    expect(c._mapSlowOnAt(NOW + 8 * 3600e3, FLAG)).toBe(false);                     // after the auto-off
+    const off = { ...FLAG, on: false, off_at: new Date(NOW - 60e3).toISOString() };
+    expect(c._mapSlowOnAt(NOW - 120e3, off)).toBe(true);                            // a kill before the off keeps it
+    expect(c._mapSlowOnAt(NOW, off)).toBe(false);
+    expect(c._mapSlowOnAt(NOW, null)).toBe(false);
+  });
+
+  it('a Planes of Power kill inside the window gets 18 hours and the turtle; any other zone keeps its own', async () => {
+    const { c, net } = live(FLAG);
+    c._mapSlowRefresh(NOW); await tick();
+    expect(net.slowCalls).toHaveLength(1);
+    expect(net.slowCalls[0].headers.Authorization).toBe('Bearer tok');
+    const t = c._mapMakeTimer({ ...PT, slow_zone: true }, NOW - 1000, 'seen', 'x');
+    expect(t).toMatchObject({ slow: true, earliest: NOW - 1000 + H18, latest: NOW - 1000 + H18 });
+    const plain = c._mapMakeTimer(PT, NOW - 1000, 'seen', 'x');
+    expect(plain.slow).toBeUndefined();
+    expect(plain.latest - plain.died_at).toBe(1260e3);
+    c._mapSlowRefresh(NOW + 60e3); await tick();
+    expect(net.slowCalls).toHaveLength(1);                                           // asked at most every 2 minutes
+  });
+
+  it('an older bot (404) leaves timers as they were', async () => {
+    const { c } = live(null);
+    c._mapSlowRefresh(NOW); await tick();
+    expect(c._mapMakeTimer({ ...PT, slow_zone: true }, NOW, 'seen', 'x').slow).toBeUndefined();
+  });
+
+  it('after a restart, before the window is known again, an 18-hour timer is not cut back', () => {
+    const { c } = live(null);
+    const t = { point_id: 77, name: 'x', died_at: NOW - 3600e3, earliest: NOW - 3600e3 + H18, latest: NOW - 3600e3 + H18, source: 'seen', slow: true };
+    const zdoc = { timers: { 77: { ...t } }, unassigned: [], sightings: {} };
+    c._mapPrune(zdoc, [{ ...PT, slow_zone: true }], NOW);
+    expect(zdoc.timers[77]).toMatchObject({ slow: true, latest: t.latest });
+  });
+
+  it('the overlay marks it', () => {
+    expect(MAP_HTML).toMatch(/turtle = t\.slow \? '🐢 ' : ''/);
   });
 });

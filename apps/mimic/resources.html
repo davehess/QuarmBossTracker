@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Mimic Resource use</title>
+<link rel="stylesheet" href="theme.css">
 <!--
   Resource use, promoted out of Settings into its own window (a member
   2026-08-04: "have it be its own window that's accessible from the tray and
@@ -18,22 +19,22 @@
   (a member, 2026-08-03: "I don't want false claims, I want real stats").
 -->
 <style>
-  body{margin:0;background:#0e1116;color:#c9d1d9;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;padding:16px 18px}
+  body{margin:0;background:#0e1116;color:var(--wp-text);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;padding:16px 18px}
   h1{color:#f6c365;font-size:15px;font-weight:normal;margin:0 0 4px;display:flex;align-items:center;gap:9px}
   .sub{color:#8b949e;font-size:11px;line-height:1.5;margin-bottom:12px}
-  .box{background:#161b22;border:1px solid #2a3140;border-radius:6px;padding:11px 13px}
+  .box{background:var(--wp-panel);border:1px solid #2a3140;border-radius:6px;padding:11px 13px}
   #metricsSummary{color:#8b949e;font-size:11px}
   /* Options + the folded explanation sit UNDER the data, styled quietly so the
      numbers stay the loudest thing in the window. */
-  #metricsOptions{margin-top:10px;font-size:11px;color:#c9d1d9}
-  #metricsOptions summary::-webkit-details-marker{color:#6e7681}
-  #metricsOptions summary:hover{color:#c9d1d9}
+  #metricsOptions{margin-top:10px;font-size:11px;color:var(--wp-text)}
+  #metricsOptions summary::-webkit-details-marker{color:var(--wp-dim)}
+  #metricsOptions summary:hover{color:var(--wp-text)}
   table{width:100%;margin-top:9px;border-collapse:collapse;font-size:11px}
-  th{font-weight:normal;color:#6e7681;text-align:left;padding:2px 0}
+  th{font-weight:normal;color:var(--wp-dim);text-align:left;padding:2px 0}
   td{padding:3px 0}
   .eq{display:inline-block;padding:1px 7px;border-radius:9px;font-size:10px;border:1px solid}
   .eq.on {color:#7ee787;border-color:#2ea04326;background:#2ea0431a}
-  .eq.off{color:#8b949e;border-color:#30363d;background:#161b22}
+  .eq.off{color:#8b949e;border-color:var(--wp-border);background:var(--wp-panel)}
   .foot{color:#6b7280;font-size:10px;margin-top:11px;line-height:1.5}
 </style></head>
 <body>
@@ -106,7 +107,7 @@
     // for when an exact comparison is actually worth it.
     var TM_TIP = 'To match these names up in Task Manager: <b>Details</b> tab → right-click any '
                + 'column header → <b>Select columns</b> → <b>Command line</b>. Each window carries a '
-               + '<code style="background:#0d1117;padding:1px 4px;border-radius:3px">--wp-window=</code> '
+               + '<code style="background:var(--wp-bg);padding:1px 4px;border-radius:3px">--wp-window=</code> '
                + 'tag there. (The Name column reads the .exe, which is the same file for all of them, '
                + 'so it can\'t be changed.)';
     var CPU_NOTE = 'CPU is a share of <b>one</b> core, measured since the previous sample — the first '
@@ -142,18 +143,18 @@
       var h = '';
       if (window.mimic && window.mimic.setExactMemory) {
         var cost = m.wsQueryMs
-          ? ' <span style="color:#6e7681">· last query took ' + esc(m.wsQueryMs) + 'ms</span>'
+          ? ' <span style="color:var(--wp-dim)">· last query took ' + esc(m.wsQueryMs) + 'ms</span>'
           : '';
         h += '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">'
           +  '<input type="checkbox" id="wpExactMem" style="cursor:pointer" />'
           +  '<span>Match Task Manager exactly</span></label>'
-          +  '<span style="color:#6e7681"> — asks Windows for the resident figure every 12s. '
+          +  '<span style="color:var(--wp-dim)"> — asks Windows for the resident figure every 12s. '
           +  'Off by default so this window stays free.</span>' + cost;
       }
       h += '<details id="wpWhyDetails" style="margin-top:' + (h ? '7px' : '0') + '">'
         +  '<summary style="cursor:pointer;color:#8b949e;font-size:11px;list-style:revert">'
         +  'Why these numbers differ from Task Manager</summary>'
-        +  '<div style="margin-top:6px;color:#6e7681;font-size:11px;line-height:1.55">'
+        +  '<div style="margin-top:6px;color:var(--wp-dim);font-size:11px;line-height:1.55">'
         +  memNote(m) + '<br><br>' + CPU_NOTE + '<br><br>' + TM_TIP
         +  '</div></details>';
       return h;
@@ -163,7 +164,7 @@
     // EQ badge above and not something to read every time.
     function notTrackingHtml(m){
       if (!(m.eqIgnored && m.eqIgnored.length)) return '';
-      return '<div style="margin-top:10px;color:#6e7681;font-size:11px;line-height:1.5">'
+      return '<div style="margin-top:10px;color:var(--wp-dim);font-size:11px;line-height:1.5">'
            + '<b>Not tracking:</b> ' + esc(m.eqIgnored.join(', '))
            + ' — a different EverQuest install. eqgame.exe is the binary name for every EverQuest '
            + 'client, so Mimic follows only the one in your configured EQ folder. Add its folder in '
@@ -188,12 +189,12 @@
       // with Task Manager"; two label the difference as what it is.
       var exact = m.memBasis === 'workingSetPrivate';
       var commit = (exact && m.totalCommitMb && m.totalCommitMb !== m.totalMemMb)
-        ? '<span style="color:#6e7681"> (' + esc(m.totalCommitMb) + ' MB committed)</span>' : '';
+        ? '<span style="color:var(--wp-dim)"> (' + esc(m.totalCommitMb) + ' MB committed)</span>' : '';
       summary.innerHTML = '<span style="color:#7ee787;font-size:15px">' + esc(m.totalCpu) + '%</span>'
-        + '<span style="color:#6e7681"> CPU of one core · </span>'
+        + '<span style="color:var(--wp-dim)"> CPU of one core · </span>'
         + '<span style="color:#79c0ff;font-size:15px">' + esc(m.totalMemMb) + '</span>'
-        + '<span style="color:#6e7681"> MB ' + (exact ? 'in RAM' : 'committed') + '</span>' + commit
-        + '<span style="color:#6e7681"> · ' + esc(m.procs.length) + ' processes ('
+        + '<span style="color:var(--wp-dim)"> MB ' + (exact ? 'in RAM' : 'committed') + '</span>' + commit
+        + '<span style="color:var(--wp-dim)"> · ' + esc(m.procs.length) + ' processes ('
         + esc(m.windows) + ' windows)</span> <span class="' + eqCls + '">' + esc(eqTxt) + '</span>';
       var rows = m.procs.slice().sort(function (a, b) { return b.memMb - a.memMb; });
       var h = '<tr><th>process</th><th style="text-align:right">CPU</th><th style="text-align:right">memory</th></tr>';
@@ -201,7 +202,7 @@
         var p = rows[i];
         h += '<tr style="border-top:1px solid #1c2128">'
            + '<td>' + esc(label(p)) + '</td>'
-           + '<td style="text-align:right;color:' + (p.cpu >= 1 ? '#f0b429' : '#6e7681') + '">' + esc(p.cpu.toFixed(1)) + '%</td>'
+           + '<td style="text-align:right;color:' + (p.cpu >= 1 ? '#f0b429' : 'var(--wp-dim)') + '">' + esc(p.cpu.toFixed(1)) + '%</td>'
            + '<td style="text-align:right">' + esc(p.memMb) + ' MB</td></tr>';
       }
       // The agent is a spawned node process, so it is NOT in getAppMetrics() —
@@ -209,7 +210,7 @@
       if (m.agent && m.agent.pid) {
         h += '<tr style="border-top:1px solid #1c2128"><td style="color:#8b949e">'
            + 'log agent (pid ' + esc(m.agent.pid) + ') — separate process, not counted above'
-           + '</td><td></td><td style="text-align:right;color:#6e7681">—</td></tr>';
+           + '</td><td></td><td style="text-align:right;color:var(--wp-dim)">—</td></tr>';
       }
       table.innerHTML = h;
       // Rewritten only when the text actually changes (a basis flip, a new

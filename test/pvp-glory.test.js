@@ -19,6 +19,13 @@ const block = [
   sliceBlock(agent, 'const PVP_GLORY_FALLS_TO_RX', ';'),
   sliceBlock(agent, 'const PVP_GLORY_NO_FOE_RX', ';'),
   sliceBlock(agent, 'const PVP_GLORY_FORFEIT_RX', ';'),
+  // The 2026-10-02 wordings. Some of these carry a ';' inside the pattern, so end on the closing "$/;".
+  sliceBlock(agent, 'const PVP_GLORY_FAVORS_RX', '$/;'),
+  sliceBlock(agent, 'const PVP_GLORY_CUTS_DOWN_RX', '$/;'),
+  sliceBlock(agent, 'const PVP_GLORY_KILLS_RX', '$/;'),
+  sliceBlock(agent, 'const PVP_GLORY_FALLS_TO_PLAYER_RX', '$/;'),
+  sliceBlock(agent, 'const PVP_GLORY_FALLS_IN_RX', '$/;'),
+  sliceBlock(agent, 'const PVP_GLORY_FORFEIT2_RX', '$/;'),
   sliceBlock(agent, 'function _gloryNpcZone(s) {', '\n}'),
   sliceBlock(agent, 'const _gloryGuild =', ';'),
   sliceBlock(agent, 'function parseGloryKill(line) {', '\n}'),
@@ -117,6 +124,82 @@ describe('Rallosian Glory kill broadcast', () => {
         zone: null, glory: false, gloryText: 'surrendering 1 measure of Rallosian Glory',
       });
     }
+  });
+
+  // The server reworded every Glory line on 2026-10-02 (Quarm commit da650526) and put the guilds on them.
+  // From then until this parser knew them no kill or assist was stored, while "falls to <mob>" deaths kept
+  // arriving. The guild lead, 2026-10-28, with a screenshot of "Rallos Zek favors …". Names invented.
+  describe('the 2026-10-02 wordings', () => {
+    it('reads "favors … for killing" with both guilds', () => {
+      const r = parseGloryKill('[Tue Oct 27 21:03:11 2026] [PVP] Rallos Zek favors Aldenmar <Wolf Pack> for killing Brackwyn <Breakfast Club> in Ruins of Sebilis. Aldenmar <Wolf Pack> now has 1/10 Glory.');
+      expect(r).toMatchObject({
+        killType: 'pvp', source: 'rallos_glory',
+        killer: 'Aldenmar', killerGuild: 'Wolf Pack', victim: 'Brackwyn', victimGuild: 'Breakfast Club',
+        zone: 'Ruins of Sebilis', glory: true, gloryText: 'Aldenmar <Wolf Pack> now has 1/10 Glory',
+        text: 'Rallos Zek favors Aldenmar <Wolf Pack> for killing Brackwyn <Breakfast Club> in Ruins of Sebilis. Aldenmar <Wolf Pack> now has 1/10 Glory.',
+      });
+      expect(r.ts.startsWith('2026-10-2')).toBe(true);
+    });
+
+    it('leaves the guild null for a name with none, and keeps multi-word guilds and zones whole', () => {
+      const r = parseGloryKill('[Tue Oct 27 21:03:11 2026] [PVP] Rallos Zek favors Nyssara <Dungeons and Dragons> for killing Zarrin in The Plane of Fear. Nyssara <Dungeons and Dragons> now has 4/10 Glory.');
+      expect(r).toMatchObject({ killer: 'Nyssara', killerGuild: 'Dungeons and Dragons', victim: 'Zarrin', victimGuild: null, zone: 'The Plane of Fear' });
+    });
+
+    it('reads "exults … cuts down" when the victim loses Glory', () => {
+      const r = parseGloryKill('[Tue Oct 27 21:03:11 2026] [PVP] Rallos Zek exults as Aldenmar <Wolf Pack> cuts down Brackwyn <Zek> in Ruins of Sebilis. Brackwyn <Zek> loses 2 Glory; Aldenmar <Wolf Pack> now has 3/10.');
+      expect(r).toMatchObject({
+        killType: 'pvp', killer: 'Aldenmar', killerGuild: 'Wolf Pack', victim: 'Brackwyn', victimGuild: 'Zek',
+        zone: 'Ruins of Sebilis', glory: true, gloryText: 'Brackwyn <Zek> loses 2 Glory; Aldenmar <Wolf Pack> now has 3/10',
+      });
+    });
+
+    it('reads "exults … kills" at the Glory cap', () => {
+      const reaches = parseGloryKill('[Tue Oct 27 21:03:11 2026] [PVP] Rallos Zek exults as Aldenmar <Wolf Pack> kills Brackwyn <Zek> in Ruins of Sebilis and reaches 10/10 Glory!');
+      expect(reaches).toMatchObject({ killType: 'pvp', killer: 'Aldenmar', victim: 'Brackwyn', zone: 'Ruins of Sebilis', glory: true, gloryText: 'reaches 10/10 Glory' });
+      const stays = parseGloryKill('[Tue Oct 27 21:03:11 2026] [PVP] Rallos Zek exults as Aldenmar <Wolf Pack> kills Brackwyn <Zek> in Ruins of Sebilis and remains at 10/10 Glory.');
+      expect(stays).toMatchObject({ killType: 'pvp', killer: 'Aldenmar', killerGuild: 'Wolf Pack', victim: 'Brackwyn', victimGuild: 'Zek', glory: true, gloryText: 'remains at 10/10 Glory' });
+    });
+
+    it('reads a death to a PLAYER with no Glory as a player kill, not an NPC one', () => {
+      const a = parseGloryKill('[Tue Oct 27 21:03:11 2026] [PVP] Rallos Zek looks down in disgust as Brackwyn <Zek> falls to Aldenmar <Wolf Pack> in Bastion of Thunder. No Glory awarded.');
+      expect(a).toMatchObject({
+        killType: 'pvp', source: 'rallos_glory', killer: 'Aldenmar', killerGuild: 'Wolf Pack',
+        victim: 'Brackwyn', victimGuild: 'Zek', zone: 'Bastion of Thunder', glory: false, gloryText: 'No Glory awarded',
+      });
+      const b = parseGloryKill('[Tue Oct 27 21:03:11 2026] [PVP] Rallos Zek looks down in disgust as Brackwyn <Zek> falls to Aldenmar <Wolf Pack> in Bastion of Thunder. Brackwyn <Zek> loses 2 Glory; no Glory awarded.');
+      expect(b).toMatchObject({ killType: 'pvp', killer: 'Aldenmar', victim: 'Brackwyn', zone: 'Bastion of Thunder', glory: false });
+    });
+
+    it('still reads a death to a mob as an NPC kill, with or without lost Glory', () => {
+      const a = parseGloryKill('[Tue Oct 27 21:03:11 2026] [PVP] Rallos Zek looks down in disgust as Corvale <Continuum> falls to froglok krup knight in Ruins of Sebilis.');
+      expect(a).toMatchObject({ killType: 'npc', killer: 'froglok krup knight', victim: 'Corvale', victimGuild: 'Continuum', zone: 'Ruins of Sebilis' });
+      const b = parseGloryKill('[Tue Oct 27 21:03:11 2026] [PVP] Rallos Zek looks down in disgust as Corvale <Continuum> falls to a small mushroom in The Fungus Grove. 3 Glory lost.');
+      expect(b).toMatchObject({ killType: 'npc', killer: 'a small mushroom', zone: 'The Fungus Grove' });
+    });
+
+    it('reads a fall with no killer, and does not mistake the older "without a worthy foe" form for a zone', () => {
+      const a = parseGloryKill('[Tue Oct 27 21:03:11 2026] [PVP] Rallos Zek looks down in disgust as Brackwyn <Zek> falls in Kedge Keep.');
+      expect(a).toMatchObject({ killType: 'pvp', killer: null, victim: 'Brackwyn', victimGuild: 'Zek', zone: 'Kedge Keep', glory: false, gloryText: null });
+      const b = parseGloryKill('[Tue Oct 27 21:03:11 2026] [PVP] Rallos Zek looks down in disgust as Brackwyn falls in Kedge Keep. 4 Glory lost.');
+      expect(b).toMatchObject({ killer: null, victim: 'Brackwyn', zone: 'Kedge Keep', gloryText: '4 Glory lost' });
+      const old = parseGloryKill('[Thu Oct 01 02:25:21 2026] [PVP] Rallos Zek looks down in disgust as Brackwyn falls in Kedge Keep without a worthy foe.');
+      expect(old).toMatchObject({ zone: 'Kedge Keep', gloryText: 'without a worthy foe' });
+    });
+
+    it('reads the new forfeit wording', () => {
+      for (const verb of ['flees', 'abandons']) {
+        const r = parseGloryKill(`[Tue Oct 27 21:03:11 2026] [PVP] Rallos Zek looks down in disgust as Brackwyn <Zek> ${verb} the battlefield in Kedge Keep like a cowardly dog, forfeiting 2 Glory.`);
+        expect(r).toMatchObject({
+          killType: 'forfeit', killer: null, victim: 'Brackwyn', victimGuild: 'Zek',
+          zone: 'Kedge Keep', glory: false, gloryText: 'forfeiting 2 Glory',
+        });
+      }
+    });
+
+    it("does not read the killer's own \"You killed\" line as a second kill", () => {
+      expect(parseGloryKill('[Tue Oct 27 21:03:10 2026] You killed Brackwyn. This was a Glory-worthy kill: you gained 1 Rallosian Glory and now bear 1 of 10.')).toBeNull();
+    });
   });
 
   it('ignores lines that only look similar', () => {

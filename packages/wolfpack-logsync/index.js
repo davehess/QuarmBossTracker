@@ -4663,6 +4663,130 @@ function lullVerdictFor(targetName, zoneId) {
   return u ? { verdict: 'unaffected', spell: u.spell, caster_level: u.caster_level, at_ms: u.at_ms } : null;
 }
 
+// ── Your most-cast spells (the Timers canvas name picker) ────────────────────
+// The guild lead, 2026-10-29: the picker should "suggest your most often cast timers and the spells you
+// have on your bars right now". A spell's countdown is named by the spell, so the count is per spell name,
+// per character, from your own "You begin casting X" lines. Local only: it feeds one GET for the picker
+// and is never uploaded. Decayed (half-life 30 days) rather than a raw lifetime total, so a spell you
+// stopped casting sinks; capped so the file stays a few kilobytes.
+const CAST_COUNT_HALFLIFE_MS = 30 * 86400_000;
+const CAST_COUNT_DROP_MS     = 90 * 86400_000;   // not cast for this long: gone, whatever its count was
+const CAST_COUNT_MAX         = 200;              // names kept per character
+// store: { [spellLower]: { n, at } }  (n = decayed count as of `at`)
+function castCountScore(e, nowMs) {
+  if (!e || !(e.n > 0)) return 0;
+  return e.n * Math.pow(0.5, Math.max(0, nowMs - e.at) / CAST_COUNT_HALFLIFE_MS);
+}
+function castCountPrune(store, nowMs, max) {
+  const cap = max || CAST_COUNT_MAX;
+  const rows = [];
+  for (const k of Object.keys(store)) {
+    const e = store[k];
+    const s = castCountScore(e, nowMs);
+    if (!e || !(s >= 0.5) || nowMs - e.at > CAST_COUNT_DROP_MS) { delete store[k]; continue; }
+    rows.push([k, s]);
+  }
+  if (rows.length > cap) {
+    rows.sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+    for (let i = cap; i < rows.length; i++) delete store[rows[i][0]];
+  }
+  return store;
+}
+function castCountBump(store, name, nowMs) {
+  const k = String(name == null ? '' : name).trim().toLowerCase();
+  if (!k || k.length > 64) return false;
+  store[k] = { n: castCountScore(store[k], nowMs) + 1, at: Math.max(nowMs, store[k] ? store[k].at : 0) };
+  // Prune only once the store is a quarter over its cap, so a steady cast rate does not sort 200 rows per cast.
+  if (Object.keys(store).length > CAST_COUNT_MAX * 1.25) castCountPrune(store, nowMs, CAST_COUNT_MAX);
+  return true;
+}
+// The `limit` most-cast names, biggest first: [{ name, n }] (n = the decayed count, rounded).
+function castCountTop(store, nowMs, limit) {
+  const rows = [];
+  for (const k of Object.keys(store)) {
+    const s = castCountScore(store[k], nowMs);
+    if (s >= 0.5) rows.push({ name: k, n: Math.round(s) });
+  }
+  rows.sort((a, b) => b.n - a.n || (a.name < b.name ? -1 : 1));
+  return rows.slice(0, limit || CAST_COUNT_MAX);
+}
+const _castCounts = new Map();   // charLower → store
+let _castCountsLoaded = false, _castCountsSaveT = null;
+function _castCountsFile() { return path.join(__dirname, 'logsync.cast-counts.json'); }
+function _castCountsLoad() {
+  if (_castCountsLoaded) return;
+  _castCountsLoaded = true;
+  try {
+    const j = JSON.parse(fs.readFileSync(_castCountsFile(), 'utf8')) || {};
+    const now = Date.now();
+    for (const [cl, rows] of Object.entries(j)) {
+      if (!rows || typeof rows !== 'object') continue;
+      const store = {};
+      for (const [k, v] of Object.entries(rows)) {
+        if (Array.isArray(v) && v[0] > 0 && v[1] > 0) store[k] = { n: Number(v[0]), at: Number(v[1]) };
+      }
+      _castCounts.set(cl, castCountPrune(store, now, CAST_COUNT_MAX));
+    }
+  } catch { /* first run, or not writable — start empty */ }
+}
+function _castCountsSave() {
+  if (_castCountsSaveT) return;
+  _castCountsSaveT = setTimeout(() => {
+    _castCountsSaveT = null;
+    try {
+      const out = {}, now = Date.now();
+      for (const [cl, store] of _castCounts) {
+        castCountPrune(store, now, CAST_COUNT_MAX);
+        const rows = {};
+        for (const [k, e] of Object.entries(store)) rows[k] = [Math.round(e.n * 100) / 100, e.at];
+        if (Object.keys(rows).length) out[cl] = rows;
+      }
+      const tmp = _castCountsFile() + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(out));
+      fs.renameSync(tmp, _castCountsFile());
+    } catch { /* best effort */ }
+  }, 5000);
+  try { if (_castCountsSaveT.unref) _castCountsSaveT.unref(); } catch { void 0; }
+}
+// One live cast. A line older than two minutes is a replay of an old log, not you casting now.
+function _noteCastCount(character, name, atMs) {
+  const now = Date.now();
+  if (!(Math.abs(now - atMs) < 120_000)) return;
+  _castCountsLoad();
+  const cl = String(character).toLowerCase();
+  let store = _castCounts.get(cl);
+  if (!store) { store = {}; _castCounts.set(cl, store); }
+  if (castCountBump(store, name, now)) _castCountsSave();
+}
+// What the Timers canvas name picker offers beside the live countdowns: the spells on the bar right now
+// (Zeal's gem labels 60-67, the same read as the HUD's spell list) and the ones this character casts most.
+// The character is the one whose Zeal reported last; with no Zeal, the one that cast last.
+function _timerSuggestions() {
+  const now = Date.now();
+  _castCountsLoad();
+  let active = null, activeTs = 0;
+  for (const ch of Object.keys(_zealState || {})) {
+    const ts = (_zealState[ch] && _zealState[ch].updatedAt) || 0;
+    if (ts > activeTs && (now - ts) < 60_000) { activeTs = ts; active = ch; }
+  }
+  const gems = [];
+  if (active) {
+    for (let i = 0; i < 8; i++) {
+      const name = _meLabel(_zealState[active] || {}, 60 + i);
+      if (name && !/^(empty|none)$/i.test(name)) gems.push(name);
+    }
+  }
+  let who = active ? String(active).toLowerCase() : null;
+  if (!who) {
+    let bestAt = 0;
+    for (const [cl, st] of _castCounts) {
+      for (const e of Object.values(st)) if (e.at > bestAt) { bestAt = e.at; who = cl; }
+    }
+  }
+  const store = who && _castCounts.get(who);
+  return { ok: true, character: active || who || null, gems, casts: store ? castCountTop(store, now, CAST_COUNT_MAX) : [] };
+}
+
 // ── Self-cast capture ────────────────────────────────────────────────────────
 // Every "You begin casting X." — no allowlist. Several pipelines depend on that
 // completeness (DI recast, rez attribution, charm staging, the pacify synthesis
@@ -4690,6 +4814,8 @@ function noteSelfCast(line, character) {
   if (spellLower === 'divine intervention') _noteDiCast(cl, atMs);
   // Me overlay: long-recast timers (Theft of Thought, Harvest, …).
   if (typeof _meNoteSelfCast === 'function') _meNoteSelfCast(cl, m[1].trim(), atMs);
+  // The Timers canvas name picker's "most cast" list (local only).
+  if (typeof _noteCastCount === 'function') _noteCastCount(character, m[1].trim(), atMs);
   // Silent pacifies (Harmony et al.) have no landing line — this cast is the
   // only evidence they will ever produce. typeof-guarded like the rez hook
   // below so source-slice tests that lift noteSelfCast alone still run.
@@ -6254,8 +6380,10 @@ function _pfEvent(character, atMs, keys) {
   return { character, zone: null, boss: null, ts: new Date(atMs).toISOString(), kind: 'recital', source: 'popflags', text: null, stages: keys.slice() };
 }
 /** One log line → the pop_flag events it makes (usually none). Sent as an empty-text recital so a bot that does not
- *  know source "popflags" skips it; a bot that does stores `stages` as rows with source popflags. */
-function popFlagsOutputEvents(line, character) {
+ *  know source "popflags" skips it; a bot that does stores `stages` as rows with source popflags.
+ *  `atMs` (optional) is the time of a line that carries no timestamp of its own: the line of Zeal's export file
+ *  (popFlagsFileEvents), whose time is the file's Timestamp header. A log line keeps its own time. */
+function popFlagsOutputEvents(line, character, atMs) {
   if (!character || !line) return [];
   const msg = String(line).replace(/^\[[^\]]*\]\s*/, '');
   if (msg.length > _PF_MAXLEN + 8 || (msg.charCodeAt(0) !== 61 && msg.indexOf(': ') < 0 && !_PF_BARE_RX.test(msg))) return [];
@@ -6263,7 +6391,7 @@ function popFlagsOutputEvents(line, character) {
   if (!hit) return [];
   const cl = String(character).toLowerCase();
   const tsd = parseEqTimestamp(line);
-  const at = tsd ? tsd.getTime() : Date.now();
+  const at = Number.isFinite(atMs) ? atMs : (tsd ? tsd.getTime() : Date.now());
   let st = _pfState.get(cl);
   if (!st) {
     st = { time: null, timeAt: 0, pending: [], hoh: new Set(), sent: new Map() };
@@ -6303,6 +6431,61 @@ function popFlagsOutputEvents(line, character) {
     }
   }
   return out;
+}
+
+// ── Zeal's own save of the `#popflags` reply: <EQ dir>/<Name>-PoPFlags.txt ───────────────────────────────────────
+// Zeal's "Export data on /camp" and `/outputfile popflags` (Zeal/outputfile.cpp export_popflags, the guild lead's fork)
+// send `#popflags` and `#popflags 1`-`5`, and write the server's reply to this file INSTEAD of the chat window, so it
+// never reaches the eqlog and popFlagsOutputEvents above never sees it. The layout (write_to_file in that source):
+//     Character<TAB><name>
+//     Timestamp<TAB>YYYY-MM-DD_HH-MM-SS        local time of the write (Zeal::Game::generateTimestamp)
+//     Command<TAB>#popflags, #popflags 1-5
+//     ---
+//     <the reply lines, the chat timestamp already stripped>
+// With Zeal's per-host export format the name carries a host tag ("-PoPFlags_<tag>.txt"), accepted here.
+// The reply lines go through popFlagsOutputEvents, the SAME exact-line table the log uses: no second parser, nothing
+// else in the file is looked at, and only the step keys it proves leave (docs/PRIVACY.md). earned_at is the file's
+// Timestamp, so re-reading the same file is the same rows (the pop_flags key).
+const POPFLAGS_FILENAME_RX = /^([A-Za-z]+)-PoPFlags(?:_[A-Za-z0-9]+)?\.txt$/i;
+const POPFLAGS_FILE_MAX_BYTES = 128 * 1024;                     // Zeal keeps at most 400 lines of reply
+const _PF_FILE_TS_RX = /^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})$/;
+/** The text of one export → { character, atMs, lines }, or null when it is not one (no header, no `---`, a name or
+ *  a Timestamp that does not read). `lines` are the reply lines, blank ones dropped. */
+function parsePopFlagsFile(text) {
+  const rows = String(text || '').split(/\r?\n/);
+  let character = null;
+  let atMs = null;
+  let i = 0;
+  for (; i < rows.length && i < 8; i++) {
+    if (rows[i] === '---') break;
+    const tab = rows[i].indexOf('\t');
+    if (tab < 0) return null;                                   // a header line is Key<TAB>Value
+    const key = rows[i].slice(0, tab);
+    const val = rows[i].slice(tab + 1).trim();
+    if (key === 'Character') character = val;
+    else if (key === 'Timestamp') {
+      const m = _PF_FILE_TS_RX.exec(val);
+      if (m) {
+        const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+        if (d.getMonth() === +m[2] - 1 && d.getDate() === +m[3] && d.getHours() === +m[4]) atMs = d.getTime();   // not rolled over (month 13, 31 Feb)
+      }
+    }
+  }
+  if (rows[i] !== '---' || !character || !/^[A-Za-z]{2,}$/.test(character) || atMs === null) return null;
+  return { character, atMs, lines: rows.slice(i + 1).filter(l => l.trim()) };
+}
+/** The pop_flag events one export makes, and how many of its lines were flag lines (what the dashboard counts).
+ *  Its time is the file's Timestamp, but never later than now. */
+function popFlagsFileEvents(parsed, character) {
+  const at = Math.min(parsed.atMs, Date.now());
+  const events = [];
+  let found = 0;
+  for (const line of parsed.lines) {
+    for (const e of popFlagsOutputEvents(line, character, at)) events.push(e);
+    const hit = _PF_LINES.get(_pfNorm(line.replace(/^\[[^\]]*\]\s*/, '')));
+    if (hit && hit.k !== 'head' && (hit.k !== 'time' || hit.yes)) found++;
+  }
+  return { events, found };
 }
 
 // "Sync from my logs", the two steps that touch the upload queue and the bot (the reader itself is _rescanRun, further down).
@@ -15738,24 +15921,22 @@ function _meRegenFor(cl, now, inCombat) {
 // primary first (Client::Process), so a round with two DIFFERENT verbs names
 // both hands. When both hands share a verb (a monk's punch and punch) nothing
 // can tell them apart, and no hand is claimed.
+// ⚠ The ORDER is the only evidence that one verb is the main hand, so it has to be consistent
+// (FB-107, a monk on a two-hander: crush then punch in 71 rounds and punch then crush in 76 of
+// the same 15 minutes — a coin flip, and the 76 won, so every two-hand blunt hit read "OH").
+// A pairing is claimed only when ONE order carries 80% of the recent mixed rounds; a split
+// order claims nothing (the same honest fallback as two hands sharing a verb).
 const _ME_SWING_RX = /^You (?:try to )?(hit|slash|crush|pierce|punch)\b/;
-const _meSwings = new Map();          // charLower → { rounds: [{ t, lastAt, sec, verbs }], votes }
+const _meSwings = new Map();          // charLower → { rounds: [{ t, lastAt, sec, verbs }] } — the newest 40
 const _meSawAttackGauge = new Set();  // characters whose Zeal has sent gauge 34
 function _meNoteSwing(cl, verb, atMs, sec, secMs) {
   let s = _meSwings.get(cl);
-  if (!s) { s = { rounds: [], votes: new Map() }; _meSwings.set(cl, s); }
+  if (!s) { s = { rounds: [] }; _meSwings.set(cl, s); }
   const last = s.rounds[s.rounds.length - 1];
   if (last && last.sec === sec && atMs - last.lastAt <= 600) {
     last.verbs.push(verb); last.lastAt = atMs;
     if (atMs < last.t) last.t = atMs;
     return;
-  }
-  if (last) {
-    const distinct = [...new Set(last.verbs)];
-    if (distinct.length === 2) {
-      const k = distinct[0] + '|' + distinct[1];
-      s.votes.set(k, (s.votes.get(k) || 0) + 1);
-    }
   }
   s.rounds.push({ t: atMs, lastAt: atMs, sec, secMs: Number.isFinite(secMs) ? secMs : null, verbs: [verb] });
   if (s.rounds.length > 40) s.rounds.shift();
@@ -15814,12 +15995,22 @@ function _meSwingFit(rs) {
   }
   return { period: p0, lastAt: rs[n - 1].t - 250, spread: _ME_SWING_LAG };
 }
-// The hand pairing seen in at least three rounds, and in most of them.
+// The hand pairing seen in at least three of the recent rounds, in one order in 80% of them. Counted
+// over the newest 40 rounds (not since the agent started), so a weapon change stops being read
+// through the old pairing; the newest round may still be filling, so it is not counted.
 function _meHands(s) {
   if (!s) return null;
+  const votes = new Map();
   let best = null, total = 0;
-  for (const [k, n] of s.votes) { total += n; if (!best || n > best[1]) best = [k, n]; }
-  if (!best || best[1] < 3 || best[1] * 2 <= total) return null;
+  for (const r of s.rounds.slice(0, -1)) {
+    const distinct = [...new Set(r.verbs)];
+    if (distinct.length !== 2) continue;
+    const k = distinct[0] + '|' + distinct[1];
+    const n = (votes.get(k) || 0) + 1;
+    votes.set(k, n); total++;
+    if (!best || n > best[1]) best = [k, n];
+  }
+  if (!best || best[1] < 3 || best[1] * 5 < total * 4) return null;
   const [mh, oh] = best[0].split('|');
   return { mh, oh };
 }
@@ -17937,6 +18128,7 @@ function _serializeCommandCenterState() {
     mt:            tank.mt,
     rampage:       tank.rampage,
     rampages:      tank.rampages,
+    relv:          _relvSnapshot(activeChar, Date.now()),   // null unless the Relv event is running
     enrage:        tank.enrage,
     deathtouch:    tank.deathtouch,
     needs_rez:     _rezBoardSnapshot(),
@@ -18697,6 +18889,12 @@ function _serializeForDashboard() {
     // window, so an agent restart / pre-push gap never flashes it (#120).
     mimicSignedOutMs:   _mimicSessionToken ? 0 : Math.max(0, Date.now() - (_mimicNoTokenSince || Date.now())),
     mimicIdentity:      _mimicIdentity,
+    // The guild's colour theme (the poll's `theme` stream): Mimic caches it and paints the overlays with it, the
+    // dashboard's Overlays tab shows it as the guild palette. null = none held, everything keeps its defaults.
+    theme:              _guildTheme.theme,
+    // true once the bot has answered the theme stream: only then is a null `theme` "the guild has none" rather than
+    // "not asked yet" (Mimic keeps its cached copy until it is true).
+    themeKnown:         !!_guildTheme.ver,
     // Officer-only DKP loot capture — item lists seen in /gu + /rs, ready to
     // review + post. Gated on the signed-in officer flag so a non-officer's
     // dashboard never even receives it. null when not an officer.
@@ -18704,6 +18902,9 @@ function _serializeForDashboard() {
     // Officer-only DKP tick sources — live raid roster + detected RaidTick
     // files. null when not an officer. Submitted via POST /api/dkp/tick.
     dkpTick:            (_mimicIdentity && _mimicIdentity.is_officer) ? _dkpTickSnapshot() : null,
+    // Officer-only: the guest Mimic links (label, expiry, fight count) for the Command Center's Guests card, read
+    // lazily from the bot (fetchGuestLinks). null for a non-officer, or when the bot has no list to give.
+    guests:             (_mimicIdentity && _mimicIdentity.is_officer) ? _guestLinksSnapshot() : null,
     // Zeal's "Export data on /camp" toggle, read straight from zeal.ini in
     // each known EQ folder (60s cache). true = every found zeal.ini has
     // ExportOnCamp=TRUE; false = at least one has it off; null = no zeal.ini
@@ -19730,10 +19931,16 @@ const WEB_HTML = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Wolf Pack EQ — Parser</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-:root { --bg:#0d1117; --panel:#161b22; --border:#30363d; --text:#c9d1d9; --dim:#6e7681;
-        --blue:#58a6ff; --gold:#d29922; --green:#56d364; --red:#f85149; --orange:#ffa657; }
+/* Theme tokens (DESIGN-theming §2): the same --wp-* names as the site and the overlays, seeded with today's values.
+   The short names below are aliases so the ~hundreds of existing rules keep working untouched. */
+:root { --wp-bg:#0d1117; --wp-panel:#161b22; --wp-border:#30363d; --wp-text:#c9d1d9; --wp-dim:#6e7681;
+        --wp-accent:#1f6feb; --wp-blue:#58a6ff; --wp-purple:#a371f7;
+        --wp-green:#56d364; --wp-red:#f85149; --wp-gold:#d29922; --wp-orange:#ffa657;
+        --wp-radius:6px; --wp-font-mono:'Cascadia Code',Consolas,monospace; --wp-font-ui:system-ui,-apple-system,'Segoe UI',sans-serif; }
+:root { --bg:var(--wp-bg); --panel:var(--wp-panel); --border:var(--wp-border); --text:var(--wp-text); --dim:var(--wp-dim);
+        --blue:var(--wp-blue); --gold:var(--wp-gold); --green:var(--wp-green); --red:var(--wp-red); --orange:var(--wp-orange); }
 * { box-sizing:border-box }
-body { background:var(--bg); color:var(--text); font-family:'Cascadia Code',Consolas,monospace; margin:0; padding:16px; }
+body { background:var(--bg); color:var(--text); font-family:var(--wp-font-mono); margin:0; padding:16px; }
 h1 { color:var(--blue); margin:0 0 4px 0; font-size:22px; }
 h2 { color:var(--gold); border-bottom:1px solid var(--border); padding-bottom:6px; margin:0 0 12px 0; font-size:14px; text-transform:uppercase; letter-spacing:.05em; }
 h3 { color:var(--dim); margin:0 0 8px 0; font-size:12px; font-weight:normal; text-transform:uppercase; }
@@ -19849,7 +20056,7 @@ body.wp-overlay-mode .wp-index, body.wp-feedback-mode .wp-index { display:none !
 }
 .nav button { background:#21262d; color:var(--text); border:1px solid var(--border); padding:5px 12px; border-radius:6px; cursor:pointer; font-family:inherit; font-size:12px; }
 .nav button:hover { background:#30363d }
-.nav button.active { background:#1f6feb; border-color:#1f6feb; color:#fff }
+.nav button.active { background:var(--wp-accent); border-color:var(--wp-accent); color:#fff }
 /* Tour + Feedback at the foot of the rail (the guild lead, 2026-09-23). Dim, so
    they don't read as two more tabs. */
 /* "On this PC" (the guild lead, 2026-10-21): the pages that are built from THIS PC's own files and never
@@ -19886,13 +20093,13 @@ button.wp-key { cursor:pointer; }
 button.wp-key:hover { border-color:var(--blue); }
 .wp-btn { border:1px solid var(--border); background:#21262d; color:var(--text); border-radius:5px; padding:3px 10px; font-family:inherit; font-size:11px; cursor:pointer; }
 .wp-btn:hover { border-color:var(--blue); }
-.wp-btn.pri { background:#1f6feb; border-color:#1f6feb; color:#fff; }
+.wp-btn.pri { background:var(--wp-accent); border-color:var(--wp-accent); color:#fff; }
 .wp-btn.pri.on { background:#196c2e; border-color:#2ea043; }
 .wp-btn.ghost { background:transparent; }
 .wp-ovbanner { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; justify-content:space-between; border:1px solid var(--gold); color:var(--gold); background:#2a2210; border-radius:5px; padding:4px 10px; font-size:11px; margin:0 0 10px; }
 .wp-lays { display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:10px; margin:0 0 10px; }
 .wp-lay { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:8px; display:grid; gap:4px; align-content:start; font-size:11px; min-width:0; }
-.wp-lay.act { border-color:#1f6feb; }
+.wp-lay.act { border-color:var(--wp-accent); }
 .wp-layhd { display:flex; gap:6px; align-items:center; }
 .wp-layhd b { font-size:12px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .wp-layhd .wp-charprof-del { margin-left:auto; background:none; border:none; color:var(--dim); cursor:pointer; font-size:11px; padding:0 4px; }
@@ -19903,7 +20110,7 @@ button.wp-key:hover { border-color:var(--blue); }
 .wp-lay.new:disabled { cursor:default; opacity:.7; }
 .wp-st { font-size:10px; border-radius:3px; padding:0 6px; border:1px solid var(--border); color:var(--dim); }
 .wp-st.on { border-color:var(--green); color:var(--green); }
-.wp-cta { display:flex; gap:8px 10px; align-items:center; flex-wrap:wrap; background:#10233f; border:1px solid #1f6feb; border-radius:6px; padding:10px 12px; margin:0 0 10px; }
+.wp-cta { display:flex; gap:8px 10px; align-items:center; flex-wrap:wrap; background:#10233f; border:1px solid var(--wp-accent); border-radius:6px; padding:10px 12px; margin:0 0 10px; }
 .wp-cta p { margin:0; font-size:11.5px; line-height:1.45; flex:1 1 360px; }
 .wp-cta > span { display:flex; flex-wrap:wrap; gap:6px; flex:0 1 auto; }
 .wp-ovsplit { display:grid; grid-template-columns:minmax(0, 1.3fr) minmax(0, 1fr); gap:10px; align-items:start; }
@@ -19917,10 +20124,10 @@ button.wp-key:hover { border-color:var(--blue); }
 .wp-ovnm { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .wp-ovdot { color:var(--green); font-size:10px; }
 .wp-ovdot.hid { color:var(--orange); }
-.wp-ovdot.dock { color:#a371f7; }
+.wp-ovdot.dock { color:var(--wp-purple); }
 .wp-ovst { color:var(--orange); }
 .wp-ovst:not(:empty) { margin-right:6px; }
-.wp-ovst.dock { color:#a371f7; }
+.wp-ovst.dock { color:var(--wp-purple); }
 .wp-ovli > .wp-key { justify-self:start; }
 @media (max-width: 560px) {
   .wp-ovli { grid-template-columns:12px minmax(0, 1fr) 40px; }
@@ -19946,21 +20153,21 @@ button.wp-key:hover { border-color:var(--blue); }
 .wp-more > div { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; padding:8px 0 0; }
 .wp-more label { display:flex; align-items:center; gap:6px; cursor:pointer; }
 .wp-ov-dock { min-width:52px; background:#21262d; color:var(--dim); border:1px solid var(--border); border-radius:5px; padding:2px 9px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; letter-spacing:0.5px; }
-.wp-ov-dock:hover { border-color:#a371f7; color:var(--text); }
-.wp-ov-dock.on { background:#2a1d3d; border-color:#a371f7; color:#d2a8ff; }
+.wp-ov-dock:hover { border-color:var(--wp-purple); color:var(--text); }
+.wp-ov-dock.on { background:#2a1d3d; border-color:var(--wp-purple); color:#d2a8ff; }
 .wp-ov-mini { min-width:58px; background:#21262d; color:var(--dim); border:1px solid var(--border); border-radius:5px; padding:2px 9px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; }
 .wp-ov-mini:hover { border-color:#39c5bb; color:var(--text); }
-.wp-ov-mini.on { background:#123d3a; border-color:#39c5bb; color:#9ff0e8; }
+.wp-ov-mini.on { background:#3d2e0f; border-color:var(--wp-gold); color:#f0c674; }
 .wp-ov-pin { background:#21262d; border:1px solid var(--border); border-radius:5px; padding:2px 5px; font-size:11px; cursor:pointer; opacity:0.35; filter:grayscale(1); }
 .wp-ov-pin:hover { opacity:0.8; }
-.wp-ov-pin.on { opacity:1; filter:none; border-color:#d29922; }
+.wp-ov-pin.on { opacity:1; filter:none; border-color:var(--wp-gold); }
 /* 🔝 Stay on top: dim until chosen, like the 📌. Shown only where overlays follow EverQuest's z-order (Windows, option on). */
 .wp-ov-top { background:#21262d; border:1px solid var(--border); border-radius:5px; padding:2px 5px; font-size:11px; cursor:pointer; opacity:0.35; filter:grayscale(1); }
 .wp-ov-top[hidden] { display:none; }
 .wp-ov-top:hover { opacity:0.8; }
-.wp-ov-top.on { opacity:1; filter:none; border-color:#56d364; }
+.wp-ov-top.on { opacity:1; filter:none; border-color:var(--wp-green); }
 .nav-quest { margin-left:auto; padding:5px 12px; border:1px solid var(--border); border-radius:6px; background:var(--panel); color:var(--blue); text-decoration:none; font-size:12px; font-family:inherit; }
-.nav-quest:hover { background:#30363d; border-color:var(--blue) }
+.nav-quest:hover { background:var(--wp-border); border-color:var(--blue) }
 .section { display:none } .section.active { display:block }
 .banner { padding:8px 12px; border-radius:6px; margin:0 0 10px 0; font-size:13px; }
 .banner.update { background:#9e6a03; color:#fff }
@@ -19968,7 +20175,7 @@ button.wp-key:hover { border-color:var(--blue); }
 /* Stale-backfill nudge — soft green so it reads as informational, not an
    error. The pulse-dot inside it ties visually to the per-row pulse on the
    ↻ Re-run button in the Opt-in Logs pane: same color, same rhythm. */
-.banner.stale-backfill .pulse-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#56d364; box-shadow:0 0 0 0 rgba(86,211,100,0.7); animation: wp-pulse-glow 1.8s ease-out infinite; vertical-align:middle; margin-right:6px; }
+.banner.stale-backfill .pulse-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--wp-green); box-shadow:0 0 0 0 rgba(86,211,100,0.7); animation: wp-pulse-glow 1.8s ease-out infinite; vertical-align:middle; margin-right:6px; }
 @keyframes wp-pulse-glow {
   0%   { box-shadow:0 0 0 0   rgba(86,211,100,0.7); transform:scale(1);    }
   60%  { box-shadow:0 0 0 10px rgba(86,211,100,0);   transform:scale(1.12); }
@@ -20041,7 +20248,7 @@ button.wp-rerun-stale { position:relative; animation: wp-pulse-glow 1.8s ease-ou
 @keyframes wpMailPulse{from{box-shadow:0 0 2px rgba(240,180,41,0.4)}to{box-shadow:0 0 10px rgba(240,180,41,0.95)}}
 .wp-mail-unread{border-color:var(--orange) !important;color:var(--orange) !important;animation:wpMailPulse 0.9s ease-in-out infinite alternate}
 .wp-gear { background:#21262d; color:var(--text); border:1px solid var(--border); padding:5px 11px; border-radius:6px; cursor:pointer; font-family:inherit; font-size:13px; }
-.wp-gear:hover { background:#30363d; border-color:var(--blue); color:var(--blue) }
+.wp-gear:hover { background:var(--wp-border); border-color:var(--blue); color:var(--blue) }
 .wp-menu { position:absolute; z-index:1000; background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:10px 12px; box-shadow:0 8px 24px rgba(0,0,0,.5); max-height:60vh; overflow:auto; min-width:240px; }
 .wp-menu h4 { margin:0 0 8px; color:var(--blue); font-size:12px; text-transform:uppercase; font-weight:normal; border:none; }
 .wp-menu label { display:flex; align-items:center; gap:8px; padding:3px 0; font-size:13px; color:var(--text); cursor:pointer; text-transform:none; }
@@ -20057,7 +20264,7 @@ button.wp-rerun-stale { position:relative; animation: wp-pulse-glow 1.8s ease-ou
 .wp-hide-btn:hover { color:var(--red); border-color:var(--red); }
 .wp-source-toggle { float:right; display:inline-flex; gap:0; margin-left:8px; }
 .wp-source-toggle button { background:#21262d; color:var(--dim); border:1px solid var(--border); padding:0 8px; font-size:11px; cursor:pointer; line-height:1.6; font-family:inherit; text-transform:none; letter-spacing:0; }
-.wp-source-toggle button.active { background:#1f6feb; border-color:#1f6feb; color:#fff; }
+.wp-source-toggle button.active { background:var(--wp-accent); border-color:var(--wp-accent); color:#fff; }
 .wp-source-toggle button:first-child { border-radius:4px 0 0 4px; }
 .wp-source-toggle button:last-child { border-radius:0 4px 4px 0; border-left:none; }
 .wp-server-overlay { background:rgba(31,111,235,.07); border-top:1px solid rgba(31,111,235,.4); padding:8px 12px; margin:8px -14px -14px; font-size:12px; }
@@ -20073,7 +20280,7 @@ button.wp-rerun-stale { position:relative; animation: wp-pulse-glow 1.8s ease-ou
 .wp-suggest h5 { margin:0 0 6px; color:var(--blue); font-size:11px; text-transform:uppercase; }
 .wp-suggest button { background:#21262d; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit; margin:2px; }
 .wp-suggest button.priority { border-color:var(--gold); color:var(--gold); }
-.wp-suggest button:hover { background:#30363d; border-color:var(--blue); color:var(--blue); }
+.wp-suggest button:hover { background:var(--wp-border); border-color:var(--blue); color:var(--blue); }
 /* Overlay mode — when the dashboard is loaded with ?overlay=<panelKey>,
    strip all chrome and show just the target panel as a transparent overlay
    tile. Reuses the live render loop for free updates. */
@@ -20103,7 +20310,7 @@ body.wp-overlay-mode .section .card.wp-overlay-target {
   backdrop-filter:blur(2px);
 }
 body.wp-overlay-mode .section .card.wp-overlay-target h2 {
-  font-size:10px !important; color:#58a6ff !important;
+  font-size:10px !important; color:var(--wp-blue) !important;
   letter-spacing:.1em !important; text-transform:uppercase !important;
   margin:0 0 6px !important; padding:0 !important; border:0 !important;
 }
@@ -20133,9 +20340,12 @@ body.wp-feedback-mode { padding:12px !important; }
 body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(style) { display:none !important; }
 </style></head><body>
 <div id="wpTopBar">
-<h1 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;row-gap:2px"><img src="data:image/png;base64,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" alt="" style="height:48px;width:48px;flex:none"><span style="white-space:nowrap">${process.env.WOLFPACK_CLIENT === 'mimic' ? 'Raid Mimic' : 'Wolf Pack EQ — Parser'}</span><span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? '(v' + process.env.WOLFPACK_APP_VERSION + ') ' : ''}(agent ${AGENT_VERSION})</span><span id="wpUpdSlot"></span>${(/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')) ? ' ' + (String(process.env.WOLFPACK_APP_VERSION || '').indexOf('-alpha.') >= 0 ? '<span title="Running an alpha build: the Mimic 3.0 overlay builder, tried first" style="font-size:10px;font-weight:600;color:#1a0f2e;background:#a371f7;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">ALPHA</span>' : '<span title="Running a beta (pre-release) build" style="font-size:10px;font-weight:600;color:#1f1300;background:#f0b429;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">BETA</span>') + ' <button id="wpRevertStable" title="Switch back to the stable release — Mimic confirms before doing anything" style="font-size:10px;color:#8b949e;background:none;border:1px solid #30363d;border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">↩ stable</button>' : (process.env.WOLFPACK_APP_VERSION ? ' <button id="wpJoinBeta" title="Get beta builds of Mimic — Mimic confirms before doing anything" style="display:none;font-size:10px;color:#8b949e;background:none;border:1px solid #30363d;border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">⤴ beta</button>' : '')) + (process.env.WOLFPACK_APP_VERSION ? ' <button id="wpAlpha" title="Try the Mimic 3.0 alpha — Mimic confirms before doing anything" style="display:none;font-size:10px;color:#8b949e;background:none;border:1px solid #30363d;border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">α alpha</button>' : '')}<span id="wpTopRight">
+<h1 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;row-gap:2px"><img src="data:image/png;base64,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" alt="" style="height:48px;width:48px;flex:none"><span style="white-space:nowrap">${process.env.WOLFPACK_CLIENT === 'mimic' ? 'Raid Mimic' : 'Wolf Pack EQ — Parser'}</span><span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? '(v' + process.env.WOLFPACK_APP_VERSION + ') ' : ''}(agent ${AGENT_VERSION})</span><span id="wpUpdSlot"></span>${(/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')) ? ' ' + (String(process.env.WOLFPACK_APP_VERSION || '').indexOf('-alpha.') >= 0 ? '<span title="Running an alpha build: the Mimic 3.0 overlay builder, tried first" style="font-size:10px;font-weight:600;color:#1a0f2e;background:var(--wp-purple);border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">ALPHA</span>' : '<span title="Running a beta (pre-release) build" style="font-size:10px;font-weight:600;color:#1f1300;background:#f0b429;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">BETA</span>') + ' <button id="wpRevertStable" title="Switch back to the stable release — Mimic confirms before doing anything" style="font-size:10px;color:#8b949e;background:none;border:1px solid var(--wp-border);border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">↩ stable</button>' : (process.env.WOLFPACK_APP_VERSION ? ' <button id="wpJoinBeta" title="Get beta builds of Mimic — Mimic confirms before doing anything" style="display:none;font-size:10px;color:#8b949e;background:none;border:1px solid var(--wp-border);border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">⤴ beta</button>' : '')) + (process.env.WOLFPACK_APP_VERSION ? ' <button id="wpAlpha" title="Try the Mimic 3.0 alpha — Mimic confirms before doing anything" style="display:none;font-size:10px;color:#8b949e;background:none;border:1px solid var(--wp-border);border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">α alpha</button>' : '')}<span id="wpTopRight">
     <button id="wpMailBtn" type="button" style="display:none;background:transparent;border:1px solid var(--border);color:var(--fg);padding:3px 9px;border-radius:5px;cursor:pointer;font:inherit;position:relative"
        title="Notices from the Wolf Pack team">✉<span id="wpMailDot" style="display:none;position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:var(--red,#f87171)"></span></button>
+    <!-- 💬 Feedback sits beside Reload in the title row's top-right (the guild lead, 2026-10-29: "put the feedback
+         button on the top right. next to the reload"); it had been at the foot of the rail since 2026-09-23. -->
+    <button id="wpFbBtn" class="wp-gear" title="Send a bug report or an idea to the officers — optionally with a slice of your log" onclick="wpFeedbackClick()">💬 Feedback</button>
     <button id="wpReload" class="wp-gear" title="Reload the dashboard — reconnect to the parser engine (use this if panels are blank after an update)" onclick="if(window.mimic&&window.mimic.openDashboard){window.mimic.openDashboard()}else{location.reload()}">🔄 Reload</button>
   </span></h1>
 <div id="wpActiveChar"></div>
@@ -20212,14 +20422,11 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
     <button id="wpLocalRebuild" type="button" onclick="wpRebuildOpen()" title="Build your fights, raids, deaths and loot from the log files on this PC. Nothing is uploaded.">🔁 Rebuild from my logs</button>
     <button id="wpLocalRaid" type="button" onclick="wpRaidCodeOpen()" title="In someone else's raid? Enter their raid code: this PC keeps the raid's data to itself, tagged with the code, for six hours. The tray's Open menu has the same item.">🎟 Join a raid with a code</button>
   </div>
-  <!-- ✨ Tour and 💬 Feedback sit at the FOOT of the rail, stacked (the guild lead,
-       2026-09-23: "We're running out of horizontal real estate"). They went up to
-       the top bar on 2026-09-02 so a long page never meant scrolling back for
-       them; the rail is sticky too, so that still holds. No data-tab, so the
-       tab switcher ignores them. The ids are unchanged, so their handlers bind. -->
+  <!-- ✨ Tour sits at the FOOT of the rail (the guild lead, 2026-09-23: "We're running out of horizontal real
+       estate"); the rail is sticky, so a long page never means scrolling back for it. No data-tab, so the tab
+       switcher ignores it. 💬 Feedback moved to the title row's top-right on 2026-10-29 (next to Reload). -->
   <div class="wp-rail-foot">
     <button id="wpTourBtn" class="wp-gear" title="Take the guided walkthrough of the dashboard — every stop is your own live data. Re-run any time." onclick="wpTourStart()">✨ Tour</button>
-    <button id="wpFbBtn" class="wp-gear" title="Send a bug report or an idea to the officers — optionally with a slice of your log" onclick="wpFeedbackClick()">💬 Feedback</button>
     <!-- ☕ Tip (the guild lead, 2026-10-17): the maintainer's Ko-fi, same link as the README and /about. -->
     <a id="wpTipLink" class="wp-gear" href="https://ko-fi.com/davehess" target="_blank" rel="noreferrer" style="text-decoration:none;text-align:center" title="Buy the maintainer a coffee on Ko-fi (opens in your browser)">☕ Tip</a>
     <!-- ⏻ Quit (2026-09-26): the tray's Quit, here too — tray ↔ dashboard parity, and the way out when
@@ -20622,7 +20829,7 @@ function renderFeedback(s) {
     +   '<button type="button" id="wpFbIdea" class="wp-fb-kind" data-kind="idea">💡 Idea</button>'
     + '</div>'
     + '<textarea id="wpFbText" rows="4" maxlength="4000" placeholder="What happened, or what would you like?" '
-    +   'style="width:100%;margin-top:8px;background:#0d1117;color:var(--text);border:1px solid var(--border);'
+    +   'style="width:100%;margin-top:8px;background:var(--wp-bg);color:var(--text);border:1px solid var(--border);'
     +   'border-radius:6px;padding:8px;font-family:inherit;font-size:12px"></textarea>'
     // Screenshots (the guild lead, 2026-09-26: "feedback and suggestion needs to be able to take
     // screenshots..top priority"). 📸 only inside Mimic (it photographs your screens); 📎 and
@@ -20802,7 +21009,7 @@ function _wpFbRenderPreview(slice) {
     + '— that is what makes a bug reproducible. This preview shows the first 400 lines; every line sent '
     + 'is filtered the same way.</div>';
   el.innerHTML = head + note
-    + '<pre style="max-height:220px;overflow:auto;background:#0d1117;border:1px solid var(--border);'
+    + '<pre style="max-height:220px;overflow:auto;background:var(--wp-bg);border:1px solid var(--border);'
     + 'border-radius:6px;padding:8px;font-size:10px;line-height:1.45;margin:0;white-space:pre-wrap">'
     + esc(slice.text || '') + '</pre>';
 }
@@ -21343,7 +21550,7 @@ function renderHeader(s) {
   // text → byte-stable across polls (no morph flicker), no details/wpKeep needed.
   const cp = s.controlPlane || {};
   if (cp.down && cp.reason === 'kill') {
-    h += '<div class="banner" style="background:#3b0a0a;color:#ffd0d0;border:1px solid #f85149">⏸ <b>Agent paused by guild control plane.</b> Uploads are held (nothing lost) and resume automatically when the guild clears the pause. Your overlays keep working on local data.</div>';
+    h += '<div class="banner" style="background:#3b0a0a;color:#ffd0d0;border:1px solid var(--wp-red)">⏸ <b>Agent paused by guild control plane.</b> Uploads are held (nothing lost) and resume automatically when the guild clears the pause. Your overlays keep working on local data.</div>';
   } else if (cp.down && cp.reason === 'floor') {
     h += '<div class="banner" style="background:#3a2a0a;color:#f6c365;border:1px solid #6b5320">⚠ <b>Your agent is below the guild minimum</b> (v' + esc(s.version) + '). Uploads are paused until you update — press <b>[U]</b> or the ↻ Update button. Your overlays keep working on local data.</div>';
   }
@@ -21401,11 +21608,11 @@ function renderHeader(s) {
   const SIGNIN_GRACE_MS = 8000;
   if (isMimicHosted && !s.mimicSignedIn) {
     if (s.mimicHasToken) {
-      h += '<div class="banner" style="background:#10233b;color:#9fc7ff;border:1px solid #1f6feb">'
+      h += '<div class="banner" style="background:#10233b;color:#9fc7ff;border:1px solid var(--wp-accent)">'
          + '⛓ <b>Verifying your Discord sign-in…</b> Your uploads are still landing under your account; the guild view fills in as soon as the check completes. (If this never clears, open Mimic Settings → <b>Wolf Pack account</b>.)'
          + '</div>';
     } else if ((s.mimicSignedOutMs || 0) >= SIGNIN_GRACE_MS) {
-      h += '<div class="banner" style="background:#3b0a0a;color:#ffb3b3;border:1px solid #f85149">'
+      h += '<div class="banner" style="background:#3b0a0a;color:#ffb3b3;border:1px solid var(--wp-red)">'
          + '⛓ <b>Not signed in to Discord.</b> Your parses won&rsquo;t upload and the guild can&rsquo;t see your stats. '
          + 'Open Mimic Settings → <b>Wolf Pack account</b> to sign in with Discord. '
          + '<button id="bannerOpenSettings" style="margin-left:8px;background:#fff;color:#000;border:0;padding:3px 10px;border-radius:4px;cursor:pointer;font-weight:bold;font-size:11px">Open Settings</button>'
@@ -21487,7 +21694,7 @@ function renderHeader(s) {
       (q.permanentDropped > 0 ? q.permanentDropped + ' permanent 4xx · ' : '') +
       (q.capEvicted      > 0 ? q.capEvicted      + ' cap evictions'    : '');
     const total = (q.permanentDropped || 0) + (q.capEvicted || 0);
-    queueChip = ' · <span style="background:#3b0a0a;color:#ff9c9c;border:1px solid #f85149;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="' + esc(dropTip) + '. Check the agent log for details.">✕ ' + total + ' dropped</span>';
+    queueChip = ' · <span style="background:#3b0a0a;color:#ff9c9c;border:1px solid var(--wp-red);border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="' + esc(dropTip) + '. Check the agent log for details.">✕ ' + total + ' dropped</span>';
   }
   // Mimic Discord-login badge / nudge. Shows on the header line so identity
   // status is visible at a glance.
@@ -21500,7 +21707,7 @@ function renderHeader(s) {
   if (s.mimicIdentity) {
     const display = s.mimicIdentity.display_name || s.mimicIdentity.discord_id || 'Discord account';
     const officer = s.mimicIdentity.is_officer ? ' <span style="color:var(--gold)" title="Officer">👑</span>' : '';
-    identityChip = ' · <span style="background:#0f2a1a;color:#56d364;border:1px solid #1a7f37;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="Linked Mimic install — Settings → Wolf Pack account to manage">⛓ ' + esc(display) + officer + '</span>';
+    identityChip = ' · <span style="background:#0f2a1a;color:var(--wp-green);border:1px solid #1a7f37;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="Linked Mimic install — Settings → Wolf Pack account to manage">⛓ ' + esc(display) + officer + '</span>';
     // Officers: Admin link rides right next to the username chip.
     if (s.mimicIdentity.is_officer) {
       identityChip += ' <a href="https://wolfpack.quest/admin" target="_blank" rel="noreferrer" style="color:var(--red);border:1px solid var(--red);border-radius:3px;font-size:11px;padding:2px 6px;text-decoration:none" title="Officer admin — links, agents, triggers, audits">🛡 Admin ↗</a>';
@@ -21509,7 +21716,7 @@ function renderHeader(s) {
     // Token present but the bot hasn't confirmed identity yet. This branch used
     // to test s.mimicSignedIn, which REQUIRES identity — so it was unreachable
     // and the "verifying" pill never showed (#120). Key it on the token.
-    identityChip = ' · <span style="background:#1f6feb33;color:#58a6ff;border:1px solid #1f6feb;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="Linked but identity not yet refreshed — next bot poll will fill it in">⛓ signed in</span>';
+    identityChip = ' · <span style="background:#1f6feb33;color:var(--wp-blue);border:1px solid var(--wp-accent);border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="Linked but identity not yet refreshed — next bot poll will fill it in">⛓ signed in</span>';
   }
   h += '<div>' + (versionStr ? versionStr + ' · ' : '') + (s.uploadCount||0) + ' upload(s) this session · ' + s.sessionEvents + ' events in ' + sessionMin + ' min' + queueChip + identityChip + '</div>';
   // Update button lives in the H1 next to "(agent x.y.z)" — fill its slot
@@ -22090,14 +22297,14 @@ function renderMeCard(s) {
     const dot = me.live ? '<span style="color:var(--green)">●</span>' : '<span style="color:var(--dim)">○</span>';
     const where = me.zone_name ? esc(me.zone_name) : (me.zone != null ? 'zone ' + esc(String(me.zone)) : 'unknown zone');
     h += '<div style="font-size:12px;margin-top:2px">' + dot + ' <span class="dim">' + where + '</span>'
-       + (me.casting ? ' <span style="color:#58a6ff">· ✦ casting ' + esc(me.casting) + '</span>' : '')
+       + (me.casting ? ' <span style="color:var(--wp-blue)">· ✦ casting ' + esc(me.casting) + '</span>' : '')
        + (me.live && me.pet_name ? ' <span style="color:#f0883e">· 🐾 ' + esc(me.pet_name) + '</span>' : '')
        + (!me.live && me.updatedAt ? ' <span class="dim">· last seen ' + fmtAgo(me.updatedAt) + '</span>' : '')
        + '</div>';
     const buffs = Array.isArray(me.buffs) ? me.buffs : [];
     if (buffs.length) {
       const bstr = buffs.slice(0, 12).map(b => esc(b.name)).join(' · ');
-      h += '<div style="margin-top:3px;color:#a371f7;font-size:11px">🧪 ' + bstr
+      h += '<div style="margin-top:3px;color:var(--wp-purple);font-size:11px">🧪 ' + bstr
          + (buffs.length > 12 ? ' <span class="dim">+' + (buffs.length - 12) + ' more</span>' : '') + '</div>';
     }
   } else {
@@ -22489,7 +22696,7 @@ function renderSetupChecks(s) {
   // button") — Set up for me, the Mimic-only fixers and the old-log importer
   // together, first thing a first-run user sees when the panel opens.
   const actionsRow = '<div style="margin:2px 0 10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
-     + '<button class="wp-eq-setup" style="background:#1f6feb;color:#fff;border:0;border-radius:5px;padding:5px 12px;cursor:pointer;font-weight:600;font-size:12px">🔧 Set up for me</button>'
+     + '<button class="wp-eq-setup" style="background:var(--wp-accent);color:#fff;border:0;border-radius:5px;padding:5px 12px;cursor:pointer;font-weight:600;font-size:12px">🔧 Set up for me</button>'
      // Two more one-click fixers, same row, Mimic-only (they need the Electron
      // bridge — a browser tab cannot elevate or write into the EQ folder).
      // Hidden rather than dimmed outside Mimic: neither is a thing a plain tab
@@ -23360,11 +23567,11 @@ function renderZealClients(s) {
       const bstr = buffs.slice(0, 16).map(function(b){
         return esc(b.name) + (b.ticks != null ? ' <span class="dim">(' + _fmtBuffTicks(b.ticks) + ')</span>' : '');
       }).join(' · ');
-      h += '<div style="margin-left:14px;color:#a371f7;font-size:12px">🧪 ' + bstr + '</div>';
+      h += '<div style="margin-left:14px;color:var(--wp-purple);font-size:12px">🧪 ' + bstr + '</div>';
     } else {
       h += '<div style="margin-left:14px;font-size:12px" class="dim">no buffs reported</div>';
     }
-    if (c.casting) h += '<div style="margin-left:14px;color:#58a6ff;font-size:12px">✦ casting ' + esc(c.casting) + '</div>';
+    if (c.casting) h += '<div style="margin-left:14px;color:var(--wp-blue);font-size:12px">✦ casting ' + esc(c.casting) + '</div>';
     // Pet line — present when we've identified the charm pet's gauge slot by
     // matching its name against the live charm-tracker entry for this owner.
     // Shows the pet's name + live HP%, with the slot id so a future protocol
@@ -23495,7 +23702,7 @@ function renderZealCard(s) {
       const sampleStr = _decodeZeal(samples[k]);
       h += '<tr><td class="dim">' + esc(label) + '</td>'
          + '<td class="num">' + byType[k] + '</td>'
-         + '<td><code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc(sampleStr) + '</code></td></tr>';
+         + '<td><code style="font-size:10px;background:var(--wp-panel);border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc(sampleStr) + '</code></td></tr>';
     }
     h += '</table>';
   }
@@ -23534,13 +23741,15 @@ async function wpToggleCrashShare(on) {
 // Which Zeal build a crash happened on, for the card's title line (the guild lead, 2026-10-04: "i've had
 // a number of zeal crashes lately that i can't tell if they're from my test versions or from the main
 // version"). The crash dialog prints "1.4.8 (<label>)": an official release labels it with the bare
-// short commit hash, our fork's test build with "testall-<hash>", a hand build with whatever was typed
+// short commit hash, our fork's test build with "testall-<hash>", the Wolf Pack build with
+// "wolfpack-<run>-<hash>" (official plus the guild's tested fixes, so not a test), a hand build with whatever was typed
 // ("testall", "pr229") or "UNOFFICIAL". Null when there is nothing to go on.
 function wpZealBuildTag(ver) {
   const m = /\\(([^)]*)\\)/.exec(String(ver || ''));
   if (!m) return null;
   const label = m[1].trim();
   if (/^[0-9a-f]{7,40}$/i.test(label)) return { test: false, text: 'Zeal official' };
+  if (/^wolfpack-/i.test(label)) return { test: false, text: '🐺 Wolf Pack Zeal' };
   if (label) return { test: true, text: '🧪 Zeal test build' };
   return null;
 }
@@ -23556,7 +23765,7 @@ async function wpRunCrashReview() {
     const j = await r.json();
     const list = (j && j.crashes) || [];
     if (!list.length) {
-      out.innerHTML = '<div style="margin-top:8px;color:#56d364">No crash files found \\u2014 '
+      out.innerHTML = '<div style="margin-top:8px;color:var(--wp-green)">No crash files found \\u2014 '
         + 'EverQuest has not left a crash report on this machine.</div>';
       return;
     }
@@ -23565,15 +23774,15 @@ async function wpRunCrashReview() {
       const v = c.verdict || {};
       // Colour carries the answer: green when we can positively clear Mimic and
       // Zeal, red only when Zeal is genuinely implicated, grey when unknown.
-      const tone = v.blames_us === false ? '#56d364' : (v.blames_us === true ? '#f85149' : '#6e7681');
+      const tone = v.blames_us === false ? 'var(--wp-green)' : (v.blames_us === true ? 'var(--wp-red)' : 'var(--wp-dim)');
       const when = c.when ? new Date(c.when).toLocaleString() : c.zip_name;
       h += '<details ' + wpKeep('crashrev|' + c.zip_name) + ' style="margin-top:8px;'
-         + 'border:1px solid #30363d;border-radius:6px;padding:8px">';
+         + 'border:1px solid var(--wp-border);border-radius:6px;padding:8px">';
       const bt = wpZealBuildTag(c.reason && c.reason.zeal_version);
       h += '<summary style="cursor:pointer"><b>' + esc(when) + '</b> \\u2014 '
          + '<span style="color:' + tone + '">' + esc(v.headline || 'Unreadable') + '</span>'
          + (bt ? ' <span title="' + esc(c.reason.zeal_version) + '" style="font-size:11px;padding:0 5px;border-radius:4px;'
-           + 'border:1px solid ' + (bt.test ? '#d29922;color:#e3b341' : '#30363d;color:#8b949e') + '">' + esc(bt.text) + '</span>' : '')
+           + 'border:1px solid ' + (bt.test ? 'var(--wp-gold);color:#e3b341' : 'var(--wp-border);color:#8b949e') + '">' + esc(bt.text) + '</span>' : '')
          + '</summary>';
       for (const n of (v.notes || [])) {
         h += '<div style="margin:6px 0 0 0">\\u2022 ' + esc(n) + '</div>';
@@ -23581,7 +23790,7 @@ async function wpRunCrashReview() {
       if ((v.checks || []).length) {
         h += '<div style="margin-top:8px"><b>What to try</b></div>';
         for (const ck of v.checks) {
-          h += '<div style="margin:4px 0;color:#ffa657">\\u2192 ' + esc(ck) + '</div>';
+          h += '<div style="margin:4px 0;color:var(--wp-orange)">\\u2192 ' + esc(ck) + '</div>';
         }
       }
       const d = c.dump;
@@ -23600,7 +23809,7 @@ async function wpRunCrashReview() {
        + 'PC. If an officer asks for one, send the .zip named above by hand.</div>';
     out.innerHTML = h;
   } catch (e) {
-    out.innerHTML = '<div style="margin-top:8px;color:#f85149">Could not read crash files: '
+    out.innerHTML = '<div style="margin-top:8px;color:var(--wp-red)">Could not read crash files: '
       + esc(String(e && e.message || e)) + '</div>';
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Review my crashes'; }
@@ -23695,7 +23904,7 @@ function renderCharmDiag(s) {
     h += '<table style="font-size:11px;width:100%;margin-top:4px"><tr><th>Character</th><th>slot 16 text</th><th>Article filter</th><th>Updated</th></tr>';
     for (const r of slot16Rows) {
       h += '<tr><td>' + esc(r.character) + '</td>'
-         +   '<td><code style="background:#161b22;padding:1px 4px;border-radius:3px">' + esc(r.slot16_text) + '</code></td>'
+         +   '<td><code style="background:var(--wp-panel);padding:1px 4px;border-radius:3px">' + esc(r.slot16_text) + '</code></td>'
          +   '<td>' + (r.passes_article_filter
               ? '<span style="color:var(--green)">passes</span>'
                 + (r.articled ? ' <span class="dim">(article)</span>'
@@ -23784,7 +23993,7 @@ function renderPetBuffDiag(s) {
          +   '<td style="color:var(--blue)">' + esc(c.spell) + (c.tracked ? ' <span class="dim" title="tracked-buff keyword — parseBuffLanding can index it too">[tracked]</span>' : '') + '</td>'
          +   '<td class="dim">' + esc(c.target || '—') + '</td>'
          +   '<td>' + (c.in_catalog ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--red)">missing</span>') + '</td>'
-         +   '<td class="dim"><code style="background:#161b22;padding:1px 4px;border-radius:3px">' + esc(c.expected_suffix || '?') + '</code></td></tr>';
+         +   '<td class="dim"><code style="background:var(--wp-panel);padding:1px 4px;border-radius:3px">' + esc(c.expected_suffix || '?') + '</code></td></tr>';
     }
     h += '</table>';
     h += '<div class="dim" style="font-size:10px;margin-top:2px">EQ prints <b>&lt;pet&gt;</b> + that suffix; resolveSelfCastLanding matches by the suffix and (since #117) attributes to our pet even when the pet was not the live target at cast.</div>';
@@ -24099,7 +24308,7 @@ function renderReplayStatus(s) {
     return;
   }
   if (el.style.display === 'none') el.style.display = '';
-  var h = '<div style="margin-top:8px;padding:8px;background:#161b22;border:1px solid var(--border);border-radius:5px;font-size:12px">';
+  var h = '<div style="margin-top:8px;padding:8px;background:var(--wp-panel);border:1px solid var(--border);border-radius:5px;font-size:12px">';
   if (r.running) {
     var pct = r.total > 0 ? Math.round((r.played / r.total) * 100) : 0;
     h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">';
@@ -24326,7 +24535,7 @@ function wpNetHtml(d) {
   var hasData = (d.series && ((d.series.router && d.series.router.length) || (d.series.game && d.series.game.length)));
   if (hasData) {
     h += _wpNetChart(d)
-      +  '<div class="dim" style="font-size:11px;margin-top:2px"><span style="color:#58a6ff">━</span> router · <span style="color:#a371f7">━</span> server · '
+      +  '<div class="dim" style="font-size:11px;margin-top:2px"><span style="color:var(--wp-blue)">━</span> router · <span style="color:var(--wp-purple)">━</span> server · '
       +  '<span style="color:var(--red)">▮</span> lost pings (upper row server, lower row router) · shaded = a fight was on</div>';
   }
   h += _wpNetTable(d);
@@ -24572,8 +24781,11 @@ function wpPcCtlHtml() {
   return h;
 }
 function wpPcSummary(r) {
-  if (!r.logs) return 'Could not read any log.';
-  var parts = ['read ' + wpRbNum(r.logs) + (r.logs === 1 ? ' log' : ' logs'), wpRbNum(r.found) + (r.found === 1 ? ' flag line' : ' flag lines') + ' found'];
+  if (!r.logs && !r.exports) return 'Could not read any log.';
+  var parts = [];
+  if (r.logs) parts.push('read ' + wpRbNum(r.logs) + (r.logs === 1 ? ' log' : ' logs'));
+  if (r.exports) parts.push('read ' + wpRbNum(r.exports) + (r.exports === 1 ? ' saved PoP flags file' : ' saved PoP flags files'));
+  parts.push(wpRbNum(r.found) + (r.found === 1 ? ' flag line' : ' flag lines') + ' found');
   parts.push(r.upload ? (r.sent ? 'uploaded' : 'nothing new to upload') : 'not uploaded (' + (r.why || 'local mode / paused') + ')');
   return parts.join(' · ');
 }
@@ -24603,7 +24815,7 @@ function wpPcRepaint() {
   if (!document.getElementById('wpPcCtl')) {
     el.innerHTML = '<h2>📥 Capture latest PoP flags, Seer and Maelin messages</h2>'
       + '<div class="subtle">Reads the last few days of the EverQuest logs on this PC for the Planes of Power flag lines: the Seer\\'s recital, the flag grants with the NPC line that names them (Maelin\\'s included), '
-      + 'and the server\\'s #popflags output. Only the flag steps they prove are sent to the guild, the same as Sync from my logs on the website. '
+      + 'and the server\\'s #popflags output, including the newest PoP flags file Zeal saved next to the log (Export data on /camp, or /outputfile popflags), whatever its age. Only the flag steps they prove are sent to the guild, the same as Sync from my logs on the website. '
       + 'It runs here in the background and waits while a fight is on. Chat, tells and officer channels are not read into it, and characters you keep out of stats are skipped.</div>'
       + '<div id="wpPcCtl"></div><div id="wpPcProg"></div>';
     el._wpLastHtml = null;
@@ -24792,7 +25004,7 @@ var WP_MP_SCOPES = [['bosses', 'Bosses'], ['all', 'Everything']];
 // for My logs: the id an answer gives each zone). q: what the search box asked for; qBox is what is typed in it
 // right now (the debounce below is what turns one into the other). zones/mobs are the last answer's pickers, and
 // facets says it had any: an older bot sends none, and the tab then leaves the pickers out.
-var _wpMp = { w: '7d', scope: 'bosses', char: '', src: 'guild', zone: '', q: '', qBox: '', day: false, chars: [], zones: [], mobs: [], facets: false, showAll: false, data: null, state: 'idle', seq: 0, asOf: 0 };
+var _wpMp = { w: '7d', scope: 'bosses', char: '', src: 'guild', zone: '', q: '', qBox: '', day: false, chars: [], zones: [], mobs: [], facets: false, showAll: false, allRows: false, data: null, state: 'idle', seq: 0, asOf: 0 };
 // What a search may hold, as the agent's whitelist has it: letters, digits, spaces and ' \` - _, at most 40.
 function wpMpCleanQ(v) { return String(v || '').replace(/[^A-Za-z0-9 '\`_-]/g, '').replace(/ +/g, ' ').trim().slice(0, 40); }
 function _wpMpZoneOk(src, z) { z = String(z || ''); return src === 'local' ? z.length > 0 && z.length <= 64 : /^[1-9][0-9]{0,2}$/.test(z); }
@@ -24966,7 +25178,9 @@ function wpMpChart(d, asOf) {
 // whole window, so a night cut by the 400-fight limit still says how many it had). The Character column only
 // exists when more than one character is in the data, the Zone column when any fight has a zone (an older bot
 // sends none), and the Rank column not for My logs (a log has no rank among the guild).
-function wpMpTable(d, byDay) {
+// \`allRows\` (the guild lead, 2026-10-30: "My parses hides the majority of fights": 22 in the chart, 12 in the list)
+// lists every fight in the answer, newest first, without the night headers; the switch under the table sets it.
+function wpMpTable(d, byDay, allRows) {
   var all = (d && d.fights) || [], seen = {}, nChars = 0, anyZone = false, i;
   for (i = 0; i < all.length; i++) {
     var c = String(all[i].char || '');
@@ -24974,7 +25188,7 @@ function wpMpTable(d, byDay) {
     if (all[i].zone) anyZone = true;
   }
   var noRank = !!(d && d.source === 'local');
-  var rows = byDay ? all.slice().reverse() : all.slice(-12).reverse(), th = 'style="text-align:right"', td = 'style="text-align:right;font-variant-numeric:tabular-nums"';
+  var rows = byDay || allRows ? all.slice().reverse() : all.slice(-12).reverse(), th = 'style="text-align:right"', td = 'style="text-align:right;font-variant-numeric:tabular-nums"';
   var cols = 4 + (nChars > 1 ? 1 : 0) + (anyZone ? 1 : 0) + (noRank ? 0 : 1);
   var nmap = {};
   ((d && d.nights) || []).forEach(function (n) { if (n && n.night) nmap[n.night] = n; });
@@ -25105,8 +25319,12 @@ function wpMpHtml() {
       +  (nn ? ' · ' + nn + (nn === 1 ? ' raid night' : ' raid nights') : '') + '</span></div>'
       +  wpMpChart(d, m.asOf)
       +  '<div class="dim" style="font-size:11px;margin-top:2px"><span style="color:#4493e8">●</span> boss fight · <span style="color:#4a5568">●</span> other fight · '
-      +  '<span style="color:#a371f7">━</span> raid-night average · shaded = a raid night</div>'
-      +  wpMpTable(d, m.day);
+      +  '<span style="color:var(--wp-purple)">━</span> raid-night average · shaded = a raid night</div>'
+      +  wpMpTable(d, m.day, m.allRows);
+    if (!m.day && fights.length > 12) {
+      h += '<button type="button" class="wp-btn ghost" onclick="wpMpAllRows()" style="margin:2px 0 4px">'
+        +  (m.allRows ? 'Show the newest 12' : 'Show all ' + fights.length + ' fights') + '</button>';
+    }
     if (d.truncated) h += dimNote('Showing the newest ' + fights.length + ' of ' + total + ' fights.');
   }
   var since = local ? Date.parse(d.since || '') : NaN;
@@ -25214,6 +25432,7 @@ function wpMpClear() {
 function wpMpRefresh() { if (_wpMp.state !== 'loading') wpMpFetch(true); }
 // "+N more" / "fewer": only changes what is drawn, so it asks nothing and is not saved (a new load starts folded).
 function wpMpMore() { _wpMp.showAll = !_wpMp.showAll; wpMpRepaint(); }
+function wpMpAllRows() { _wpMp.allRows = !_wpMp.allRows; wpMpRepaint(); }
 // Opened from the rail (or the tray's #myparses): ask once. The agent answers from its copy inside five minutes.
 function wpMpOpenTab() { wpMpFetch(false); }
 // wolfpack.quest links go out through Mimic's open-external (it only lets https://wolfpack.quest through), so the
@@ -25270,7 +25489,7 @@ function renderReplayCard(s) {
   if (_rls.length === 0) {
     h += '<div class="dim" style="font-size:12px">No watched log files yet — point Mimic at your EverQuest folder first.</div>';
   } else {
-    var _inStyle = 'background:#0d1117;color:var(--text);border:1px solid var(--border);padding:3px 6px;border-radius:4px;font-family:inherit;font-size:12px';
+    var _inStyle = 'background:var(--wp-bg);color:var(--text);border:1px solid var(--border);padding:3px 6px;border-radius:4px;font-family:inherit;font-size:12px';
     h += '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;font-size:12px">';
     h += '<label style="display:flex;flex-direction:column;gap:2px"><span class="dim">Log</span><select id="replayLog" style="' + _inStyle + '">';
     for (var _ri = 0; _ri < _rls.length; _ri++) h += _rlsOption(_rls[_ri]);
@@ -25341,7 +25560,7 @@ function renderVoice(s) {
   h += '<span>Speak loot posts by voice (the countdown chip on the trigger overlay always shows)</span></label>';
   h += '<div class="dim" style="font-size:11px;margin-top:5px">Speaks the item count and the auction window (e.g. &ldquo;Loot posted &mdash; 3 items, bids open 2 minutes&rdquo;) through the same voice as your triggers, so it also needs <b>Trigger alerts (TTS)</b> on. The chip counts down like a Death Touch timer and can be dismissed with its &times; &mdash; it shows even with this box unchecked.</div>';
   h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;margin-top:8px">Default auction length when none is stated:';
-  h += '<input type="number" id="lootAucDur" min="15" max="1800" step="5" value="' + (s.lootAuctionDefaultSec || 120) + '" style="width:70px;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:3px 6px;border-radius:4px;font-family:inherit;font-size:12px"> seconds</label>';
+  h += '<input type="number" id="lootAucDur" min="15" max="1800" step="5" value="' + (s.lootAuctionDefaultSec || 120) + '" style="width:70px;background:var(--wp-bg);color:var(--text);border:1px solid var(--border);padding:3px 6px;border-radius:4px;font-family:inherit;font-size:12px"> seconds</label>';
   h += '<span id="lootAucMsg" class="dim" style="font-size:11px;margin-left:8px"></span>';
   h += '</div>';
 
@@ -25561,7 +25780,7 @@ function renderGuildTriggersCard(s) {
         + '<button type="button" class="trigname" data-trig-view="' + esc(key) + '" aria-expanded="' + (open ? 'true' : 'false') + '" style="color:var(--orange)" title="Show this trigger\\'s settings">'
         + (open ? '▾' : '▸') + ' ' + esc(t.name || '?') + '</button>' + _rbadge + '</td>' +
            '<td class="dim">' + esc(t.category || 'callout') + '</td>' +
-           '<td><code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc((t.pattern || '').slice(0, 80)) + '</code></td>' +
+           '<td><code style="font-size:10px;background:var(--wp-panel);border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc((t.pattern || '').slice(0, 80)) + '</code></td>' +
            '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>' +
            '<td style="white-space:nowrap"><button type="button" data-trig-prev="' + esc(JSON.stringify(_prev)) + '" style="background:#21262d;color:var(--green);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;margin-right:4px" title="Hear this callout: it speaks and plays as it would live, here on this PC only. Nothing is sent.">▶ Preview</button>'
            + '<button type="button" data-trig-copy="' + esc(JSON.stringify(_copy)) + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;white-space:nowrap" title="Configure: open a copy of this guild trigger in the Personal triggers form, filled in, to tweak and add as your own. The guild\\'s version is not changed.">✎ Configure</button></td></tr>';
@@ -25656,6 +25875,11 @@ var WP_OVERLAY_BLURB = {
 // nine with a mini rendition; the pet tracker is 'pets' there.
 var WP_MINI_KEY_OF = { hud: 'hud', tank: 'tank', mobinfo: 'mobinfo', chchain: 'chchain', charm: 'charm',
   exttarget: 'exttarget', pet: 'pets', popraid: 'popraid', buffQueue: 'buffQueue' };
+// …and the overlays with NO designed mini, which fold to their title row instead (main.js _FOLD_KEYS; the guild lead,
+// 2026-10-28: "everything can minimize"). Same switch, same IPC; no 📌, because Minimize ALL (Ctrl+Shift+M) never
+// reaches them — folding the alerts window mid-raid would hide the callouts.
+var WP_FOLD_KEY_OF = { trigger: 'trigger', who: 'who', chat: 'chat', melody: 'melody', zeal: 'zeal', threat: 'threat',
+  command: 'command', me: 'me', map: 'map', maptimers: 'maptimers' };
 
 function renderOverlays(s) {
   let h = '';
@@ -25702,6 +25926,9 @@ function renderOverlays(s) {
     + '<button type="button" class="wp-ov-act wp-btn" data-act="arrange" title="Arranging only ever runs when you click it — never automatically.">✨ Auto-arrange now</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="rescue" title="Lost an overlay off the edge of a screen? Brings back only the overlays you cannot reach, each to a free spot on the screen this window is on; nothing else moves. Overlays sitting on another screen come too only if you say yes. That screen becomes the overlays\\' home for future arranges.">🧲 Rescue to this screen</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="canvasSpan" id="wpOvSpanBtn" style="display:none" title="One Canvas across every screen, so its panels can sit on any of them. Needs every screen at the same Windows display scaling. The same switch as the tray and the Canvas&rsquo;s own toolbar.">…</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="triggerLock" id="wpOvTrigLockBtn" style="display:none" title="Keeps the alerts window the size you drag it to instead of growing as countdowns and callouts arrive. Countdowns that do not fit fold into a +N more line; callouts always get their room. The same switch as the alerts window&rsquo;s right-click menu.">…</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="timersOrder" id="wpOvTimersOrderBtn" style="display:none" title="Which edge the countdown stack starts from on the alerts window: the bottom (rising) or the top (reading down). The same switch as the alerts window&rsquo;s right-click menu. With the Canvas on, each Timers box has its own: arrange the Canvas, right-click the box, Stack.">…</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="canvasSplit" id="wpOvSplitBtn" style="display:none" title="Callouts and countdowns each get a box of their own that you place, resize and lock. Turns the Canvas on, the same as the tray&rsquo;s Canvas item; the alerts window steps aside.">…</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="mapMode" id="wpOvMapModeBtn" title="The Map as a window you place, or laid over EverQuest and click-through so you play straight through it (it keeps clear of your UI windows). The same switch as the Map&rsquo;s own toolbar button and the tray.">…</button>'
     + '</span>'
     + '</div>';
@@ -25748,10 +25975,10 @@ function renderOverlays(s) {
     // ▭ Mini mode (the guild lead, 2026-09-24: "I don't see any of the
     // Mini-mode overlays in here. Those need to go in") — the same switch and
     // 📌 as the overlay's right-click menu, for the nine that have a mini.
-    var miniKey = WP_MINI_KEY_OF[key];
+    var miniKey = WP_MINI_KEY_OF[key] || WP_FOLD_KEY_OF[key];
     var miniCell = miniKey
       ? '<button type="button" class="wp-ov-mini" data-mini="' + miniKey + '">…</button>'
-        + '<button type="button" class="wp-ov-pin" data-mini="' + miniKey + '" title="Keep it mini when Minimize ALL restores the rest">📌</button>'
+        + (WP_MINI_KEY_OF[key] ? '<button type="button" class="wp-ov-pin" data-mini="' + miniKey + '" title="Keep it mini when Minimize ALL restores the rest">📌</button>' : '')
       : '';
     // 🔝 Stay on top (the guild lead, 2026-10-13: "Other apps should be able to draw over the overlays automatically,
     // unless specifically set to stay on top"): the same switch as the overlay's right-click menu. The dashboard's
@@ -25854,6 +26081,25 @@ function renderOverlays(s) {
     +   '<label title="EverQuest draws its pointer under the overlays, so it vanishes behind a solid one; this draws one on top. Never on the HUD; on the Canvas only over its panels. Same switch as the tray menu."><input id="wpStandInPointer" type="checkbox" checked style="cursor:pointer" /> Show a mouse pointer over overlays &mdash; EverQuest&rsquo;s own pointer hides behind them</label>'
     +   '<span class="dim">Opacity, Background and Size set every overlay at once &mdash; fine-tune one with the sliders in its setup bar. Size runs 50%&ndash;200% for high-DPI screens.</span>'
     + '</div></details>'
+    + '</div>';
+  // The guild's palette, read-only, under the raider's own choices (docs/DESIGN-theming.md section 5). Layers: the guild's
+  // colours are the base; the theme/colour-blind pick, opacity and size above sit ON TOP of them and are yours. The
+  // swatches come from the agent's \`theme\` (the bot's answer, six-digit hex only); the guild's name is filled in by
+  // wpRefreshOverlayToggles so this HTML stays byte-stable between polls.
+  var GP_SLOTS = [['accent','Brand'],['blue','Blue'],['purple','Purple'],['text','Text'],['dim','Dim'],['border','Border'],['panel','Panel'],['bg','Background']];
+  var gpTheme = s && s.theme && s.theme.slots ? s.theme.slots : null, gpSw = '';
+  if (gpTheme) {
+    for (var gi = 0; gi < GP_SLOTS.length; gi++) {
+      var gpHex = gpTheme[GP_SLOTS[gi][0]];
+      if (typeof gpHex === 'string' && /^#[0-9a-f]{6}$/i.test(gpHex)) {
+        gpSw += '<span class="wp-gpsw" title="' + GP_SLOTS[gi][1] + ' ' + gpHex + '" style="display:inline-block;width:18px;height:18px;border-radius:4px;border:1px solid var(--border);vertical-align:middle;margin-right:4px;background:' + gpHex + '"></span>';
+      }
+    }
+  }
+  h += '<div class="wp-strip wp-guildpal"><span class="wp-lbl">Guild palette</span>'
+    + '<span class="wp-kcell"><b id="wpGuildPalName">Your guild</b>'
+    +   (gpSw ? ' ' + gpSw : ' <span class="dim">has not set a palette, so the default colours apply</span>') + '</span>'
+    + '<span class="dim">Your own look sits on top: the theme, colour-blind mode, opacity and size above are yours and apply over the guild&rsquo;s colours.</span>'
     + '</div>';
   h += '</div>';
 
@@ -26677,6 +26923,29 @@ function wpRefreshOverlayToggles() {
         spBtn.className = 'wp-ov-act wp-btn' + (st.canvasSpan ? ' on' : '');
         spBtn.textContent = spBtn.disabled ? '⇔ Span all screens — ' + st.canvasSpanWhy : '⇔ Span all screens: ' + (st.canvasSpan ? 'ON — back to one screen' : 'off');
       }
+      // 🔒 Lock the alerts window's size, and 🧩 split callouts and timers into their own boxes (FB-110): the alerts
+      // window's right-click rows, same setters. An older Mimic does not report them: no buttons. With the Canvas
+      // already on, the split says where the boxes are arranged.
+      var tlBtn = document.getElementById('wpOvTrigLockBtn');
+      if (tlBtn) {
+        tlBtn.style.display = typeof st.triggerLockSize === 'boolean' ? '' : 'none';
+        tlBtn.className = 'wp-ov-act wp-btn' + (st.triggerLockSize ? ' on' : '');
+        tlBtn.textContent = st.triggerLockSize ? '🔒 Alerts window size: locked — unlock' : '🔓 Alerts window size: grows with content — lock';
+      }
+      // ⇅ Timers start at: the alerts window's own switch. With the Canvas on that window steps aside and each Timers box
+      // carries its own (Stack, in its menu), so the button says so and opens the Canvas instead of flipping a hidden window.
+      var toBtn = document.getElementById('wpOvTimersOrderBtn');
+      if (toBtn) {
+        toBtn.style.display = typeof st.triggerTimersTopDown === 'boolean' && window.mimic && window.mimic.timersTopDown ? '' : 'none';
+        toBtn.className = 'wp-ov-act wp-btn' + (!st.showCanvas && st.triggerTimersTopDown ? ' on' : '');
+        toBtn.textContent = st.showCanvas ? '⇅ Timers start at: set per Timers box — open the Canvas'
+          : '⇅ Timers start at: ' + (st.triggerTimersTopDown ? 'TOP (reads down) — switch to bottom' : 'bottom (rises) — switch to top');
+      }
+      var splBtn = document.getElementById('wpOvSplitBtn');
+      if (splBtn) {
+        splBtn.style.display = typeof st.showCanvas === 'boolean' && typeof st.triggerLockSize === 'boolean' ? '' : 'none';
+        splBtn.textContent = st.showCanvas ? '🧩 Open the Canvas to arrange' : '🧩 Split callouts and timers into their own boxes';
+      }
       // 🗺 Map: Window ↔ Full, as the tray item and the Map's own button. An older Mimic does not report it: no button.
       var mmBtn = document.getElementById('wpOvMapModeBtn');
       if (mmBtn) {
@@ -26688,9 +26957,9 @@ function wpRefreshOverlayToggles() {
       var mbs = document.querySelectorAll('.wp-ov-mini');
       for (var mi = 0; mi < mbs.length; mi++) {
         var mk = mbs[mi].getAttribute('data-mini'), mOn = !!miniMap[mk];
-        mbs[mi].textContent = mOn ? '▭ MINI' : '▭ full';
+        mbs[mi].textContent = mOn ? '▭ MINI — click to restore' : '▭ full';
         mbs[mi].className = 'wp-ov-mini' + (mOn ? ' on' : '');
-        mbs[mi].title = mOn ? 'Mini now. Click for the full overlay.' : 'Full size now. Click for its mini.';
+        mbs[mi].title = mOn ? 'Mini now (a folded overlay shows only its name). Click to restore the full overlay.' : 'Full size now. Click for its mini.';
       }
       var pbs = document.querySelectorAll('.wp-ov-pin');
       for (var pi2 = 0; pi2 < pbs.length; pi2++) {
@@ -26743,13 +27012,16 @@ function wpRefreshOverlayToggles() {
       if (cpEn2 && Date.now() - _wpCpEnAt > 1500) cpEn2.checked = !!st.charProfilesEnabled;
       // Theme picker highlight — driven from Mimic status (st.overlayTheme),
       // not the render's state blob (which never carries it).
+      var gpn = document.getElementById('wpGuildPalName');
+      var gpName = (st.hub && st.hub.display_name) ? String(st.hub.display_name) : 'Your guild';
+      if (gpn && gpn.textContent !== gpName) gpn.textContent = gpName;
       var tcur = st.overlayTheme || 'default';
       var tb = document.querySelectorAll('.wp-theme-pick');
       for (var j = 0; j < tb.length; j++) {
         var onb = tb[j].getAttribute('data-th') === tcur;
-        tb[j].style.borderColor = onb ? '#a371f7' : 'var(--border)';
+        tb[j].style.borderColor = onb ? 'var(--wp-purple)' : 'var(--border)';
         tb[j].style.background  = onb ? 'rgba(163,113,247,0.25)' : '#21262d';
-        tb[j].style.color       = onb ? '#e9d5ff' : '#c9d1d9';
+        tb[j].style.color       = onb ? '#e9d5ff' : 'var(--wp-text)';
       }
     }).catch(function(){});
   } catch (e) { void e; }
@@ -26861,6 +27133,27 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
           setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
         }).catch(function(){});
       }
+      // Same setters as the alerts window's right-click rows; the split is the tray's Canvas item (turns it on), and
+      // with the Canvas already on the button arranges it instead.
+      if (a === 'triggerLock' && window.mimic.triggerLockSize) {
+        window.mimic.triggerLockSize(!act.classList.contains('on')).then(function(){
+          setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
+        }).catch(function(){});
+      }
+      if (a === 'timersOrder' && window.mimic.timersTopDown) {
+        window.mimic.getStatus().then(function(st){
+          return st && st.showCanvas && window.mimic.canvasEdit ? window.mimic.canvasEdit(true) : window.mimic.timersTopDown();
+        }).then(function(){
+          setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
+        }).catch(function(){});
+      }
+      if (a === 'canvasSplit' && window.mimic.canvasSplit) {
+        window.mimic.getStatus().then(function(st){
+          return st && st.showCanvas ? window.mimic.canvasEdit(true) : window.mimic.canvasSplit();
+        }).then(function(){
+          setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
+        }).catch(function(){});
+      }
       // Same setter as the tray item and the Map's own button.
       if (a === 'mapMode' && window.mimic.setMapMode) {
         window.mimic.getStatus().then(function(st){
@@ -26961,7 +27254,7 @@ function _wpPaintTriggerScan(j){
   for (var i = 0; i < (j.sources || []).length; i++) {
     var src = j.sources[i];
     var label = src.kind === 'gina' ? 'GINA' : src.kind === 'eqlp' ? 'EQ Log Parser' : src.kind;
-    var rootDisplay = src.detectedRoot ? '<code style="background:#0d1117;padding:1px 4px;border-radius:3px">' + _wpEscHtml(src.detectedRoot) + '</code>' : '<span class="dim">— not present —</span>';
+    var rootDisplay = src.detectedRoot ? '<code style="background:var(--wp-bg);padding:1px 4px;border-radius:3px">' + _wpEscHtml(src.detectedRoot) + '</code>' : '<span class="dim">— not present —</span>';
     var lastTouched = '—';
     if (src.files && src.files.length > 0) {
       var newest = src.files.slice().sort(function(a, b){ return (b.modified || '').localeCompare(a.modified || ''); })[0];
@@ -26982,11 +27275,11 @@ function _wpPaintTriggerScan(j){
       var f = src2.files[k];
       var sizeKb = Math.max(1, Math.round((f.size || 0) / 1024));
       var mtime = _wpEscHtml(String(f.modified || '').slice(0, 10));
-      h += '<tr><td><code style="background:#0d1117;padding:1px 4px;border-radius:3px">' + _wpEscHtml(f.name) + '</code></td><td style="text-align:right">' + sizeKb + ' KB</td><td style="text-align:right">' + mtime + '</td></tr>';
+      h += '<tr><td><code style="background:var(--wp-bg);padding:1px 4px;border-radius:3px">' + _wpEscHtml(f.name) + '</code></td><td style="text-align:right">' + sizeKb + ' KB</td><td style="text-align:right">' + mtime + '</td></tr>';
     }
     h += '</table></details>';
   }
-  h += '<div class="dim" style="font-size:10px;margin-top:8px;padding:4px;background:#0d1117;border-radius:4px;border:1px solid var(--border)">'
+  h += '<div class="dim" style="font-size:10px;margin-top:8px;padding:4px;background:var(--wp-bg);border-radius:4px;border:1px solid var(--border)">'
     +  '<b style="color:var(--text)">v1.1.1 foundation — visibility only.</b> Discovery never uploads anything. Subsequent betas will offer to parse these into a preview list (1.1.2), import selected triggers as personal triggers (1.1.3), and observe which ones actually fire during raids so officers can promote the trusted ones guild-wide (1.1.4).'
     + '</div>';
   card.innerHTML = h;
@@ -27232,7 +27525,7 @@ function renderBackupsCard(s) {
       h += '<div style="display:flex;align-items:center;gap:10px;padding:3px 0 3px 16px">'
         + '<span style="min-width:130px">' + _bkStampPretty(st) + (j === 0 ? ' <span class="dim">(newest)</span>' : '') + '</span>'
         + '<button class="wpBkRestore" data-dir="' + encodeURIComponent(t.dir) + '" data-file="' + esc(t.file) + '" data-stamp="' + esc(st) + '"'
-        + ' style="background:#30363d;color:#e6edf3;border:1px solid #484f58;border-radius:5px;padding:2px 10px;cursor:pointer;font-family:inherit;font-size:11px">Restore</button>'
+        + ' style="background:var(--wp-border);color:#e6edf3;border:1px solid #484f58;border-radius:5px;padding:2px 10px;cursor:pointer;font-family:inherit;font-size:11px">Restore</button>'
         + '</div>';
     }
     h += '</details>';
@@ -27252,7 +27545,7 @@ function _dkpSlotButtons(sourceKey) {
   var h = '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">';
   for (var i = 0; i < slots.length; i++) {
     h += '<button class="wpTickSlot" data-source="' + esc(sourceKey) + '" data-slot="' + slots[i] + '"'
-      + ' style="background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:5px;padding:2px 9px;cursor:pointer;font-family:inherit;font-size:11px">' + _slotLabel(slots[i]) + '</button>';
+      + ' style="background:#21262d;color:#e6edf3;border:1px solid var(--wp-border);border-radius:5px;padding:2px 9px;cursor:pointer;font-family:inherit;font-size:11px">' + _slotLabel(slots[i]) + '</button>';
   }
   return h + '</div>';
 }
@@ -27272,12 +27565,12 @@ function renderDkpTickCard(s) {
       + '<div><b>🟢 Live raid roster</b> <span class="dim">— ' + roster.count + ' in your raid (as of ' + esc(_clockOf(roster.at)) + ')</span></div>'
       + _dkpSlotButtons('roster') + '</div>';
   } else {
-    h += '<div class="dim" style="font-size:12px;border:1px dashed #30363d;border-radius:6px;padding:8px 10px;margin:6px 0">🟢 Live raid roster — <i>not in a raid right now</i> (join a raid and Zeal will populate this).</div>';
+    h += '<div class="dim" style="font-size:12px;border:1px dashed var(--wp-border);border-radius:6px;padding:8px 10px;margin:6px 0">🟢 Live raid roster — <i>not in a raid right now</i> (join a raid and Zeal will populate this).</div>';
   }
   // RaidTick files
   for (var i = 0; i < files.length; i++) {
     var f = files[i];
-    h += '<div style="border:1px solid #30363d;border-radius:6px;padding:8px 10px;margin:6px 0">'
+    h += '<div style="border:1px solid var(--wp-border);border-radius:6px;padding:8px 10px;margin:6px 0">'
       + '<div><b>📄 ' + esc(f.name) + '</b> <span class="dim">— ' + f.count + ' players · ' + esc(String(f.ts).replace('T', ' ')) + ' · ' + f.points + ' DKP</span></div>'
       + _dkpSlotButtons('file:' + i) + '</div>';
   }
@@ -27325,7 +27618,7 @@ function renderDkpLootCard(s) {
     if (el._wpDkpHtml !== h) { el._wpDkpHtml = h; el.innerHTML = h; }
     return;
   }
-  h += '<div style="margin-bottom:8px"><button class="wpDkpClearAll" style="background:#30363d;color:#e6edf3;border:1px solid #484f58;border-radius:5px;padding:3px 10px;cursor:pointer;font-family:inherit;font-size:11px">Dismiss all</button></div>';
+  h += '<div style="margin-bottom:8px"><button class="wpDkpClearAll" style="background:var(--wp-border);color:#e6edf3;border:1px solid #484f58;border-radius:5px;padding:3px 10px;cursor:pointer;font-family:inherit;font-size:11px">Dismiss all</button></div>';
   for (var i = 0; i < caps.length; i++) {
     var c = caps[i];
     var chan = c.channel === 'gu' ? '/gu' : '/rs';
@@ -27333,14 +27626,14 @@ function renderDkpLootCard(s) {
     // {name, quantity}, but fold again here so the panel ALWAYS shows "×N"
     // even if a future capture path skips the parser's merge (#133).
     var capItems = wpCollapseLootItems(c.items);
-    h += '<div class="wpDkpCap" data-id="' + esc(c.id) + '" style="border:1px solid #30363d;border-radius:6px;padding:8px 10px;margin:6px 0">'
+    h += '<div class="wpDkpCap" data-id="' + esc(c.id) + '" style="border:1px solid var(--wp-border);border-radius:6px;padding:8px 10px;margin:6px 0">'
       + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'
       +   '<b>' + esc(c.speaker) + '</b>'
       +   '<span class="dim" style="font-size:11px">' + chan + ' · ' + esc(_clockOf(Date.parse(c.ts))) + ' · ' + capItems.length + ' item' + (capItems.length === 1 ? '' : 's') + '</span>'
       +   '<span style="flex:1"></span>'
       +   '<button class="wpDkpPost" data-id="' + esc(c.id) + '" title="Create closed OpenDKP auctions for the checked items and announce to the loot thread" style="background:#238636;color:#fff;border:0;border-radius:5px;padding:2px 10px;cursor:pointer;font-family:inherit;font-size:11px">💰 Post for bidding</button>'
-      +   '<button class="wpDkpCopy" data-id="' + esc(c.id) + '" style="background:#30363d;color:#e6edf3;border:1px solid #484f58;border-radius:5px;padding:2px 10px;cursor:pointer;font-family:inherit;font-size:11px">Copy</button>'
-      +   '<button class="wpDkpDismiss" data-id="' + esc(c.id) + '" title="Dismiss this list" style="background:none;color:#8b949e;border:1px solid #30363d;border-radius:5px;padding:2px 8px;cursor:pointer;font-family:inherit;font-size:11px">✕</button>'
+      +   '<button class="wpDkpCopy" data-id="' + esc(c.id) + '" style="background:var(--wp-border);color:#e6edf3;border:1px solid #484f58;border-radius:5px;padding:2px 10px;cursor:pointer;font-family:inherit;font-size:11px">Copy</button>'
+      +   '<button class="wpDkpDismiss" data-id="' + esc(c.id) + '" title="Dismiss this list" style="background:none;color:#8b949e;border:1px solid var(--wp-border);border-radius:5px;padding:2px 8px;cursor:pointer;font-family:inherit;font-size:11px">✕</button>'
       + '</div>';
     for (var j = 0; j < capItems.length; j++) {
       var it = capItems[j];
@@ -27490,8 +27783,8 @@ function renderReporters(s) {
       h += '<div class="dim" style="font-size:11px">Override — pin: <b>' + (ov.pin ? esc(ov.pin) : '—') + '</b> · include: <b>' + ((ov.extra && ov.extra.length) ? esc(ov.extra.join(', ')) : '—') + '</b></div>';
     }
     h += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:5px">';
-    h += '<select class="wpRepSwap" data-service="' + key + '" style="font-size:11px;padding:2px 4px;background:#161b22;color:var(--text);border:1px solid var(--border);border-radius:4px"><option value="">swap reporter →</option>' + liveOpts + '</select>';
-    h += '<input class="wpRepExtra" data-service="' + key + '" placeholder="add include (name)" style="font-size:11px;padding:3px 6px;background:#161b22;color:var(--text);border:1px solid var(--border);border-radius:4px;width:150px">';
+    h += '<select class="wpRepSwap" data-service="' + key + '" style="font-size:11px;padding:2px 4px;background:var(--wp-panel);color:var(--text);border:1px solid var(--border);border-radius:4px"><option value="">swap reporter →</option>' + liveOpts + '</select>';
+    h += '<input class="wpRepExtra" data-service="' + key + '" placeholder="add include (name)" style="font-size:11px;padding:3px 6px;background:var(--wp-panel);color:var(--text);border:1px solid var(--border);border-radius:4px;width:150px">';
     h += '<button type="button" class="wpRepExtraBtn" data-service="' + key + '" style="font-size:11px;padding:3px 9px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:#21262d;color:var(--text)">+ include</button>';
     h += '<button type="button" class="wpRepClear" data-service="' + key + '" style="font-size:11px;padding:3px 9px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:#21262d;color:var(--red)">clear</button>';
     h += '</div></div>';
@@ -27729,7 +28022,7 @@ function _wpKillAgentKillRow(fl, tuning) {
     h += '<div style="margin-top:6px;padding:7px;border:1px dashed var(--red);border-radius:5px">';
     h += '<div style="font-size:11px;color:var(--red);margin-bottom:5px">⚠ This pauses EVERY agent&rsquo;s uploads fleet-wide. Type <b>KILL</b> to confirm.</div>';
     h += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">';
-    h += '<input id="wpKillConfirmInput" placeholder="KILL" style="font-size:11px;padding:3px 6px;background:#161b22;color:var(--text);border:1px solid var(--red);border-radius:4px;width:90px">';
+    h += '<input id="wpKillConfirmInput" placeholder="KILL" style="font-size:11px;padding:3px 6px;background:var(--wp-panel);color:var(--text);border:1px solid var(--red);border-radius:4px;width:90px">';
     h += '<button type="button" class="wpKillConfirm" style="font-size:11px;padding:3px 11px;cursor:pointer;border:1px solid var(--red);border-radius:4px;background:#3d1414;color:var(--red)">Confirm kill</button>';
     h += '<button type="button" class="wpKillCancel" style="font-size:11px;padding:3px 9px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:#21262d;color:var(--text)">Cancel</button>';
     h += '</div></div>';
@@ -27747,7 +28040,7 @@ function _wpKillVersionFloorRow(tuning) {
      + (pend ? ' <span class="dim" style="font-size:10px">(saving…)</span>' : '') + '</div>';
   h += '<div class="dim" style="font-size:11px;line-height:1.45;margin-top:3px">Numeric version form (major×10000 + minor×100 + patch), e.g. agent 3.3.95 → 30395. Agents below the floor pause uploads like the kill switch and show an update nudge. Set 0 (or blank) to clear the floor. Conservative — coordinate with the guild lead.</div>';
   h += '<div style="display:flex;gap:6px;align-items:center;margin-top:5px">';
-  h += '<input id="wpKillVerInput" type="number" min="0" step="1" placeholder="' + (cur != null ? cur : 'unset') + '" style="font-size:11px;padding:3px 6px;background:#161b22;color:var(--text);border:1px solid var(--border);border-radius:4px;width:120px">';
+  h += '<input id="wpKillVerInput" type="number" min="0" step="1" placeholder="' + (cur != null ? cur : 'unset') + '" style="font-size:11px;padding:3px 6px;background:var(--wp-panel);color:var(--text);border:1px solid var(--border);border-radius:4px;width:120px">';
   h += '<button type="button" class="wpKillVerSet" style="font-size:11px;padding:3px 11px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:#21262d;color:var(--text)">Set floor</button>';
   h += '</div></div>';
   return h;
@@ -27921,7 +28214,9 @@ function wpNightLootTotalsHtml(nl, win) {
 }
 function wpNightLootHtml(nl) {
   var have = nl && Array.isArray(nl.loot);
-  var dataHrs = have && nl.window_hours ? nl.window_hours : 12;
+  // Before the first answer (a reload) there is no data window yet: the header names the saved window the chip
+  // already shows, not a stale "12 hours". An answer with no window_hours is an older bot's 12h.
+  var dataHrs = have ? (nl.window_hours || 12) : _wpNightHours;
   var win = _wpNightWindowText(dataHrs);
   var h = '<div class="card wide"><h2>📦 Who looted what <span class="dim" style="font-size:11px;text-transform:none;letter-spacing:0">· last ' + win + '</span></h2>';
   if (!nl) {
@@ -27995,6 +28290,16 @@ function wpNightLootWindow(el) {
   try { localStorage.setItem('wp:nightLootHours', String(v)); } catch (e) { void e; }
   wpRenderNightLoot();
   if (typeof wpNightLootRefetch === 'function') wpNightLootRefetch(true);
+}
+// Opening the Loot tab (the guild lead, 2026-10-28: "when you reload it doesn't pull in loot from the last x hours
+// based on setting"). A reload lands on the Dashboard tab with the saved window already chosen but no list; the
+// fetch behind the tab only runs on the next 7s poll after the tab shows, so the card sat on "Loading…" (once under a
+// "last 12 hours" header). Ask at once when the list on screen is not the saved window's; a list that is already
+// current just takes the normal 30s-throttled refresh.
+function wpNightLootOpened() {
+  var nl = _wpNightLoot;
+  var current = !!(nl && Array.isArray(nl.loot) && (nl.window_hours || 12) === _wpNightHours);
+  if (typeof wpNightLootRefetch === 'function') wpNightLootRefetch(!current);
 }
 // Who looted a roll set's item when that is NOT someone the card already shows as
 // a winner (a re-roll or a pass hands it on). The bot linked looters to the
@@ -28528,7 +28833,7 @@ function _rdEntry(e, isHaste) {
   return '<span style="color:var(--text)">' + esc(e.n) + '</span>' + (t ? ' <span class="dim num">' + t + '</span>' : '') + v;
 }
 function _rdSongLine(e, isHaste) {
-  return '<div style="padding-left:14px;font-size:10px"><span style="color:#a371f7" title="Bard song — stacks on top of the primary buff">♪ song:</span> ' + _rdEntry(e, isHaste) + '</div>';
+  return '<div style="padding-left:14px;font-size:10px"><span style="color:var(--wp-purple)" title="Bard song — stacks on top of the primary buff">♪ song:</span> ' + _rdEntry(e, isHaste) + '</div>';
 }
 function _raidDetailHtml(sel, det) {
   var role = _RD_ROLE_OF[String(sel.class || '').toLowerCase()] || 'other';
@@ -28688,7 +28993,7 @@ function renderRaidTab(q) {
         h += '<div class="wp-raid-row" data-raider="' + esc(m.name) + '" style="position:relative;cursor:pointer;padding:3px 6px 4px;font-size:11px;border-left:3px solid ' + _raidTierColor(m.tier) + ';margin-bottom:2px;background:' + (selected ? 'rgba(88,166,255,0.12)' : 'rgba(8,5,16,0.35)') + ';border-radius:3px;overflow:hidden">'
           + '<div style="display:flex;align-items:baseline;gap:5px">'
           + '<span style="color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (_isRaidLeadRank(m.rank) ? '👑 ' : (_isGroupLeadRank(m.rank) ? '⭐ ' : '')) + esc(m.name)
-          + (m.mgb ? ' <span title="Mass Group Buff AA trained (Quarmy export)" style="color:#a371f7;font-size:8px;font-weight:600">MGB</span>' : '') + '</span>'
+          + (m.mgb ? ' <span title="Mass Group Buff AA trained (Quarmy export)" style="color:var(--wp-purple);font-size:8px;font-weight:600">MGB</span>' : '') + '</span>'
           + (hp != null ? '<span class="num" style="margin-left:auto;font-size:10px;color:' + hpColor + '">' + hp + '%</span>' : '')
           + '</div>'
           + '<div style="display:flex;align-items:baseline;gap:5px;font-size:9px" class="dim">'
@@ -28707,7 +29012,7 @@ function renderRaidTab(q) {
       var sel = null;
       for (var si = 0; si < roster.length; si++) if (roster[si].name === _raidSelName) { sel = roster[si]; break; }
       if (sel) {
-        h += '<div style="margin-top:10px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px">'
+        h += '<div style="margin-top:10px;padding:8px 10px;background:var(--wp-panel);border:1px solid var(--border);border-radius:6px">'
           + '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px">'
           + '<b style="color:var(--blue);font-size:13px">' + esc(sel.name) + '</b>'
           + '<span class="dim" style="font-size:11px">' + esc(sel.class || '?') + (sel.level != null ? ' L' + sel.level : '') + (sel.zone ? ' · ' + esc(sel.zone) : '') + '</span>'
@@ -28724,7 +29029,7 @@ function renderRaidTab(q) {
           for (var bi = 0; bi < bl.length; bi++) {
             var bb = bl[bi];
             var rem = (typeof bb.t === 'number' && bb.t > 0 && bb.t < 6000) ? Math.round(bb.t * 6 / 60) + 'm' : '';
-            h += '<span style="font-size:11px;background:#0d1117;border:1px solid var(--border);border-radius:4px;padding:2px 8px">'
+            h += '<span style="font-size:11px;background:var(--wp-bg);border:1px solid var(--border);border-radius:4px;padding:2px 8px">'
               + esc(bb.n) + (rem ? ' <span class="dim">' + rem + '</span>' : '') + '</span>';
           }
           h += '</div>';
@@ -28740,7 +29045,7 @@ function renderRaidTab(q) {
     + '<span class="dim" style="font-size:11px;font-weight:normal">(grouped by buff line · 3s cache)</span></h2>';
   h += '<div style="display:flex;align-items:center;gap:8px;margin:6px 0 10px;font-size:12px">'
     + '<span class="dim">Buffing as</span>'
-    + '<select id="wpRaidCls" style="background:#0d1117;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 8px;font:inherit">'
+    + '<select id="wpRaidCls" style="background:var(--wp-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 8px;font:inherit">'
     + '<option value="">(any class)</option>'
     + ['Cleric','Druid','Shaman','Enchanter','Magician','Necromancer','Wizard','Beastlord','Bard','Paladin','Ranger','Shadow Knight'].map(function(c){
         return '<option' + (c === _raidTabCls ? ' selected' : '') + '>' + c + '</option>';
@@ -28948,7 +29253,7 @@ function renderOptin(o) {
       const scopeStart = r.scope && r.scope.start_iso ? new Date(r.scope.start_iso).toLocaleString() : '?';
       const scopeEnd   = r.scope && r.scope.end_iso   ? new Date(r.scope.end_iso).toLocaleString()   : '?';
       const status = r.status === 'acked'
-        ? '<span style="color:#1f6feb">✓ acknowledged</span>'
+        ? '<span style="color:var(--wp-accent)">✓ acknowledged</span>'
         : '<span style="color:#f0883e">pending</span>';
       h += '<div style="margin-top:10px;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:4px">' +
            '<div><b>' + esc(r.character) + '</b> ' + status + '</div>' +
@@ -29153,7 +29458,7 @@ function renderOptin(o) {
           whoLabel +
           staleChip +
           ' <button data-rerun="' + esc(f.path) + '"' + rerunClass + ' title="' + rerunTip + '" style="margin-left:8px;background:#a06628;border:1px solid #a06628;color:#fff;font-size:11px;padding:2px 8px;border-radius:3px;cursor:pointer;font-weight:500">↻ Re-run</button>' +
-          ' <button data-rescan-who="' + esc(f.path) + '" title="Re-scan this file for /who rows only (fast — skips chat + combat which are already uploaded). Captures visible-class /who rows that a pre-v3.0.35 keep-pattern bug silently dropped." style="margin-left:4px;background:#1f6feb;border:1px solid #1f6feb;color:#fff;font-size:11px;padding:2px 8px;border-radius:3px;cursor:pointer;font-weight:500">↺ /who only</button>';
+          ' <button data-rescan-who="' + esc(f.path) + '" title="Re-scan this file for /who rows only (fast — skips chat + combat which are already uploaded). Captures visible-class /who rows that a pre-v3.0.35 keep-pattern bug silently dropped." style="margin-left:4px;background:var(--wp-accent);border:1px solid var(--wp-accent);color:#fff;font-size:11px;padding:2px 8px;border-radius:3px;cursor:pointer;font-weight:500">↺ /who only</button>';
       }
       else if (f.resume?.bytePos > 0 && f.sizeBytes) {
         const pct = Math.floor(f.resume.bytePos / f.sizeBytes * 100);
@@ -29430,7 +29735,7 @@ async function refresh() {
           var _sel = document.getElementById(_sid);
           if (_sel) {
             _sel.innerHTML = '<div class="card" style="border-color:#a3260a">' +
-              '<h2 style="color:#f85149">⚠ This panel failed to render</h2>' +
+              '<h2 style="color:var(--wp-red)">⚠ This panel failed to render</h2>' +
               '<div class="dim" style="font-size:11px;white-space:pre-wrap;word-break:break-word">' +
               esc(String(_re && (_re.stack || _re.message) || _re)) + '</div></div>';
             _sel._wpLastHtml = null;  // bust morph cache so a later good render re-applies
@@ -29491,7 +29796,7 @@ async function refresh() {
       d.innerHTML =
         '⚠ <b>Can’t reach the parser engine</b> at <code>' + (location.origin || '?') + '</code>.<br>' +
         'The engine is busy or restarting (updates and big log rescans can take a minute) — this usually clears on its own. If it moved ports, Mimic reconnects automatically.' +
-        '<div style="margin-top:8px"><button id="wpConnReload" style="background:#1f6feb;color:#fff;border:0;border-radius:5px;padding:6px 14px;cursor:pointer;font-family:inherit;font-size:12px">🔄 Reload to the live engine</button> <span style="color:#c98">— or fully restart Mimic.</span></div>';
+        '<div style="margin-top:8px"><button id="wpConnReload" style="background:var(--wp-accent);color:#fff;border:0;border-radius:5px;padding:6px 14px;cursor:pointer;font-family:inherit;font-size:12px">🔄 Reload to the live engine</button> <span style="color:#c98">— or fully restart Mimic.</span></div>';
       var host = WP_FEEDBACK_MODE ? document.body : (document.querySelector('.section.active') || document.body);
       host.insertBefore(d, host.firstChild);
       var rb = document.getElementById('wpConnReload');
@@ -29632,6 +29937,7 @@ document.querySelectorAll('.nav button[data-tab]').forEach(b => b.addEventListen
   if (b.dataset.tab === 'optin') refreshOptin();
   if (b.dataset.tab === 'raid') refreshRaidTab();
   if (b.dataset.tab === 'myparses') wpMpOpenTab();
+  if (b.dataset.tab === 'loot') wpNightLootOpened();
   try { wpIndexSync(); } catch (e) { void e; }   // the pinned index follows the tab at once, not on the next poll
 }));
 // #myparses opens the 📈 My parses tab — the tray's "📈 My parses" item loads the dashboard with that hash, the
@@ -29762,7 +30068,7 @@ refresh(); setInterval(refresh, 2000);
   function paint(on) {
     ab.dataset.on = on ? '1' : '';
     ab.textContent = on ? (running ? '↩ leave alpha' : '✓ alpha on next restart') : 'α alpha';
-    ab.style.color = on && !running ? '#a371f7' : '#8b949e';
+    ab.style.color = on && !running ? 'var(--wp-purple)' : '#8b949e';
     ab.title = on
       ? (running ? 'Leave the alpha — Mimic confirms before doing anything' : 'Joined the alpha — the newest alpha installs on your next restart. Click to leave.')
       : 'Try the Mimic 3.0 alpha — Mimic confirms before doing anything';
@@ -29818,19 +30124,19 @@ document.addEventListener('click', function (ev) {
       body: JSON.stringify({ slot: slot, players: players, points: points, dry_run: true }) })
       .then(function (r) { return r.json(); }).then(function (j) {
         if (!msg) return;
-        if (!j.ok) { _dkpTickPending = null; msg.innerHTML = '<span style="color:#f85149">✕ ' + esc(j.reason || j.error || 'cannot submit') + '</span>'; return; }
+        if (!j.ok) { _dkpTickPending = null; msg.innerHTML = '<span style="color:var(--wp-red)">✕ ' + esc(j.reason || j.error || 'cannot submit') + '</span>'; return; }
         var verb = j.action === 'would-overwrite' ? 'OVERWRITE' : (j.action === 'create-separate' ? 'create a separate raid for' : 'add');
         // Prefer the OpenDKP-matched count when present (only matched raiders
         // get credited); fall back to the raw attendee count.
         var credited = (typeof j.matched_count === 'number') ? j.matched_count : j.count;
         var unm = Array.isArray(j.unmatched) ? j.unmatched : [];
-        msg.innerHTML = '<div style="border:1px solid #1f6feb;border-radius:6px;padding:8px 10px;background:#0d1b2e">'
+        msg.innerHTML = '<div style="border:1px solid var(--wp-accent);border-radius:6px;padding:8px 10px;background:#0d1b2e">'
           + 'Will <b>' + verb + ' ' + esc(_slotLabel(slot)) + '</b> — <b>' + credited + '</b> credited · ' + j.points + ' DKP each'
           + '<br><span class="dim">Raid: ' + esc(j.raidName || ('#' + j.raidId)) + (j.raidId ? ' (#' + j.raidId + ')' : '') + '</span>'
           + (unm.length ? '<br><span style="color:#f6c365;font-size:11px">⚠ ' + unm.length + ' not on OpenDKP (won\\'t be credited): ' + esc(unm.slice(0, 12).join(', ')) + (unm.length > 12 ? '…' : '') + '</span>' : '')
           + '<div style="margin-top:6px"><button id="wpTickConfirm" style="background:#238636;color:#fff;border:0;border-radius:5px;padding:3px 12px;cursor:pointer;font-family:inherit;font-size:11px">✓ Submit tick</button> '
-          + '<button id="wpTickCancel" style="background:#30363d;color:#e6edf3;border:1px solid #484f58;border-radius:5px;padding:3px 12px;cursor:pointer;font-family:inherit;font-size:11px">Cancel</button></div></div>';
-      }).catch(function () { _dkpTickPending = null; if (msg) msg.innerHTML = '<span style="color:#f85149">✕ engine unreachable</span>'; });
+          + '<button id="wpTickCancel" style="background:var(--wp-border);color:#e6edf3;border:1px solid #484f58;border-radius:5px;padding:3px 12px;cursor:pointer;font-family:inherit;font-size:11px">Cancel</button></div></div>';
+      }).catch(function () { _dkpTickPending = null; if (msg) msg.innerHTML = '<span style="color:var(--wp-red)">✕ engine unreachable</span>'; });
     return;
   }
   if (t0.id === 'wpTickCancel') { _dkpTickPending = null; var mc = document.getElementById('wpTickMsg'); if (mc) mc.innerHTML = ''; return; }
@@ -29847,8 +30153,8 @@ document.addEventListener('click', function (ev) {
           var unm2 = Array.isArray(j.unmatched) ? j.unmatched : [];
           msg2.innerHTML = '<span style="color:#3fb950">✓ ' + esc(_slotLabel(p.slot)) + ' submitted — ' + j.count + ' credited to ' + esc(j.raidName || ('#' + j.raidId)) + '</span>'
             + (unm2.length ? '<br><span style="color:#f6c365;font-size:11px">⚠ not on OpenDKP: ' + esc(unm2.slice(0, 12).join(', ')) + (unm2.length > 12 ? '…' : '') + '</span>' : '');
-        } else msg2.innerHTML = '<span style="color:#f85149">✕ ' + esc(j.reason || j.error || 'submit failed') + '</span>';
-      }).catch(function () { _dkpTickPending = null; if (msg2) msg2.innerHTML = '<span style="color:#f85149">✕ submit failed</span>'; });
+        } else msg2.innerHTML = '<span style="color:var(--wp-red)">✕ ' + esc(j.reason || j.error || 'submit failed') + '</span>';
+      }).catch(function () { _dkpTickPending = null; if (msg2) msg2.innerHTML = '<span style="color:var(--wp-red)">✕ submit failed</span>'; });
     return;
   }
 }, true);
@@ -31341,7 +31647,7 @@ async function dismissTopDamage(key) {
     h += "<button id=wpFamToggle style='margin-left:auto;background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;font-family:inherit'>✎ characters</button>";
     h += "</div>";
     if (showFamily){
-      h += "<div style='background:#0d1117;border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:8px;font-size:12px'>";
+      h += "<div style='background:var(--wp-bg);border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:8px;font-size:12px'>";
       h += "<div style='margin-bottom:6px'><span class=dim>main</span> <input id=wpFamMain value='"+esc(cfg.family.main||"")+"' placeholder='Mainname' style='background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:12px;width:130px'></div>";
       h += "<div style='margin-bottom:6px'><span class=dim>alts</span> ";
       var alts = (cfg.family.alts||[]);
@@ -31393,7 +31699,7 @@ async function dismissTopDamage(key) {
           var pf = prefillFor(row.item_id);
           h += "<input id=wpBidVal_"+row.key+" type=number min=1 placeholder='dkp' style='width:56px;background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;font-family:inherit'>";
           h += " <button class=wpBidGo data-key='"+row.key+"' data-aid='"+row.auction_id+"' style='background:#21262d;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;font-family:inherit'>Bid</button>";
-          if (pf) h += " <button class=wpBidPlus data-key='"+row.key+"' data-v='"+pf.v+"' title='prefill "+esc(pf.basis)+" + 1' style='background:#161b22;color:var(--dim,#8b949e);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:11px;cursor:pointer;font-family:inherit'>+1</button>";
+          if (pf) h += " <button class=wpBidPlus data-key='"+row.key+"' data-v='"+pf.v+"' title='prefill "+esc(pf.basis)+" + 1' style='background:var(--wp-panel);color:var(--dim,#8b949e);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:11px;cursor:pointer;font-family:inherit'>+1</button>";
         } else if (!cfg.authed){
           h += "<span class=dim style='font-size:10px' title='Log into OpenDKP to bid'>🔒 locked</span>";
         } else if (!char){
@@ -32585,7 +32891,7 @@ function wpTrigSettingsHtml(t, scope) {
   var guild = scope === 'guild';
   var rows = [];
   function add(k, v) { if (v) rows.push('<div class="trigset-k">' + k + '</div><div class="trigset-v">' + v + '</div>'); }
-  function code(s) { return '<code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc(String(s)) + '</code>'; }
+  function code(s) { return '<code style="font-size:10px;background:var(--wp-panel);border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc(String(s)) + '</code>'; }
   function secs(n) { return esc(String(Math.round(Number(n) * 10) / 10)) + 's'; }
   function names(a) { return a.map(function (c) { c = String(c); return esc(c.charAt(0).toUpperCase() + c.slice(1)); }).join(', '); }
   // when it fires
@@ -32661,7 +32967,7 @@ function wpTrigSettingsHtml(t, scope) {
     ? '<a href="https://wolfpack.quest/admin/triggers?edit=' + encodeURIComponent(t.id || '') + '" target="_blank" rel="noopener noreferrer" style="color:var(--blue)">Edit on wolfpack.quest</a> <span class="dim">&middot; officers only; guild triggers are changed there</span>'
     : (t.builtin_timer
       ? '<span class="dim">This one is a switch: turn it on or off under Suggested triggers.</span>'
-      : '<button type="button" data-trig-edit="' + esc(t.id || '') + '" style="background:#1f6feb;color:#fff;border:0;padding:4px 12px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px;font-weight:bold">&#9998; Edit these settings</button>'
+      : '<button type="button" data-trig-edit="' + esc(t.id || '') + '" style="background:var(--wp-accent);color:#fff;border:0;padding:4px 12px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px;font-weight:bold">&#9998; Edit these settings</button>'
         + ' <span class="dim">anything the form has no box for is kept as it is'
         // Suggested triggers rebuild their row from the template when they are ticked or their 🔊 flips.
         + (String(t.id || '').indexOf('suggested:') === 0 ? '; this one came from Suggested triggers, and ticking it or its 🔊 there puts the standard version back' : '')
@@ -32743,64 +33049,64 @@ function wpTrigApplyForm(base, f) {
   // (the form is uncontrolled — we read values on submit).
   function buildEditorHtml() {
     return ''
-      + '<div style="margin-top:12px;padding:12px;background:#161b22;border:1px solid var(--border);border-radius:8px">'
+      + '<div style="margin-top:12px;padding:12px;background:var(--wp-panel);border:1px solid var(--border);border-radius:8px">'
       + '  <div id="trigFormTitle" style="font-weight:bold;margin-bottom:8px;color:var(--blue)">+ Add personal trigger</div>'
       + '  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">'
-      + '    <label>Name<br><input id="trigNewName" type="text" placeholder="e.g. Rampage on me" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
-      + '    <label>Cooldown (sec)<br><input id="trigNewCooldown" type="number" min="0" max="3600" value="0" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      + '    <label>Name<br><input id="trigNewName" type="text" placeholder="e.g. Rampage on me" style="width:100%;background:var(--wp-bg);color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      + '    <label>Cooldown (sec)<br><input id="trigNewCooldown" type="number" min="0" max="3600" value="0" style="width:100%;background:var(--wp-bg);color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label style="grid-column:1/3">Pattern (regex; named groups like (?&lt;target&gt;\\\\w+) become {target} in the alert text)<br>'
-      + '      <input id="trigNewPattern" type="text" placeholder="e.g. (?&lt;target&gt;\\\\w+) begins to cast Mass Cancel Magic" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px"></label>'
+      + '      <input id="trigNewPattern" type="text" placeholder="e.g. (?&lt;target&gt;\\\\w+) begins to cast Mass Cancel Magic" style="width:100%;background:var(--wp-bg);color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px"></label>'
       + '    <label style="grid-column:1/3">Overlay text<br>'
-      + '      <input id="trigNewOverlay" type="text" placeholder="e.g. CANCEL ON {target}!" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      + '      <input id="trigNewOverlay" type="text" placeholder="e.g. CANCEL ON {target}!" style="width:100%;background:var(--wp-bg);color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label style="grid-column:1/3">Spoken text (optional — leave blank to speak the overlay text)<br>'
-      + '      <input id="trigNewTts" type="text" placeholder="e.g. D I fired on {tank}" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      + '      <input id="trigNewTts" type="text" placeholder="e.g. D I fired on {tank}" style="width:100%;background:var(--wp-bg);color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       // 2026-10-14: a sound from the library (or the member's own folder), its volume, whether it plays
       // INSTEAD of the spoken callout, and this callout's own voice pack. The Sounds card below lists them all.
       + '    <label>Sound (optional)<br><span style="display:flex;gap:6px;align-items:center">'
-      + '      <select id="trigNewSound" style="flex:1;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px">' + WPSounds.optionsHtml('') + '</select>'
+      + '      <select id="trigNewSound" style="flex:1;background:var(--wp-bg);color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px">' + WPSounds.optionsHtml('') + '</select>'
       + '      <button id="trigSoundPlay" type="button" title="Hear it at this volume" style="background:#21262d;color:var(--green);border:1px solid var(--border);padding:4px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:12px">&#9654;</button>'
       + '    </span></label>'
       + '    <label>Sound volume <span id="trigNewSoundVolVal" class="dim">90%</span><br><input id="trigNewSoundVol" type="range" min="0" max="100" value="90" style="width:100%"></label>'
       + '    <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input id="trigNewSoundReplace" type="checkbox"> Play the sound <b>instead of</b> speaking the callout</label>'
-      + '    <label>Voice for this callout<br><select id="trigNewVoicePack" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px">' + WPSounds.packOptionsHtml('') + '</select></label>'
-      + '    <label>Color<br><select id="trigNewColor" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"><option value="red">red</option><option value="orange">orange</option><option value="gold">gold</option><option value="green">green</option><option value="blue">blue</option><option value="purple">purple</option><option value="white">white</option></select></label>'
-      + '    <label>Duration (ms)<br><input id="trigNewDuration" type="number" min="500" max="60000" value="5000" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
-      + '    <label>Countdown timer (sec, 0 = no timer)<br><input id="trigNewTimerSec" type="number" min="0" max="3600" value="0" placeholder="e.g. 18 for a Cazic Touch refresh" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
-      + '    <label>Cancel-early phrase (optional)<br><input id="trigNewEndEarly" type="text" placeholder="e.g. {target} has been slain" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px"></label>'
+      + '    <label>Voice for this callout<br><select id="trigNewVoicePack" style="width:100%;background:var(--wp-bg);color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px">' + WPSounds.packOptionsHtml('') + '</select></label>'
+      + '    <label>Color<br><select id="trigNewColor" style="width:100%;background:var(--wp-bg);color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"><option value="red">red</option><option value="orange">orange</option><option value="gold">gold</option><option value="green">green</option><option value="blue">blue</option><option value="purple">purple</option><option value="white">white</option></select></label>'
+      + '    <label>Duration (ms)<br><input id="trigNewDuration" type="number" min="500" max="60000" value="5000" style="width:100%;background:var(--wp-bg);color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      + '    <label>Countdown timer (sec, 0 = no timer)<br><input id="trigNewTimerSec" type="number" min="0" max="3600" value="0" placeholder="e.g. 18 for a Cazic Touch refresh" style="width:100%;background:var(--wp-bg);color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      + '    <label>Cancel-early phrase (optional)<br><input id="trigNewEndEarly" type="text" placeholder="e.g. {target} has been slain" style="width:100%;background:var(--wp-bg);color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px"></label>'
       // FB-26 (EQLogParser / GINA "warn N seconds before the end") and FB-31 ("restart the timer when it ends"):
       // both ride on the countdown above, so both are checked against it on save.
-      + '    <label>Warn when this many seconds remain (0 = no warning)<br><input id="trigNewWarnSec" type="number" min="0" max="3600" value="0" placeholder="e.g. 10" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
-      + '    <label>Warning text (flashed, and spoken)<br><input id="trigNewWarnText" type="text" placeholder="e.g. AE in 10 seconds" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      + '    <label>Warn when this many seconds remain (0 = no warning)<br><input id="trigNewWarnSec" type="number" min="0" max="3600" value="0" placeholder="e.g. 10" style="width:100%;background:var(--wp-bg);color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      + '    <label>Warning text (flashed, and spoken)<br><input id="trigNewWarnText" type="text" placeholder="e.g. AE in 10 seconds" style="width:100%;background:var(--wp-bg);color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input id="trigNewWarnTts" type="checkbox" checked> 🔊 Speak the warning (untick to only flash it)</label>'
       + '    <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input id="trigNewLoop" type="checkbox"> ↻ Repeat when the countdown ends</label>'
-      + '    <label>Stop repeating after this many times (blank = keep going)<br><input id="trigNewLoopMax" type="number" min="1" max="1000" placeholder="blank = until you ✕ it" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      + '    <label>Stop repeating after this many times (blank = keep going)<br><input id="trigNewLoopMax" type="number" min="1" max="1000" placeholder="blank = until you ✕ it" style="width:100%;background:var(--wp-bg);color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <div class="dim" style="font-size:11px;align-self:end">Both need a countdown timer. A repeating timer starts over at 0 and warns again each round; ✕ on its bar, the cancel-early phrase, or the mob dying stops it, and the trigger firing again restarts it from the top.</div>'
       + '    <label style="grid-column:1/3">Zeal HP condition (optional — fires off live Zeal gauges, no log line needed; use {target} and {value} in the overlay text)<br>'
       + '      <span style="display:flex;gap:6px;align-items:center">'
-      + '        <select id="trigNewZealField" style="flex:2;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"><option value="">— none —</option><option value="target_hp_pct">Target HP %</option><option value="self_hp_pct">Self HP %</option><option value="group_min_hp_pct">Lowest group HP %</option></select>'
-      + '        <select id="trigNewZealOp" style="flex:1;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"><option value="&lt;">&lt;</option><option value="&lt;=">&lt;=</option><option value="&gt;">&gt;</option><option value="&gt;=">&gt;=</option></select>'
-      + '        <input id="trigNewZealValue" type="number" min="0" max="100" placeholder="%" style="flex:1;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px">'
+      + '        <select id="trigNewZealField" style="flex:2;background:var(--wp-bg);color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"><option value="">— none —</option><option value="target_hp_pct">Target HP %</option><option value="self_hp_pct">Self HP %</option><option value="group_min_hp_pct">Lowest group HP %</option></select>'
+      + '        <select id="trigNewZealOp" style="flex:1;background:var(--wp-bg);color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"><option value="&lt;">&lt;</option><option value="&lt;=">&lt;=</option><option value="&gt;">&gt;</option><option value="&gt;=">&gt;=</option></select>'
+      + '        <input id="trigNewZealValue" type="number" min="0" max="100" placeholder="%" style="flex:1;background:var(--wp-bg);color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px">'
       + '      </span></label>'
       + '  </div>'
       + '  <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
-      + '    <button id="trigAddBtn" type="button" style="background:#1f6feb;color:#fff;border:0;padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:bold">Add trigger</button>'
+      + '    <button id="trigAddBtn" type="button" style="background:var(--wp-accent);color:#fff;border:0;padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:bold">Add trigger</button>'
       + '    <button id="trigCancelBtn" type="button" style="display:none;background:#21262d;color:var(--text);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px">Cancel edit</button>'
       + '    <button id="trigPreviewBtn" type="button" style="background:#21262d;color:var(--green);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px" title="Fire the overlay with the current form text (no save, no DB)">▶ Preview</button>'
       + '    <button id="trigTestBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px">Test pattern…</button>'
       + '    <button id="trigImportBtn" type="button" style="background:#21262d;color:var(--blue);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px" title="Bulk-import a GINA, EQLogParser or PQ Companion trigger file">⬇ Import GINA / EQLP / PQ Companion</button>'
       + '    <span id="trigAddMsg" class="dim" style="font-size:11px"></span>'
       + '  </div>'
-      + '  <div id="trigTestPanel" style="display:none;margin-top:10px;padding:8px;background:#0d1117;border:1px solid var(--border);border-radius:6px">'
+      + '  <div id="trigTestPanel" style="display:none;margin-top:10px;padding:8px;background:var(--wp-bg);border:1px solid var(--border);border-radius:6px">'
       + '    <div class="dim" style="font-size:11px;margin-bottom:6px">Paste a sample log line. The current pattern above will be tested against it.</div>'
-      + '    <input id="trigTestLine" type="text" placeholder="[Mon Apr 14 23:01:02 2025] Aten Ha Ra begins to cast Mass Cancel Magic." style="width:100%;background:#161b22;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;margin-bottom:6px">'
-      + '    <button id="trigTestRun" type="button" style="background:#1f6feb;color:#fff;border:0;padding:4px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">Run test</button>'
+      + '    <input id="trigTestLine" type="text" placeholder="[Mon Apr 14 23:01:02 2025] Aten Ha Ra begins to cast Mass Cancel Magic." style="width:100%;background:var(--wp-panel);color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;margin-bottom:6px">'
+      + '    <button id="trigTestRun" type="button" style="background:var(--wp-accent);color:#fff;border:0;padding:4px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">Run test</button>'
       + '    <div id="trigTestResult" class="dim" style="font-size:11px;margin-top:6px"></div>'
       + '  </div>'
-      + '  <div id="trigImportPanel" style="display:none;margin-top:10px;padding:8px;background:#0d1117;border:1px solid var(--border);border-radius:6px">'
+      + '  <div id="trigImportPanel" style="display:none;margin-top:10px;padding:8px;background:var(--wp-bg);border:1px solid var(--border);border-radius:6px">'
 + '    <div class="dim" style="font-size:11px;margin-bottom:6px">Import from <b>EQLogParser</b> (.tgf / .tgf.gz — the .gz is read directly, no need to unzip) or <b>GINA</b> (.gtp / XML) or <b>PQ Companion</b> (its exported .json trigger pack). Pick a file or paste the text. Every trigger in the file is added; duplicates by name are skipped and existing triggers are preserved. Display, Speak (TTS), countdown timer + the "N seconds before" warning, and capture placeholders ({s1}, {n1}) all carry over.</div>'
       + '    <input id="trigImportFile" type="file" accept=".tgf,.gz,.gtp,.xml,.json,application/gzip,application/json,text/xml" style="display:block;margin-bottom:6px;font-size:11px;color:var(--text)">'
-      + '    <textarea id="trigImportXml" placeholder="…or paste the .tgf JSON / SharedTriggers XML here" style="width:100%;height:120px;background:#161b22;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;margin-bottom:6px"></textarea>'
-      + '    <button id="trigImportRun" type="button" style="background:#1f6feb;color:#fff;border:0;padding:4px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">Import pasted text</button>'
+      + '    <textarea id="trigImportXml" placeholder="…or paste the .tgf JSON / SharedTriggers XML here" style="width:100%;height:120px;background:var(--wp-panel);color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;margin-bottom:6px"></textarea>'
+      + '    <button id="trigImportRun" type="button" style="background:var(--wp-accent);color:#fff;border:0;padding:4px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">Import pasted text</button>'
       + '    <div id="trigImportResult" class="dim" style="font-size:11px;margin-top:6px"></div>'
       + '  </div>'
       + '</div>';
@@ -32821,7 +33127,7 @@ function wpTrigApplyForm(base, f) {
     // happened (a bard, 2026-09-26: "i deleted it out of personal trigger … and now i cant get it back").
     try { if (window._wpSuggestedTriggers && window._wpSuggestedTriggers.refresh) window._wpSuggestedTriggers.refresh(); } catch (e) { void e; }
     if (triggers.length === 0) {
-      listEl.innerHTML = '<div class="dim" style="font-size:12px;padding:6px 0">No personal triggers yet. Use the form below to add one. Patterns support .NET-style named groups: <code style="background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">(?&lt;name&gt;...)</code>; reference them in the overlay text as <code style="background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">{name}</code>.</div>';
+      listEl.innerHTML = '<div class="dim" style="font-size:12px;padding:6px 0">No personal triggers yet. Use the form below to add one. Patterns support .NET-style named groups: <code style="background:var(--wp-panel);border:1px solid var(--border);padding:1px 4px;border-radius:3px">(?&lt;name&gt;...)</code>; reference them in the overlay text as <code style="background:var(--wp-panel);border:1px solid var(--border);padding:1px 4px;border-radius:3px">{name}</code>.</div>';
       return;
     }
     // ⚠ Triggers the loader could not compile are NOT in the list above — they
@@ -32839,7 +33145,7 @@ function wpTrigApplyForm(base, f) {
         + (dropped.length === 1 ? 'it' : 'them') + '.</div>';
       for (var d = 0; d < dropped.length && d < 25; d++) {
         html += '<div style="font-size:11px;margin-top:4px"><b>' + esc(dropped[d].name || '?') + '</b>'
-          + ' <code style="font-size:10px;background:#0d1117;border:1px solid var(--border);padding:1px 4px;border-radius:3px">'
+          + ' <code style="font-size:10px;background:var(--wp-bg);border:1px solid var(--border);padding:1px 4px;border-radius:3px">'
           + esc(String(dropped[d].pattern || '').slice(0, 60)) + '</code>'
           + ' <span class="dim">' + esc(dropped[d].error || '') + '</span></div>';
       }
@@ -32884,7 +33190,7 @@ function wpTrigApplyForm(base, f) {
         // A ticked Suggested alert is listed here too. It is the SAME trigger, not a second one (FB-21: "Enabling
         // either one of these 'charm break' lines makes both enable"), so say so on the row.
         + (String(t.id || '').indexOf('suggested:') === 0 ? ' <span class="dim" style="font-size:10px" title="The same alert as the one under Suggested triggers, not a second one. Ticking either box moves both; deleting it here switches it off there.">(from Suggested)</span>' : '') + '</td>'
-        + '<td><code style="font-size:10px;background:#0d1117;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc(String(t.pattern || '').slice(0, 60)) + '</code></td>'
+        + '<td><code style="font-size:10px;background:var(--wp-bg);border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc(String(t.pattern || '').slice(0, 60)) + '</code></td>'
         + '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>'
         + '<td style="color:' + esc(actionColor) + '">' + esc(actionText) + '</td>'
         + '<td style="white-space:nowrap">'
@@ -34165,7 +34471,7 @@ function wpSoundOverrideHtml(t, ov) {
     if (!list.length) h += '<span class="dim" style="font-size:12px">No sounds found.</span>';
     h += '</div>';
     h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px">'
-      + '<button type="button" id="wpSndOpen" style="background:#1f6feb;color:#fff;border:0;border-radius:4px;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:12px">Open my sounds folder</button>'
+      + '<button type="button" id="wpSndOpen" style="background:var(--wp-accent);color:#fff;border:0;border-radius:4px;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:12px">Open my sounds folder</button>'
       + '<button type="button" id="wpSndRefresh" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:12px">&#8635; Look again</button>'
       + '<span id="wpSndMsg" class="dim" style="font-size:11px">' + esc(msg) + '</span></div>';
     if (WPSounds.userDir()) h += '<div class="dim" style="font-size:10px;margin-top:6px">Your folder: <code>' + esc(WPSounds.userDir()) + '</code></div>';
@@ -34289,7 +34595,8 @@ function wpSoundOverrideHtml(t, ov) {
     return { engine: 'windows', voice: null };
   }
   // acc: the accept panel that is open for a non-free voice ({ id, terms, research }), or null.
-  var eng = { st: null, note: '', busy: false, acc: null }, curAudio = null;
+  // moreLang: the language open under "More voices"; cu: what is typed in the custom-voice form (kept here so a repaint keeps it).
+  var eng = { st: null, note: '', busy: false, acc: null, moreLang: '', cu: { onnx: '', config: '', ok: false } }, curAudio = null;
   // TEST PHRASE (the guild lead, 2026-10-18): every ▶ Test speaks the line chosen or typed at the top of the engine card.
   // The picker and the box live in ONE element built once (phraseEl) and moved back in after each paint, so a repaint never
   // resets what is typed, the caret or the choice; the choice is also kept in this browser (localStorage) across reloads.
@@ -34363,6 +34670,7 @@ function wpSoundOverrideHtml(t, ov) {
       var late = false, t = setTimeout(function(){ late = true; done(false); }, test ? 12900 : 2900);
       var spec = { engine: ch.engine, voice: ch.voice, rate: rate > 0 ? rate : pick(packId).rate };
       if (test) spec.test = true;
+      if (ch.engine === 'piper' && ch.voice) spec.speaker = speakerOf(ch.voice);   // a multi-speaker model: the number in its field
       Promise.resolve(m.voiceSynth(text, spec)).then(function(buf){
         if (late) return;
         clearTimeout(t);
@@ -34412,7 +34720,7 @@ function wpSoundOverrideHtml(t, ov) {
       + '<label>Speed <input type="range" id="wpVoiceRate" min="50" max="200" value="' + Math.round((cfgVoice.rate > 0 ? cfgVoice.rate : (p ? p.rate : 1.05)) * 100) + '"' + (inMimic() ? '' : ' disabled') + '> <span id="wpVoiceRateV" class="dim">' + pct(cfgVoice.rate > 0 ? cfgVoice.rate : (p ? p.rate : 1.05)) + '&times;</span></label>'
       + '<label>Pitch <input type="range" id="wpVoicePitch" min="0" max="200" value="' + Math.round((cfgVoice.pitch > 0 ? cfgVoice.pitch : (p ? p.pitch : 1)) * 100) + '"' + (inMimic() ? '' : ' disabled') + '> <span id="wpVoicePitchV" class="dim">' + pct(cfgVoice.pitch > 0 ? cfgVoice.pitch : (p ? p.pitch : 1)) + '</span></label>'
       + '<label>Volume <input type="range" id="wpVoiceVolume" min="10" max="100" step="5" value="' + Math.round(volumeNow() * 100) + '"' + (inMimic() ? '' : ' disabled') + '> <span id="wpVoiceVolumeV" class="dim">' + Math.round(volumeNow() * 100) + '%</span></label>'
-      + '<button type="button" id="wpVoiceHear" style="background:#1f6feb;color:#fff;border:0;border-radius:4px;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:12px">&#9654; Hear it</button>'
+      + '<button type="button" id="wpVoiceHear" style="background:var(--wp-accent);color:#fff;border:0;border-radius:4px;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:12px">&#9654; Hear it</button>'
       + '<button type="button" id="wpVoiceReset" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:5px 10px;cursor:pointer;font-family:inherit;font-size:12px"' + (inMimic() ? '' : ' disabled') + '>Back to the pack\\'s own</button>'
       + '</div>';
     h += '<div class="dim" style="font-size:11px;margin-top:4px">A pack whose voices are not installed here still sets the speed and pitch. A trigger can also name its own pack in its editor. Speed and volume apply to every voice engine; pitch and the installed-voice pick apply to the Windows voice only. Volume is how loud callouts play inside Mimic; trigger sounds have their own volume.</div>';
@@ -34423,21 +34731,93 @@ function wpSoundOverrideHtml(t, ov) {
   // apps/mimic/neuralVoice.js. Non-free Piper voices sit behind an accept screen (acceptHtml).
   function mb(b){ var m = b / 1048576; return (m >= 10 ? Math.round(m) : Math.round(m * 10) / 10) + ' MB'; }
   function btn(attrs, label, blue, off){
-    return '<button type="button" ' + attrs + ' style="background:' + (blue ? '#1f6feb;color:#fff;border:0' : 'var(--panel);color:var(--text);border:1px solid var(--border)') + ';border-radius:4px;padding:3px 10px;cursor:pointer;font-family:inherit;font-size:11px"' + (eng.busy || off ? ' disabled' : '') + '>' + label + '</button>';
+    return '<button type="button" ' + attrs + ' style="background:' + (blue ? 'var(--wp-accent);color:#fff;border:0' : 'var(--panel);color:var(--text);border:1px solid var(--border)') + ';border-radius:4px;padding:3px 10px;cursor:pointer;font-family:inherit;font-size:11px"' + (eng.busy || off ? ' disabled' : '') + '>' + label + '</button>';
   }
   // The accept screen for a non-commercial or research-only voice: licence, the publisher's model card, the credit,
   // and the box(es) that must be ticked before Download turns on. Research voices add the warning and a second box.
   function acceptHtml(v){
-    var a = eng.acc, research = v.tier === 'research', ok = a.terms && (!research || a.research);
+    var a = eng.acc, research = v.tier === 'research', unchecked = v.tier === 'unchecked', ok = a.terms && (!research || a.research);
     var h = '<div data-vn-accept="' + esc(v.id) + '" style="width:100%;margin:2px 0 4px 22px;padding:8px 10px;border:1px solid ' + (research ? 'var(--red)' : 'var(--border)') + ';border-radius:5px;font-size:12px;display:flex;flex-direction:column;gap:6px">';
     if (research) h += '<div style="border:2px solid var(--red);border-radius:4px;padding:6px 8px;color:var(--red)"><b>Research only and experimental.</b> This voice is built from data licensed for research use only. Using it for game callouts may fall outside that licence; you take that on yourself by downloading it. It may also sound or behave unexpectedly.</div>';
     h += '<div>Licence: <b>' + esc(v.licence) + '</b> &middot; <a href="' + esc(v.modelCardUrl) + '" target="_blank" rel="noopener noreferrer">Model card</a></div>'
       + '<div class="dim">' + esc(v.credit) + '</div>';
-    if (!research) h += '<div>For personal, non-commercial use. Mimic downloads it from its publisher for you; we don\\'t share it.</div>';
-    h += '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" data-vn-acc="terms"' + (a.terms ? ' checked' : '') + '> I accept these terms</label>';
+    if (unchecked) h += '<div style="border:1px solid var(--border);border-radius:4px;padding:6px 8px"><b>Licence not checked by Wolf Pack &mdash; read the model card.</b> It is published by the Piper project; what you may do with the voice depends on the data it was trained on. You take that on yourself by downloading it.</div>';
+    else if (!research) h += '<div>For personal, non-commercial use. Mimic downloads it from its publisher for you; we don\\'t share it.</div>';
+    h += '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" data-vn-acc="terms"' + (a.terms ? ' checked' : '') + '> ' + (unchecked ? 'I have read the model card and accept its terms' : 'I accept these terms') + '</label>';
     if (research) h += '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" data-vn-acc="research"' + (a.research ? ' checked' : '') + '> I understand this voice is for research use only and is experimental</label>';
-    h += '<div style="display:flex;gap:8px"><button type="button" data-vn-dl-gated="' + esc(v.id) + '" style="background:#1f6feb;color:#fff;border:0;border-radius:4px;padding:3px 10px;cursor:pointer;font-family:inherit;font-size:11px"' + (ok && !eng.busy ? '' : ' disabled') + '>Download &middot; ' + mb(v.downloadBytes) + '</button>'
+    h += '<div style="display:flex;gap:8px"><button type="button" data-vn-dl-gated="' + esc(v.id) + '" style="background:var(--wp-accent);color:#fff;border:0;border-radius:4px;padding:3px 10px;cursor:pointer;font-family:inherit;font-size:11px"' + (ok && !eng.busy ? '' : ' disabled') + '>Download &middot; ' + mb(v.downloadBytes) + '</button>'
       + btn('data-vn-acc-cancel', 'Cancel') + '</div></div>';
+    return h;
+  }
+  // THE PIPER LIST (the guild lead, 2026-10-28: "grab more voices… or link to a custom one"). Mimic's voice:status catalog
+  // is every model in rhasspy/piper-voices (see neuralVoice.js / scripts/sync-piper-voices.js) plus the player's own.
+  // US and UK English are the curated lists, each Free first and then "Needs your OK" (non-commercial, research only,
+  // share-alike); every other language sits under "More voices" (licence not checked by Wolf Pack); "Your own voice" takes
+  // two https links or two files. A Mimic that predates this sends no lang/quality/size: its six voices read as US English.
+  var CURATED_LANGS = [['en_US', 'US English'], ['en_GB', 'UK English']];
+  var TEST_STYLE = 'background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px';
+  var INPUT_STYLE = 'background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:12px';
+  function vLang(c){ return c.lang || 'en_US'; }
+  function qual(c){ return String(c.quality || '').replace(/_/g, '-'); }
+  function shortLic(s){ s = String(s || ''); return s.length > 64 ? s.slice(0, 61) + '…' : s; }
+  function tierChip(c){
+    var chip = function(txt, col){ return '<span style="font-size:10px;border:1px solid ' + col + ';color:' + col + ';border-radius:3px;padding:0 4px">' + txt + '</span>'; };
+    if (c.tier === 'research') return chip('research only', 'var(--red)');
+    if (c.tier === 'nc') return chip('non-commercial', 'var(--muted, #8b949e)');
+    if (c.tier === 'unchecked') return chip('licence not checked', 'var(--muted, #8b949e)');
+    if (c.tier === 'custom') return chip('your licence', 'var(--muted, #8b949e)');
+    return '';
+  }
+  function speakerOf(id){ var m = cfgVoice.piperSpeakers, n = m && typeof m === 'object' ? Number(m[id]) : 0; return (isFinite(n) && n > 0) ? Math.floor(n) : 0; }
+  function piperRow(c, ch, mi){
+    var sel = ch.engine === 'piper' && ch.voice === c.id, gated = (c.tier || 'free') !== 'free';
+    var r = '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;width:100%;padding-left:22px;font-size:12px">'
+      + '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="wpPiperVoice" value="' + esc(c.id) + '"' + (sel ? ' checked' : '') + (c.installed && mi ? '' : ' disabled') + '>' + esc(c.label) + '</label>'
+      + '<span class="dim" title="' + esc(c.credit) + '">' + (qual(c) ? esc(qual(c)) + ' &middot; ' : '') + (c.voiceBytes ? mb(c.voiceBytes) + ' &middot; ' : '') + esc(shortLic(c.licence)) + '</span>' + tierChip(c);
+    if (c.installed && c.speakers > 1) r += '<label class="dim" title="This model holds ' + c.speakers + ' voices. Pick one by number; 0 is the first.">speaker <input type="number" min="0" max="' + (c.speakers - 1) + '" step="1" value="' + speakerOf(c.id) + '" data-vn-speaker="' + esc(c.id) + '" style="width:64px;' + INPUT_STYLE + '"> of ' + c.speakers + '</label>';
+    if (c.installed) r += '<button type="button" data-vn-engtest="piper:' + esc(c.id) + '" style="' + TEST_STYLE + '">&#9654; Test</button><span class="dim">Installed</span>' + btn('data-vn-rm="piper:' + esc(c.id) + '"', 'Remove');
+    else if (mi) r += gated ? btn('data-vn-acc-open="' + esc(c.id) + '"', 'Read terms &amp; download') : btn('data-vn-dl="piper:' + esc(c.id) + '"', 'Download &middot; ' + mb(c.downloadBytes), true);
+    r += '</div>';
+    if (gated && !c.installed && eng.acc && eng.acc.id === c.id) r += acceptHtml(c);
+    return r;
+  }
+  function piperRows(list, ch, mi){ var h = ''; for (var i = 0; i < list.length; i++) h += piperRow(list[i], ch, mi); return h; }
+  function anyOpen(list){ for (var i = 0; i < list.length; i++) if (list[i].installed || (eng.acc && eng.acc.id === list[i].id)) return true; return false; }
+  function customHtml(list, ch, mi){
+    var cu = eng.cu, canUrls = cu.ok && /^https:\\/\\//i.test(cu.onnx.trim()) && /^https:\\/\\//i.test(cu.config.trim());
+    var h = '<details ' + wpKeep('vn|piper|custom', list.length > 0) + ' style="width:100%;padding-left:22px;margin-top:6px"><summary style="font-size:12px;cursor:pointer"><b>Your own voice</b> <span class="dim">' + (list.length ? list.length + ' added &mdash; ' : '') + 'from two https links, or two files on this PC</span></summary>';
+    h += piperRows(list, ch, mi);
+    h += '<div style="margin:4px 0 0 0;display:flex;flex-direction:column;gap:4px;font-size:12px">'
+      + '<div class="dim" style="font-size:11px">A Piper voice is two files: the model (<b>.onnx</b>) and its settings (<b>.onnx.json</b>). Links must be https and the model up to 200 MB. Mimic checks the settings file, keeps the model on this PC and only ever hands it to Piper to speak with.</div>'
+      + '<input type="url" data-vn-cu="onnx" placeholder="https://…/voice.onnx" value="' + esc(cu.onnx) + '" style="width:100%;box-sizing:border-box;' + INPUT_STYLE + '">'
+      + '<input type="url" data-vn-cu="config" placeholder="https://…/voice.onnx.json" value="' + esc(cu.config) + '" style="width:100%;box-sizing:border-box;' + INPUT_STYLE + '">'
+      + '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" data-vn-cu-ok' + (cu.ok ? ' checked' : '') + '> Custom voice &mdash; you are responsible for its licence. I have the right to use it.</label>'
+      + '<div style="display:flex;flex-wrap:wrap;gap:8px">' + btn('data-vn-cu-add="urls"', 'Add from the links', true, !canUrls) + btn('data-vn-cu-add="files"', 'Pick the two files…', false, !cu.ok) + '</div></div></details>';
+    return h;
+  }
+  function piperListHtml(p, ch, mi){
+    var cat = p.catalog || [], h = '';
+    for (var g = 0; g < CURATED_LANGS.length; g++) {
+      var code = CURATED_LANGS[g][0], all = cat.filter(function(c){ return !c.custom && vLang(c) === code; });
+      if (!all.length) continue;
+      var free = all.filter(function(c){ return (c.tier || 'free') === 'free'; }), ok = all.filter(function(c){ return (c.tier || 'free') !== 'free'; });
+      h += '<div style="width:100%;padding-left:22px;margin-top:6px;font-size:12px"><b>' + CURATED_LANGS[g][1] + '</b> <span class="dim">' + all.length + ' voices</span></div>';
+      if (free.length) h += '<div style="width:100%;padding-left:22px;font-size:11px"><b>Free</b> <span class="dim">download on a click</span></div>' + piperRows(free, ch, mi);
+      if (ok.length) h += '<details ' + wpKeep('vn|piper|ok|' + code, anyOpen(ok)) + ' style="width:100%;padding-left:22px;margin-top:2px"><summary style="font-size:11px;cursor:pointer"><b>Needs your OK</b> <span class="dim">' + ok.length + ' voices &mdash; non-commercial, research only or share-alike. You read the terms and tick a box first.</span></summary>' + piperRows(ok, ch, mi) + '</details>';
+    }
+    var more = cat.filter(function(c){ return !c.custom && c.lang && !CURATED_LANGS.some(function(l){ return l[0] === c.lang; }); });
+    if (more.length) {
+      var byLang = {};
+      more.forEach(function(c){ (byLang[c.languageName || c.lang] = byLang[c.languageName || c.lang] || []).push(c); });
+      var names = Object.keys(byLang).sort();
+      if (!byLang[eng.moreLang]) eng.moreLang = names[0];
+      h += '<details ' + wpKeep('vn|piper|more', anyOpen(more)) + ' style="width:100%;padding-left:22px;margin-top:6px"><summary style="font-size:12px;cursor:pointer"><b>More voices</b> <span class="dim">' + more.length + ' in ' + names.length + ' other languages &mdash; licence not checked by Wolf Pack</span></summary>'
+        + '<div class="dim" style="font-size:11px;margin:2px 0">Every other model Piper publishes. Wolf Pack has not read their licences: each one shows its model card and asks for your OK first.</div>'
+        + '<select data-vn-morelang style="' + INPUT_STYLE + ';max-width:100%;margin:2px 0">';
+      names.forEach(function(n){ h += '<option value="' + esc(n) + '"' + (n === eng.moreLang ? ' selected' : '') + '>' + esc(n) + ' (' + byLang[n].length + ')</option>'; });
+      h += '</select>' + piperRows(byLang[eng.moreLang], ch, mi) + '</details>';
+    }
+    if (mi && window.mimic && window.mimic.voiceAddCustom) h += customHtml(cat.filter(function(c){ return c.custom; }), ch, mi);
     return h;
   }
   function engineHtml(){
@@ -34457,25 +34837,7 @@ function wpSoundOverrideHtml(t, ov) {
     if (!st) h += '<div class="dim" style="font-size:11px">' + (mi ? 'Checking what is installed…' : 'Not available outside Mimic.') + '</div>';
     else if (!p.available) h += '<div class="dim" style="font-size:11px">' + esc(p.reason) + '</div>';
     else {
-      // Three groups (the guild lead, 2026-10-17): free ones download on a click; the other two make you read
-      // the terms and tick a box first. Neither is hosted or shipped by us: Mimic fetches it from its publisher.
-      var groups = [['free', 'Free', ''], ['nc', 'Non-commercial &mdash; accept to download', 'Personal, non-commercial use only. You read the terms and accept them before it downloads.'],
-        ['research', 'Research only &mdash; experimental', 'Built on research-only data. Experimental, and you take the licence risk yourself.']];
-      for (var g = 0; g < groups.length; g++) {
-        var inGroup = p.catalog.filter(function(c){ return (c.tier || 'free') === groups[g][0]; });
-        if (!inGroup.length) continue;
-        var research = groups[g][0] === 'research';
-        h += '<div style="width:100%;padding-left:22px;margin-top:4px;font-size:11px;' + (research ? 'color:var(--red);border-left:3px solid var(--red);padding-left:8px;margin-left:14px' : '') + '"><b>' + groups[g][1] + '</b>' + (groups[g][2] ? ' <span class="dim">' + groups[g][2] + '</span>' : '') + '</div>';
-        for (var i = 0; i < inGroup.length; i++) {
-          var v = inGroup[i], sel = ch.engine === 'piper' && ch.voice === v.id, gated = (v.tier || 'free') !== 'free';
-          h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;padding-left:22px;font-size:12px">'
-            + '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="wpPiperVoice" value="' + esc(v.id) + '"' + (sel ? ' checked' : '') + (v.installed && mi ? '' : ' disabled') + '>' + esc(v.label) + '</label>'
-            + '<span class="dim" title="' + esc(v.credit) + '">' + esc(v.licence) + ' &mdash; ' + esc(v.credit) + '</span>'
-            + (v.installed ? '<button type="button" data-vn-engtest="piper:' + esc(v.id) + '" style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px">&#9654; Test</button><span class="dim">Installed</span>' + (gated ? btn('data-vn-rm="piper:' + esc(v.id) + '"', 'Remove') : '')
-              : (!mi ? '' : (gated ? btn('data-vn-acc-open="' + esc(v.id) + '"', 'Read terms &amp; download') : btn('data-vn-dl="piper:' + esc(v.id) + '"', 'Download &middot; ' + mb(v.downloadBytes), true)))) + '</div>';
-          if (gated && !v.installed && eng.acc && eng.acc.id === v.id) h += acceptHtml(v);
-        }
-      }
+      h += piperListHtml(p, ch, mi);
       h += '<div class="dim" style="font-size:11px;padding-left:22px">Piper itself is MIT-licensed (rhasspy/piper). Speed applies to it; it has no pitch.</div>';
     }
     h += '</div>';
@@ -34521,6 +34883,26 @@ function wpSoundOverrideHtml(t, ov) {
     } catch (e) { eng.note = 'Could not reach Mimic to download.'; }
     clearInterval(poll); eng.busy = false;
     await loadPc();   // the disk just changed
+    paint();
+  }
+  // Add the player's own Piper voice: mode 'urls' sends the two typed links, 'files' opens Mimic's file picker.
+  // The ticked box (eng.cu.ok) is the responsibility acceptance; Mimic refuses without it.
+  async function addCustom(mode){
+    if (eng.busy || !eng.cu.ok) return;
+    if (!window.mimic || !window.mimic.voiceAddCustom) { eng.note = 'This version of Mimic cannot add your own voice yet. Update Mimic first.'; paint(); return; }
+    eng.busy = true; eng.note = ''; paint();
+    var poll = setInterval(function(){
+      window.mimic.voiceStatus().then(function(s){ var pr = s && s.progress, n = document.getElementById('wpVoiceProg'); if (n) n.textContent = pr ? pr.text + ' ' + pr.pct + '%' : ''; }, function(){});
+    }, 600);
+    try {
+      var r = await window.mimic.voiceAddCustom(mode === 'files' ? { files: true } : { onnxUrl: eng.cu.onnx.trim(), configUrl: eng.cu.config.trim() }, { terms: true });
+      if (r && r.ok) {
+        eng.st = r.status;
+        if (!r.cancelled) { eng.note = 'Added. Pick it in the list above, then press ▶ Test.'; eng.cu = { onnx: '', config: '', ok: false }; }
+      } else eng.note = (r && r.error) || 'The voice was not added. Nothing was changed.';
+    } catch (e) { eng.note = 'Could not reach Mimic to add the voice.'; }
+    clearInterval(poll); eng.busy = false;
+    await loadPc();
     paint();
   }
   async function removeEngine(engine, voice){
@@ -34579,7 +34961,7 @@ function wpSoundOverrideHtml(t, ov) {
       h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px">'
         + '<input type="text" data-vn-say value="' + esc(d) + '" placeholder="how it sounds, e.g. Ahl-den-mar" maxlength="80" style="flex:1;min-width:160px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 6px;font-family:inherit;font-size:12px">'
         + '<button type="button" data-vn-hear-draft style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:3px 8px" title="Hear what is typed">&#9654;</button>'
-        + '<button type="button" data-vn-save-guild style="background:#1f6feb;color:#fff;border:0;border-radius:4px;padding:4px 10px;cursor:pointer;font-family:inherit;font-size:11px"' + (pron.signed_in ? '' : ' disabled title="Needs a linked Wolf Pack account"') + '>Save for the guild</button>'
+        + '<button type="button" data-vn-save-guild style="background:var(--wp-accent);color:#fff;border:0;border-radius:4px;padding:4px 10px;cursor:pointer;font-family:inherit;font-size:11px"' + (pron.signed_in ? '' : ' disabled title="Needs a linked Wolf Pack account"') + '>Save for the guild</button>'
         + '<button type="button" data-vn-save-local style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 10px;cursor:pointer;font-family:inherit;font-size:11px">This PC only</button>'
         + '<span class="dim" style="font-size:11px">' + esc(notes[nm] || '') + '</span></div></div>';
     }
@@ -34638,6 +35020,7 @@ function wpSoundOverrideHtml(t, ov) {
     if ((b = t.closest('[data-vn-acc-open]'))) { eng.acc = { id: b.getAttribute('data-vn-acc-open'), terms: false, research: false }; paint(); return; }
     if (t.closest('[data-vn-acc-cancel]')) { eng.acc = null; paint(); return; }
     if ((b = t.closest('[data-vn-dl-gated]'))) { if (eng.acc && eng.acc.terms) download('piper', b.getAttribute('data-vn-dl-gated'), { terms: !!eng.acc.terms, research: !!eng.acc.research }); return; }
+    if ((b = t.closest('[data-vn-cu-add]'))) { addCustom(b.getAttribute('data-vn-cu-add')); return; }
     if ((b = t.closest('[data-vn-rm]'))) { var rm = b.getAttribute('data-vn-rm').split(':'); removeEngine(rm[0], rm[1]); return; }
     if (t.closest('#wpVoiceHear')) { speak(sampleLine()); return; }
     if (t.closest('#wpVoiceReset')) { cfgVoice.voiceName = ''; cfgVoice.rate = null; cfgVoice.pitch = null; save(); paint(); return; }
@@ -34660,6 +35043,18 @@ function wpSoundOverrideHtml(t, ov) {
     if (t.name === 'wpVoiceEngine') { cfgVoice.engine = t.value; save(); paint(); return; }
     if (t.name === 'wpPiperVoice') { cfgVoice.piperVoice = t.value; cfgVoice.engine = 'piper'; save(); paint(); return; }
     if (t.name === 'wpKokoroVoice') { cfgVoice.kokoroVoice = t.value; cfgVoice.engine = 'kokoro'; save(); paint(); return; }
+    // A multi-speaker model's number: kept per voice in the saved voice settings (Mimic reads it for live callouts too).
+    if (t.hasAttribute && t.hasAttribute('data-vn-speaker')) {
+      var sp = Math.floor(Number(t.value)), mx = Number(t.max);
+      if (!(sp >= 0)) sp = 0;
+      if (mx >= 0 && sp > mx) sp = mx;
+      t.value = String(sp);
+      if (typeof cfgVoice.piperSpeakers !== 'object' || !cfgVoice.piperSpeakers) cfgVoice.piperSpeakers = {};
+      cfgVoice.piperSpeakers[t.getAttribute('data-vn-speaker')] = sp;
+      save(); return;
+    }
+    if (t.hasAttribute && t.hasAttribute('data-vn-morelang')) { eng.moreLang = t.value; paint(); return; }
+    if (t.hasAttribute && t.hasAttribute('data-vn-cu-ok')) { eng.cu.ok = !!t.checked; paint(); return; }
     if (t.hasAttribute && t.hasAttribute('data-vn-acc') && eng.acc) { eng.acc[t.getAttribute('data-vn-acc')] = !!t.checked; paint(); return; }
     if (t.id === 'wpVoiceName') { cfgVoice.voiceName = t.value; save(); return; }
   }
@@ -34670,6 +35065,13 @@ function wpSoundOverrideHtml(t, ov) {
     if (t.id === 'wpVoicePitch') { cfgVoice.pitch = Number(t.value) / 100; var pv = document.getElementById('wpVoicePitchV'); if (pv) pv.textContent = pct(cfgVoice.pitch); save(); return; }
     // Volume moves a sample that is playing right now too; the next ▶ Hear it / ▶ Test plays at the new level.
     if (t.id === 'wpVoiceVolume') { cfgVoice.volume = Number(t.value) / 100; var vv = document.getElementById('wpVoiceVolumeV'); if (vv) vv.textContent = Math.round(cfgVoice.volume * 100) + '%'; if (curAudio) { try { curAudio.volume = volumeNow(); } catch (e) { void e; } } save(); return; }
+    // The custom-voice links: kept in eng.cu, and the "Add from the links" button enabled in place (no repaint, so the caret stays).
+    if (t.hasAttribute && t.hasAttribute('data-vn-cu')) {
+      eng.cu[t.getAttribute('data-vn-cu')] = t.value;
+      var addBtn = el && el.querySelector('[data-vn-cu-add="urls"]');
+      if (addBtn) addBtn.disabled = eng.busy || !(eng.cu.ok && /^https:\\/\\//i.test(eng.cu.onnx.trim()) && /^https:\\/\\//i.test(eng.cu.config.trim()));
+      return;
+    }
     if (t.hasAttribute && t.hasAttribute('data-vn-say')) { var nm = charOf(t); if (nm) drafts[nm] = t.value; }
   }
   function mount(){
@@ -34884,6 +35286,10 @@ const COMMAND_HTML = `<!doctype html>
     border:1px solid #c084fc;border-radius:5px;margin-bottom:4px;font-size:11px}
   .dt.crit{background:rgba(220,38,38,0.5);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
   .dt .sec{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
+  .relv{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(180,83,9,0.5);
+    border:1px solid #fb923c;border-radius:5px;margin-bottom:4px;font-size:11px}
+  .relv .n{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
+  .relv .sub{margin-left:auto;font-size:9px;color:#d0d7de}
   .ramp{display:flex;flex-direction:column;gap:4px;padding:4px 7px;background:rgba(180,32,32,0.55);
     border:1px solid #f87171;border-radius:5px;margin-bottom:4px;font-size:11px}
   .ramp .row{display:flex;align-items:center;gap:6px}
@@ -34940,6 +35346,18 @@ const COMMAND_HTML = `<!doctype html>
   .rollClearAll{margin-left:auto;cursor:pointer;color:#9aa4ad;font-size:9px;text-transform:none;
     letter-spacing:0;border:1px solid rgba(110,118,129,0.4);border-radius:3px;padding:0 4px;opacity:0.7}
   .rollClearAll:hover{opacity:1;color:#f87171;border-color:#f87171}
+  /* 🎟 Guests (officers only): one row per guest Mimic link, with +1h / +3h. Same right gutter as the rolls card. */
+  .card.guests-card{padding-right:28px}
+  .guest-row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e6edf3}
+  .guest-row .gwhen{flex-shrink:0;font-size:10px;color:#9aa4ad;font-variant-numeric:tabular-nums}
+  .guest-row .gwhen.soon{color:#f0a52d}
+  .guest-row .gwhen.out{color:#f87171}
+  .guest-row .gn{flex-shrink:0;font-size:9px;color:#8b949e;font-variant-numeric:tabular-nums}
+  .guest-row .guestExt{cursor:pointer;flex-shrink:0;color:#e6edf3;font-size:9px;border:1px solid rgba(110,118,129,0.5);
+    border-radius:3px;padding:0 4px;opacity:0.85;user-select:none}
+  .guest-row .guestExt:hover{opacity:1;color:#f0c419;border-color:#f0c419}
+  .guest-row .gflash{flex-shrink:0;font-size:9px;color:#56d364}
+  .guest-row .gflash.bad{color:#f87171}
   .roll-row .rollMore{cursor:pointer;color:#8b949e;font-size:9px;flex-shrink:0;opacity:0.8;user-select:none}
   .roll-row .rollMore:hover{opacity:1;color:#e6edf3}
   .roll-row .rollCopy{cursor:pointer;color:#8b949e;font-size:10px;flex-shrink:0;opacity:0.8;user-select:none;margin-right:4px}
@@ -35075,7 +35493,7 @@ const COMMAND_HTML = `<!doctype html>
      too large"): the panel owns the move and hide buttons, so the window padding and the gutter the cure
      and rolls cards keep clear of the hide button both go. */
   body.wp-in-canvas #wrap{padding:2px 3px;min-width:0}
-  body.wp-in-canvas .card.cure-card, body.wp-in-canvas .card.rolls-card{padding-right:7px}
+  body.wp-in-canvas .card.cure-card, body.wp-in-canvas .card.rolls-card, body.wp-in-canvas .card.guests-card{padding-right:7px}
   #setupbar input[type=range]{flex:1;cursor:pointer}
   #hide-btn{position:fixed;top:6px;right:6px;z-index:65;width:18px;height:18px;
     display:flex;align-items:center;justify-content:center;border-radius:4px;
@@ -35103,7 +35521,7 @@ const COMMAND_HTML = `<!doctype html>
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title"><span aria-hidden>🎛</span><span>Command Center</span><span class="who" id="who"></span></div>
+    <div class="title"><span aria-hidden>🎛</span><span data-wp-name>Command Center</span><span class="who" id="who"></span></div>
     <div id="content"></div>
   </div>
 <script>
@@ -35524,6 +35942,86 @@ const COMMAND_HTML = `<!doctype html>
          +      '<div class="val">' + valText + '</div></div>'
          +  '</div>';
   }
+  // Relv's event in Plane of Storms (the guild lead, 2026-10-30): mephits this client has seen die, of the 30.
+  // The agent sends s.relv only while the event runs; the count is a floor (a far death line never prints here).
+  function relvHtml(v){
+    var left = Math.max(0, (Number(v.total) || 30) - (Number(v.mephits) || 0));
+    var main = v.falto_slain ? 'Falto slain'
+             : (v.falto_up ? 'Falto is up'
+             : 'mephits <span class="n">' + (Number(v.mephits) || 0) + '/' + (Number(v.total) || 30) + '</span> · ' + left + ' left');
+    return '<div class="relv"><span>🔥 Falto: ' + main + '</span>'
+         +   '<span class="sub">mepheekas killed ' + (Number(v.mepheekas) || 0) + '</span></div>';
+  }
+  // 🎟 Guests (officers only; the guild lead, 2026-10-30: "add guests to the command center for officers/admins with an
+  // extend button for +1/+3"). s.guests is the agent's copy of the bot's guest-link list, or null for anyone who is not
+  // an officer, so the card simply is not there for a raider. A guest whose key ended more than 12 hours ago is left
+  // off (the bot will not revive it; approve a new code on /admin/links), and a revoked one has nothing to extend.
+  // The buttons act on the PRESS like the hail chips: the card repaints once a minute as the clock moves.
+  var GUEST_REVIVE_MS = 12 * 3600000;
+  var _guestPend  = {};   // session id -> true while its extend is in flight
+  var _guestFlash = {};   // session id -> { txt, bad, until }: the answer, shown for a few seconds in place of the buttons
+  function guestSpan(ms){
+    var m = Math.floor(ms / 60000);
+    if (m < 1) return 'under 1m';
+    if (m < 60) return m + 'm';
+    var h = Math.floor(m / 60), r = m % 60;
+    return h + 'h' + (r < 10 ? '0' : '') + r + 'm';
+  }
+  function guestsHtml(list){
+    var now = Date.now();
+    var rows = [];
+    for (var gi = 0; gi < list.length; gi++) {
+      var g = list[gi];
+      if (!g || g.revoked || !g.id) continue;
+      var exp = Date.parse(g.expires_at);
+      if (!isFinite(exp) || exp < now - GUEST_REVIVE_MS) continue;
+      rows.push({ g: g, exp: exp });
+    }
+    if (!rows.length) return '';
+    var col = _isCollapsed('guests');
+    var h = '<div class="card guests-card"><div class="head">' + secToggle('guests', '🎟 Guests', rows.length) + '</div>';
+    if (!col) {
+      h += '<div class="list">';
+      for (var ri = 0; ri < rows.length; ri++) {
+        var gg = rows[ri].g, left = rows[ri].exp - now;
+        var when = left > 0 ? 'expires in ' + guestSpan(left) : 'expired ' + guestSpan(-left) + ' ago';
+        var cls = left <= 0 ? 'out' : (left < 600000 ? 'soon' : '');
+        var n = Number(gg.fights) || 0;
+        var fl = _guestFlash[gg.id];
+        if (fl && fl.until <= now) { delete _guestFlash[gg.id]; fl = null; }
+        var ctl;
+        if (_guestPend[gg.id]) ctl = '<span class="gflash">…</span>';
+        else if (fl) ctl = '<span class="gflash' + (fl.bad ? ' bad' : '') + '">' + esc(fl.txt) + '</span>';
+        else ctl = '<span class="guestExt" data-wp-interact data-guest-id="' + esc(gg.id) + '" data-guest-h="1" title="Keep this guest link open one more hour">+1h</span>'
+                 + '<span class="guestExt" data-wp-interact data-guest-id="' + esc(gg.id) + '" data-guest-h="3" title="Keep this guest link open three more hours">+3h</span>';
+        h += '<div class="row guest-row"><span class="nm" title="' + esc((gg.label || 'Guest') + (gg.approved_by ? ' - approved by ' + gg.approved_by : '')) + '">' + esc(gg.label || 'Guest') + '</span>'
+           +   '<span class="gwhen ' + cls + '">' + esc(when) + '</span>'
+           +   '<span class="gn">' + n + (n === 1 ? ' fight' : ' fights') + '</span>'
+           +   ctl + '</div>';
+      }
+      h += '</div>';
+    }
+    return h + '</div>';
+  }
+  function guestExtend(id, hours){
+    if (!id || _guestPend[id] || (hours !== 1 && hours !== 3)) return;
+    _guestPend[id] = true;
+    if (_lastState) render(_lastState);
+    var done = function(txt, bad){
+      delete _guestPend[id];
+      _guestFlash[id] = { txt: txt, bad: !!bad, until: Date.now() + 4000 };
+      tick();
+    };
+    fetch('http://127.0.0.1:' + PORT + '/api/guest-extend', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id, hours: hours }),
+    }).then(function(r){
+      return r.json().then(function(j){ return { ok: r.ok && j && j.ok, err: j && j.error }; }, function(){ return { ok: false, err: '' }; });
+    }).then(function(res){
+      done(res.ok ? '+' + hours + 'h ✓' : (res.err === 'revoked' ? 'revoked' : (res.err && res.err.indexOf('expired too long') === 0 ? 'too old' : 'failed')), !res.ok);
+    }, function(){ done('failed', true); });
+  }
+
   function render(s){
     if (!s || s.character == null) {
       contentEl.innerHTML = '<div id="empty">No focused character yet — launch EQ + Zeal and target a mob.</div>';
@@ -35579,6 +36077,7 @@ const COMMAND_HTML = `<!doctype html>
     // card above, byte for byte, and an older agent that sends no rampages array lands here too.
     var rampRows = (s.rampages && s.rampages.length > 1) ? s.rampages : (s.rampage && s.rampage.target ? [s.rampage] : []);
     for (var ri = 0; ri < rampRows.length; ri++) html += rampHtml(rampRows[ri], rampRows.length > 1);
+    if (s.relv) html += relvHtml(s.relv);
 
     // PoP hail board — straight under the fight cluster (target, enrage, Death Touch, Main Tank, rampage),
     // above the long lists: after a kill there is no fight to push it down, and a fight that starts while
@@ -35805,6 +36304,9 @@ const COMMAND_HTML = `<!doctype html>
       }
     }
 
+    // 🎟 Guests (officers only): s.guests is null for everyone else, and an empty list draws nothing.
+    if (s.guests && s.guests.length) html += guestsHtml(s.guests);
+
     // Curse/Cure alerts — reuses the buff queue's real observed-debuff
     // tracking (not chat parsing) so it stays accurate even when nobody's
     // typed a "please cure" macro. Per-line ✕ + "clear all" dismiss (#66) are
@@ -35947,6 +36449,14 @@ const COMMAND_HTML = `<!doctype html>
       if (!chip) return;
       e.preventDefault(); e.stopPropagation();
       hailTap(chip.getAttribute('data-hail-win'), chip.getAttribute('data-hail-name'), chip.getAttribute('data-hail-act') === 'mark');
+    });
+    // Guests card: +1h / +3h act on the press too (the card repaints as the clock moves).
+    contentEl.addEventListener('mousedown', function(e){
+      if (e.button !== 0) return;
+      var ext = e.target && e.target.closest ? e.target.closest('.guestExt') : null;
+      if (!ext) return;
+      e.preventDefault(); e.stopPropagation();
+      guestExtend(ext.getAttribute('data-guest-id'), Number(ext.getAttribute('data-guest-h')));
     });
     contentEl.addEventListener('click', function(e){
       var hmore = e.target && e.target.closest ? e.target.closest('.hail-more') : null;
@@ -36486,6 +36996,23 @@ function startWebDashboard(port) {
         catch (e) { console.error('[api/command-center] serialize failed, serving last-good:', e && (e.stack || e.message || e)); _b = _commandCenterLastGood; }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(_b || 'null');
+      }
+      // Command Center Guests card: +1h / +3h on a guest Mimic link. Officer-gated here and again on the bot, which
+      // owns the revival window and the revoked check; this route only checks the shape and forwards.
+      if (req.url === '/api/guest-extend' && req.method === 'POST') {
+        if (!(_mimicIdentity && _mimicIdentity.is_officer)) { res.writeHead(403, { 'Content-Type': 'application/json' }); return res.end('{"error":"officers only"}'); }
+        let gp;
+        try { gp = JSON.parse(await _readBody(req, 2 * 1024) || '{}'); }
+        catch { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end('{"error":"bad json"}'); }
+        const gid = String((gp && gp.id) || '');
+        const ghours = gp && gp.hours;
+        if (!/^[0-9a-f-]{36}$/i.test(gid) || (ghours !== 1 && ghours !== 3)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end('{"error":"id and hours (1 or 3) required"}');
+        }
+        const gr = await extendGuestLink(gid, ghours);
+        res.writeHead(gr.status, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(gr.body));
       }
       // Command Center tap on a name in the hail board — marks (or unmarks) it hailed for the whole raid.
       if (req.url === '/api/hail-mark' && req.method === 'POST') return _handleHailMark(req, res);
@@ -38149,6 +38676,14 @@ function startWebDashboard(port) {
           replayDeaths:       _replayDeathsSnapshot(),
           replayClock:        _replayClockForWeb(),
         }));
+      }
+      // GET /api/timer-suggestions — the Timers canvas name picker: spells on the bar now + most-cast spells.
+      if (req.url === '/api/timer-suggestions' && req.method === 'GET') {
+        let _b;
+        try { _b = JSON.stringify(_timerSuggestions()); }
+        catch (e) { _b = JSON.stringify({ ok: false, gems: [], casts: [] }); }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(_b);
       }
       if (req.url === '/api/timers/cancel' && req.method === 'POST') {
         const body = await _readBody(req).catch(() => '');
@@ -40261,6 +40796,86 @@ function scanInventoryUploads(opts) {   // opts: see scanQuarmyExports
   }
 }
 
+// ── PoP flags export ingest: Zeal's <Name>-PoPFlags.txt (format and reader: popFlagsFileEvents, further up) ───
+// The fourth sibling of the Quarmy / spellbook / inventory scans, with their contract: the first watched log's folder
+// is the EQ folder, the prefs poll must have answered once, a raid hold waits, an unchanged file (mtime-size) is
+// skipped without a read, and a dry run uploads and fingerprints nothing. The character is the one in the file's own
+// header (a renamed copy is still that character); both names are checked against the opt-outs. A character kept out
+// of stats, or in the env list, or with log reading stopped, is never read. The shared per-character state of
+// popFlagsOutputEvents (the 6 h "already sent" memory) is NOT isolated here: two camps in one night are one set of rows.
+// Source tag: 'popflags', the log's. The bot's handler stores only that source (bot `_handleAgentPopFlags`), and
+// 'popflags_file' would be dropped there, so the vocabulary stays as it is.
+function _pfFileBlocked(lowerName) {
+  return _rebuildExcluded(lowerName) || !shouldUploadForCharacter(lowerName);
+}
+/** One export file → { parsed, blocked }: parsed is null when it is not an export; blocked when its character is kept out. */
+function _readPopFlagsExport(fullPath) {
+  const parsed = parsePopFlagsFile(fs.readFileSync(fullPath, 'utf8'));
+  return { parsed, blocked: !!parsed && _pfFileBlocked(parsed.character.toLowerCase()) };
+}
+/** The newest export of one character in one folder (by file time; host-tagged copies compete), read: { path, parsed },
+ *  or null for none / unreadable / not an export / kept out of stats. */
+function _latestPopFlagsExport(dir, characterLower) {
+  let entries;
+  try { entries = fs.readdirSync(dir); } catch { return null; }
+  let best = null;
+  for (const name of entries) {
+    const m = name.match(POPFLAGS_FILENAME_RX);
+    if (!m || m[1].toLowerCase() !== characterLower) continue;
+    try {
+      const full = path.join(dir, name);
+      const st = fs.statSync(full);
+      if (st.isFile() && st.size <= POPFLAGS_FILE_MAX_BYTES && (!best || st.mtimeMs > best.mtimeMs)) best = { full, mtimeMs: st.mtimeMs };
+    } catch { /* gone between the listing and the stat */ }
+  }
+  if (!best) return null;
+  try {
+    const x = _readPopFlagsExport(best.full);
+    return x.parsed && !x.blocked ? { path: best.full, parsed: x.parsed } : null;
+  } catch { return null; }
+}
+function scanPopFlagsFiles(opts) {   // opts: see scanQuarmyExports
+  if (_raidHold) return;   // raid hold — files wait on disk, scanned when it lifts
+  if (!stats.characterPrefsCheckedAt) return;   // exclude_from_stats must be KNOWN before any flag leaves
+  const firstLog = stats.watchedLogs[0]?.logPath;
+  if (!firstLog && !(opts && opts.dir)) return;
+  const dir = (opts && opts.dir) || path.dirname(firstLog);
+  let entries;
+  try { entries = fs.readdirSync(dir); } catch { return; }
+  const dryRun = !!(_uploadOpts && _uploadOpts.dryRun);
+  for (const name of entries) {
+    const m = name.match(POPFLAGS_FILENAME_RX);
+    if (!m) continue;
+    const fileChar = m[1].toLowerCase();
+    if (opts && opts.only && !opts.only.has(fileChar)) continue;
+    if (_pfFileBlocked(fileChar)) continue;   // prefs can flip — never fingerprint
+    const fullPath = path.join(dir, name);
+    try {
+      const _st = fs.statSync(fullPath);
+      if (!_st.isFile()) continue;
+      const fpKey = fullPath + '#popflags';
+      const _fp = _fileFingerprint(_st);
+      if (_scannedFiles[fpKey] === _fp) continue;
+      if (_st.size > POPFLAGS_FILE_MAX_BYTES) { _scannedFiles[fpKey] = _fp; _saveUploadedStateSoon(); continue; }
+      const { parsed, blocked } = _readPopFlagsExport(fullPath);
+      if (blocked) continue;   // the header names a character kept out of stats
+      if (!parsed) { _scannedFiles[fpKey] = _fp; _saveUploadedStateSoon(); continue; }
+      const { events, found } = popFlagsFileEvents(parsed, parsed.character);
+      if (dryRun) {
+        console.log(`[pop-flags] DRY RUN — would upload ${parsed.character}: ${found} flag lines, ${events.length} events`);
+        uploadPopFlags(events, _uploadOpts).catch(() => {});
+        continue;
+      }
+      _scannedFiles[fpKey] = _fp;
+      _saveUploadedStateSoon();
+      if (events.length) {
+        uploadPopFlags(events, _uploadOpts || {}).catch(() => {});
+        console.log(`[pop-flags] queued ${events.length} event(s) for ${parsed.character} from ${name} (${found} flag lines)`);
+      }
+    } catch { /* unreadable / malformed — skip, retry next scan */ }
+  }
+}
+
 // ── The local site: the website's own pages, bundled into Mimic (the guild lead, 2026-10-21) ────────────
 // web/local is a small Next.js app exported static (`out/`) and shipped inside Mimic. This serves that
 // folder under /local/ on the dashboard port, and /api/local/* answers it from THIS PC's files. Both are
@@ -41775,6 +42390,32 @@ const PVP_GLORY_EXULTS_RX  = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek exults as (\w+)(
 const PVP_GLORY_FALLS_TO_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek (?:looks on|looks down in disgust) as (\w+)(?:\s+<([^>]*)>)? falls to (.+?)\s*$/;
 const PVP_GLORY_NO_FOE_RX  = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek looks down in disgust as (\w+)(?:\s+<([^>]*)>)? falls in (.+?) (without a worthy foe.*?)[.!]?\s*$/;
 const PVP_GLORY_FORFEIT_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek looks down in disgust as (\w+)(?:\s+<([^>]*)>)? (?:flees|abandons) the battlefield(.*?),\s+(surrendering\b.*?)[.!]?\s*$/;
+// The server REWORDED every one of those on 2026-10-02 (Quarm commit da650526 "Show guilds in Rallosian
+// Glory death broadcasts", merged 07:49 CDT; our last kill under the old wording is 10:54 UTC the same
+// day, the first new-wording death row 19:23 UTC). Every name now carries its guild, and no kill line
+// kept the old text, so from that day no kill or assist reached the bot while NPC deaths ("falls to
+// <mob>") kept parsing. Real wording, invented names (zone ends at the sentence break):
+//   "Rallos Zek favors Aldenmar <Wolf Pack> for killing Brackwyn <Zek> in Ruins of Sebilis. Aldenmar
+//    <Wolf Pack> now has 1/10 Glory."                                               → a worthy kill
+//   "Rallos Zek exults as Aldenmar <Wolf Pack> cuts down Brackwyn <Zek> in Ruins of Sebilis. Brackwyn
+//    <Zek> loses 2 Glory; Aldenmar <Wolf Pack> now has 3/10."                       → a worthy kill
+//   "Rallos Zek exults as Aldenmar <Wolf Pack> kills Brackwyn <Zek> in Ruins of Sebilis and reaches
+//    10/10 Glory!"  (or "and remains at 10/10 Glory.")                              → a worthy kill
+//   "Rallos Zek looks down in disgust as Brackwyn <Zek> falls to Aldenmar <Wolf Pack> in Ruins of
+//    Sebilis. No Glory awarded."  (or "…. Brackwyn <Zek> loses 2 Glory; no Glory awarded.")
+//                                       → killed by a PLAYER, no Glory (it used to read as an NPC kill)
+//   "Rallos Zek looks down in disgust as Brackwyn <Zek> falls in Kedge Keep."  (+ " 2 Glory lost.")
+//                                                                                    → dead, no killer named
+//   "Rallos Zek looks down in disgust as Brackwyn <Zek> flees the battlefield in Kedge Keep like a
+//    cowardly dog, forfeiting 2 Glory."   (also "abandons")                          → a forfeit
+// A name with no guild has no "<…>"; the guild stays null for the bot to fill from /who, as before. The
+// older wordings stay parsed: logs from before 2026-10-02 are still replayed by --since backfills.
+const PVP_GLORY_FAVORS_RX   = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek favors (\w+)(?:\s+<([^>]*)>)? for killing (\w+)(?:\s+<([^>]*)>)? in (.+?)\.\s+(\w+(?:\s+<[^>]*>)? now has \d+\/\d+ Glory)\.?\s*$/;
+const PVP_GLORY_CUTS_DOWN_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek exults as (\w+)(?:\s+<([^>]*)>)? cuts down (\w+)(?:\s+<([^>]*)>)? in (.+?)\.\s+(\w+(?:\s+<[^>]*>)? loses \d+ Glory; .+? now has \d+\/\d+)\.?\s*$/;
+const PVP_GLORY_KILLS_RX    = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek exults as (\w+)(?:\s+<([^>]*)>)? kills (\w+)(?:\s+<([^>]*)>)? in (.+?) and ((?:remains at|reaches) \d+\/\d+ Glory)[.!]?\s*$/;
+const PVP_GLORY_FALLS_TO_PLAYER_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek looks down in disgust as (\w+)(?:\s+<([^>]*)>)? falls to (\w+)(?:\s+<([^>]*)>)? in (.+?)\.\s+((?:[^.]*? loses \d+ Glory; no|No) Glory awarded)\.?\s*$/;
+const PVP_GLORY_FALLS_IN_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek looks down in disgust as (\w+)(?:\s+<([^>]*)>)? falls in (.+?)\.(?:\s+(\d+ Glory lost)\.?)?\s*$/;
+const PVP_GLORY_FORFEIT2_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek looks down in disgust as (\w+)(?:\s+<([^>]*)>)? (?:flees|abandons) the battlefield in (.+?) like a cowardly dog, (forfeiting \d+ Glory)[.!]?\s*$/;
 // "<NPC> in <zone>[, <clause>][. <more>]" → the NPC, the zone and the text after it. No zone name has a
 // period or " in " in it (eqemu_zone, checked 2026-10-02) but one NPC does ("a lady in waiting"), so the
 // zone starts after the LAST " in ", once the clause is off.
@@ -41816,6 +42457,37 @@ function parseGloryKill(line) {
     victim: ex[4], victimGuild: _gloryGuild(ex[5]),
     zone: ex[6].trim(), glory: true, gloryText: ex[7].trim(),
   };
+  // The 2026-10-02 wordings (see PVP_GLORY_FAVORS_RX). A kill: killer, victim, zone, a Glory note.
+  const fv = PVP_GLORY_FAVORS_RX.exec(line);
+  if (fv) return {
+    ts: tsIso(), text: text(), killType: 'pvp', source: 'rallos_glory',
+    killer: fv[2], killerGuild: _gloryGuild(fv[3]),
+    victim: fv[4], victimGuild: _gloryGuild(fv[5]),
+    zone: fv[6].trim(), glory: true, gloryText: fv[7].trim(),
+  };
+  const cd = PVP_GLORY_CUTS_DOWN_RX.exec(line);
+  if (cd) return {
+    ts: tsIso(), text: text(), killType: 'pvp', source: 'rallos_glory',
+    killer: cd[2], killerGuild: _gloryGuild(cd[3]),
+    victim: cd[4], victimGuild: _gloryGuild(cd[5]),
+    zone: cd[6].trim(), glory: true, gloryText: cd[7].trim(),
+  };
+  const kl = PVP_GLORY_KILLS_RX.exec(line);
+  if (kl) return {
+    ts: tsIso(), text: text(), killType: 'pvp', source: 'rallos_glory',
+    killer: kl[2], killerGuild: _gloryGuild(kl[3]),
+    victim: kl[4], victimGuild: _gloryGuild(kl[5]),
+    zone: kl[6].trim(), glory: true, gloryText: kl[7].trim(),
+  };
+  // Killed by a PLAYER but no Glory: before the guilds were on the line this was indistinguishable from a
+  // mob kill, and the death row said "killed by an NPC". The "No Glory awarded" tail is what tells them apart.
+  const fp = PVP_GLORY_FALLS_TO_PLAYER_RX.exec(line);
+  if (fp) return {
+    ts: tsIso(), text: text(), killType: 'pvp', source: 'rallos_glory',
+    killer: fp[4], killerGuild: _gloryGuild(fp[5]),
+    victim: fp[2], victimGuild: _gloryGuild(fp[3]),
+    zone: fp[6].trim(), glory: false, gloryText: fp[7].trim(),
+  };
   const ft = PVP_GLORY_FALLS_TO_RX.exec(line);
   const nz = ft && _gloryNpcZone(ft[4]);
   if (nz) return {
@@ -41830,6 +42502,20 @@ function parseGloryKill(line) {
     killer: null, killerGuild: null,
     victim: nf[2], victimGuild: _gloryGuild(nf[3]),
     zone: nf[4].trim(), glory: false, gloryText: nf[5].trim(),
+  };
+  const ni = PVP_GLORY_FALLS_IN_RX.exec(line);
+  if (ni) return {
+    ts: tsIso(), text: text(), killType: 'pvp', source: 'rallos_glory',
+    killer: null, killerGuild: null,
+    victim: ni[2], victimGuild: _gloryGuild(ni[3]),
+    zone: ni[4].trim(), glory: false, gloryText: ni[5] ? ni[5].trim() : null,
+  };
+  const f2 = PVP_GLORY_FORFEIT2_RX.exec(line);
+  if (f2) return {
+    ts: tsIso(), text: text(), killType: 'forfeit', source: 'rallos_glory',
+    killer: null, killerGuild: null,
+    victim: f2[2], victimGuild: _gloryGuild(f2[3]),
+    zone: f2[4].trim(), glory: false, gloryText: f2[5].trim(),
   };
   const ff = PVP_GLORY_FORFEIT_RX.exec(line);
   if (ff) {
@@ -46154,9 +46840,13 @@ let _buffLandingBySuffix = new Map();
 // Powers (a) Target Info showing debuffs ON the mob and (b) the bot's cure queue
 // for raiders not running Mimic (player-target debuffs upload to buff_casts).
 let _debuffLandingBySuffix = new Map();
+// A mob's OWN timed beneficial spells (FB-111): suffix(lower) → [{ id, name, dur, durf }]. Neither index above can
+// hold these: the buff index wants a player-shaped name and a tracked keyword, the debuff index wants good === 0.
+let _npcSelfBuffBySuffix = new Map();
 function _rebuildBuffMatchers() {
   const m = new Map();
   const dm = new Map();
+  const nm = new Map();
   // Catalog-wide sharer count per landing text — over EVERY spell that has an
   // on-other message, BEFORE any timed/detrimental filtering. This is the
   // 2026-08-16 Kneel Test regression fix: the junk guard below used to count
@@ -46197,6 +46887,13 @@ function _rebuildBuffMatchers() {
       arr.push(rec);
       dm.set(suffix, arr);
     }
+    // e.npc === 1: a spell mobs can cast (spell-catalog v8, the #206 flag). A pre-v8 catalog carries none, so this
+    // index stays empty rather than guess from the text.
+    if (e.good === 1 && e.npc === 1 && sharerCount(suffix) <= 8) {
+      const arr = nm.get(suffix) || [];
+      arr.push(rec);
+      nm.set(suffix, arr);
+    }
   }
   // Junk-text guard (2026-07-07): a landing message shared by MANY unrelated
   // spells is unattributable garbage, not a family. Real families cap out
@@ -46224,6 +46921,7 @@ function _rebuildBuffMatchers() {
   }
   _buffLandingBySuffix = m;
   _debuffLandingBySuffix = dm;
+  _npcSelfBuffBySuffix = nm;
   if (m.size || dm.size) console.log(`[buff-landing] indexed ${m.size} buff + ${dm.size} debuff landing messages (${junked} unattributable shared texts dropped)`);
 }
 
@@ -46369,6 +47067,54 @@ function parseDebuffLanding(line, observer) {
       cast_at:      ts ? ts.toISOString() : new Date().toISOString(),
       observer:     observer || null,
       detrimental:  true,
+    };
+  }
+  return null;
+}
+
+// A mob buffing ITSELF (FB-111: a rogue playing alone casts nothing, so a mob's own buffs and the item procs on it
+// are all that can ever land on his target). EQ prints "<mob> begins to cast a spell." and then the spell's
+// cast_on_other text, with no spell and no caster named — so a landing is claimed only when the victim IS the mob that
+// began casting inside the window (_npcCasterFor, the same pairing the mana ledger uses). Shared texts are narrowed to
+// the spells that mob is known to have; if more than one still fits it records nothing, never a crowned guess. Local
+// only: same shape as parseBuffLanding's event, but the caller does not queue it for upload.
+function parseNpcSelfBuffLanding(line) {
+  if (!_npcSelfBuffBySuffix.size || !_npcCastStarts.length) return null;
+  const m = line.match(/^\[(.+?)\]\s+(.+)$/);
+  if (!m) return null;
+  const body = m[2].replace(/\s+$/, '');
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  const candidates = [];
+  const apos = body.indexOf("'s");
+  if (apos > 0) candidates.push([body.slice(0, apos), body.slice(apos)]);   // possessive
+  const words = body.split(' ');
+  for (let k = 1; k <= Math.min(5, words.length - 1); k++) {
+    candidates.push([words.slice(0, k).join(' '), words.slice(k).join(' ')]);
+  }
+  for (const [name, suffixRaw] of candidates) {
+    if (!_looksLikeTargetName(name)) continue;
+    let hits = _npcSelfBuffBySuffix.get(suffixRaw.trim().toLowerCase());
+    if (!hits || !hits.length) continue;
+    if (!_npcCasterFor(atMs, name)) continue;
+    if (new Set(hits.map(h => h.name)).size > 1) {
+      const mob = _npcMobInfoFor(name);
+      const own = mob && Array.isArray(mob.spells)
+        ? new Set(mob.spells.map(s => String(s && s.name || '').toLowerCase().replace(/`/g, "'"))) : null;
+      const narrowed = own ? hits.filter(h => own.has(String(h.name).toLowerCase().replace(/`/g, "'"))) : [];
+      if (new Set(narrowed.map(h => h.name)).size !== 1) return null;
+      hits = narrowed;
+    }
+    const r = hits[0];
+    return {
+      target:       name,
+      spell_id:     r.id || 0,
+      spell_name:   r.name,
+      landing_text: suffixRaw.trim().slice(0, 200),
+      dur_ticks:    r.dur,
+      dur_formula:  r.durf,
+      cast_at:      ts ? ts.toISOString() : new Date().toISOString(),
+      observer:     null,
     };
   }
   return null;
@@ -49409,7 +50155,9 @@ const SUGGESTED_TRIGGERS = [
     builtin_timer: 'recharm_tick', no_tts: true },
   { id: 'timer_lull', category: 'timer', label: 'Pacify / Calm / Harmony timers on mobs',
     builtin_timer: 'lull', no_tts: true },
-  { id: 'timer_my_spells', category: 'timer', label: 'Every spell you land on a mob (30s or longer)',
+  // "on mobs or players" (the guild lead, 2026-10-29, FB-112): the old "on a mob" hid this switch from a member
+  // timing a heal-over-time on groupmates. _builtinTimerRows has always counted landings on players too.
+  { id: 'timer_my_spells', category: 'timer', label: 'Every spell you land (30s or longer), on mobs or players',
     builtin_timer: 'my_spells', no_tts: true },
   // The guild lead, 2026-10-13: "a mez you cast should end up on the timers, same for charm".
   { id: 'timer_mez', category: 'timer', label: 'Mez and charm you cast (any length, bard songs included)',
@@ -51827,7 +52575,39 @@ const POLL_RESCAN_MS     = 3 * 60_000;   // "Sync from my logs" requests (the we
 const POLL_POP_MS        = 5 * 60_000;   // the PoP Flags mode's status of the member's own characters (_popStatus below)
 const POLL_TUNING_IDLE_MS = 20_000;   // idle: still refresh tuning/control this often
 const POLL_DORMANT_MS     = 15_000;   // dormant: poll the tuning/kill channel this often
-const _pollLast = { tuning: 0, triggers: 0, prefs: 0, backfill: 0, ui_edits: 0, pet_owners: 0, rescan: 0, pop: 0 };
+const POLL_THEME_MS      = 10 * 60_000;  // the guild's colour theme for the overlays (_guildTheme below)
+const _pollLast = { tuning: 0, triggers: 0, prefs: 0, backfill: 0, ui_edits: 0, pet_owners: 0, rescan: 0, theme: 0, pop: 0 };
+
+// ── The guild theme (docs/DESIGN-theming.md section 4) ──────────────────────────────────────────────────────────────
+// The bot answers the poll's `theme` stream with the guild's colours; we keep the latest and serve it on /api/state as
+// `theme` for Mimic (which caches it and paints the overlays) and for the dashboard's guild-palette strip. Nothing is
+// sent anywhere. The reply is untrusted text from the network, so only the themable slots survive, as six-digit hex
+// (the meaning colours green/red/gold/orange are never accepted), the font from a short list and an https logo.
+// null = the guild has no theme (or we hold none yet): everything keeps its defaults.
+const _GUILD_THEME_SLOTS = ['bg', 'panel', 'border', 'text', 'dim', 'accent', 'blue', 'purple'];
+const _GUILD_THEME_FONTS = ['default', 'system-mono', 'sans', 'serif'];
+const _guildTheme = { ver: '', theme: null };
+function _cleanGuildTheme(t) {
+  if (!t || typeof t !== 'object') return null;
+  const hex = (v) => { const m = typeof v === 'string' ? v.trim().match(/^#?([0-9a-f]{6})$/i) : null; return m ? '#' + m[1].toLowerCase() : null; };
+  const slots = {};
+  const inSlots = t.slots && typeof t.slots === 'object' ? t.slots : {};
+  for (const s of _GUILD_THEME_SLOTS) { const h = hex(inSlots[s]); if (h) slots[s] = h; }
+  const logo = typeof t.logo_url === 'string' ? t.logo_url.trim() : '';
+  return {
+    slots,
+    font: _GUILD_THEME_FONTS.includes(t.font) ? t.font : 'default',
+    logo_url: logo && logo.length <= 500 && /^https:\/\/[^\s"'()<>\\]+$/i.test(logo) ? logo : null,
+    embed_color: hex(t.embed_color),
+    updated_at: typeof t.updated_at === 'string' ? t.updated_at.slice(0, 40) : null,
+  };
+}
+function _applyGuildThemeResponse(r) {
+  if (!r || typeof r !== 'object') return;
+  if (r.version != null) _guildTheme.ver = String(r.version).slice(0, 40);
+  if (r.unchanged) return;
+  _guildTheme.theme = _cleanGuildTheme(r.theme);
+}
 
 // ── PoP Flags mode: where the member's own characters stand on the PoP flags (2026-10-27) ──────────────────────────
 // The guild lead picked "A then B" for the per-character PoP flags checklist in Mimic; this is the data under A. The
@@ -51910,6 +52690,7 @@ async function _pollMultiplexed() {
     if (active || (now - _pollLast.tuning >= POLL_TUNING_IDLE_MS)) want.push('tuning');
     if (now - _pollLast.triggers >= POLL_TRIG_MS) want.push('triggers');
     if (now - _pollLast.pet_owners >= (active ? POLL_PETS_MS : 5 * POLL_PETS_MS)) want.push('pet_owners');
+    if (now - _pollLast.theme >= POLL_THEME_MS) want.push('theme');   // not character-scoped; older bots omit it
     if (chars.length) {
       if (now - _pollLast.prefs    >= POLL_PREFS_MS)    want.push('prefs');
       if (now - _pollLast.backfill >= POLL_BACKFILL_MS) want.push('backfill');
@@ -51926,6 +52707,7 @@ async function _pollMultiplexed() {
     qs.set('loot_since_id', String(_lastLootPostedId));   // #149 loot-posted cursor rides recent_fires
   }
   if (want.includes('tuning'))       qs.set('tuning_ver', _pollTuningVer || '');
+  if (want.includes('theme'))        qs.set('theme_ver', _guildTheme.ver || '');
   if (want.includes('triggers')) {
     qs.set('trig_ver', stats.guildTriggersVersion || '');
     const classes = [];
@@ -51966,7 +52748,8 @@ async function _pollMultiplexed() {
     }
     if (want.includes('triggers')) { if (s.triggers) _applyGuildTriggersResponse(s.triggers); _pollLast.triggers = now; }
     if (want.includes('pet_owners')) { if (s.pet_owners) _applyPetOwnersResponse(s.pet_owners); _pollLast.pet_owners = now; }
-    if (want.includes('prefs'))    { if (s.prefs)    _applyCharacterPrefsResponse(s.prefs);   _pollLast.prefs = now; }
+    if (want.includes('theme'))    { if (s.theme) _applyGuildThemeResponse(s.theme);           _pollLast.theme = now; }
+    if (want.includes('prefs'))    { if (s.prefs)   _applyCharacterPrefsResponse(s.prefs);   _pollLast.prefs = now; }
     if (want.includes('backfill')) { if (s.backfill) _applyBackfillResponse(s.backfill);      _pollLast.backfill = now; }
     if (want.includes('rescan'))   { if (s.rescan)   _applyRescanResponse(s.rescan);          _pollLast.rescan = now; }
     if (want.includes('pop'))      { _applyPopResponse(s.pop, now);                           _pollLast.pop = now; }
@@ -52764,12 +53547,51 @@ function _mapAttribute(points, name, loc, grids, taken) {
 // The respawn WINDOW from a death time: respawn +/- variance, as a range and never a single time.
 // null for a point with no usable respawn (the 1,700,000 s instance sentinel).
 function _mapMakeTimer(point, diedAt, source, name) {
-  const r = Number(point && point.respawn_s), v = Math.max(0, Number(point && point.variance_s) || 0);
+  let r = Number(point && point.respawn_s), v = Math.max(0, Number(point && point.variance_s) || 0);
   if (!(r > 0) || r >= MAP_INSTANCE_SENTINEL_S || !Number.isFinite(diedAt)) return null;
+  // Slow mode (FB-114; the guild lead, 2026-11-01: "these spawns should be more like 18 hours not 20 minutes"): a
+  // Planes of Power kill made while our guild's thread is slowed respawns 18 hours after death, judged by the kill's
+  // own time (the bot's rule, utils/slowMode.js). _mapPrune rebuilds through here, so the 18 hours stick.
+  const slow = !!(point && point.slow_zone) && _mapSlowOnAt(diedAt);
+  if (slow) { r = Math.max(r, MAP_SLOW_RESPAWN_S); v = 0; }
   return {
     point_id: point.id, name: name || _mapBestName(point), died_at: diedAt,
     earliest: diedAt + Math.max(0, r - v) * 1000, latest: diedAt + (r + v) * 1000, source,
+    ...(slow ? { slow: true } : {}),
   };
+}
+// ── Slow mode, for the Map's timers: the bot's window (GET /api/agent/slow-mode), asked every 2 minutes while the Map
+// is in use. ponytail: any Planes of Power zone counts as our guild's copy while the window is open; the window is one
+// raid night (the bot turns it off after 8 hours), so a public PoP zone visited that night is the known ceiling.
+const MAP_SLOW_RESPAWN_S = 18 * 3600;
+let _mapSlowFlag = null, _mapSlowAskedAt = 0, _mapSlowBusy = false;
+function _mapSlowOnAt(atMs, flag = _mapSlowFlag) {
+  if (!flag) return false;
+  const start = Date.parse(flag.set_at);
+  const ends = [Date.parse(flag.auto_off_at), flag.on ? NaN : Date.parse(flag.off_at)].filter(Number.isFinite);
+  if (!Number.isFinite(start) || !ends.length) return false;
+  return atMs >= start && atMs < Math.min(...ends);
+}
+function _mapSlowRefresh(now) {
+  if (_mapSlowBusy || now - _mapSlowAskedAt < 120000 || !_mapFetchAllowed()) return;
+  _mapSlowBusy = true; _mapSlowAskedAt = now;
+  const opts = _uploadOpts;
+  let u;
+  try { u = new URL(opts.botUrl.replace(/\/encounter(\?.*)?$/, '/slow-mode')); } catch { _mapSlowBusy = false; return; }
+  const mod = u.protocol === 'https:' ? https : http;
+  const req = mod.request({ method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname,
+    headers: { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` }, timeout: 15000 }, (res) => {
+    const chunks = [];
+    res.on('data', c => chunks.push(c));
+    res.on('end', () => {
+      _mapSlowBusy = false;
+      if (res.statusCode !== 200) return;   // an older bot (404) or a refusal: keep what we had
+      try { const j = JSON.parse(Buffer.concat(chunks).toString('utf8')); if (j && typeof j === 'object') _mapSlowFlag = j; } catch { /* keep */ }
+    });
+  });
+  req.on('error', () => { _mapSlowBusy = false; });
+  req.on('timeout', () => { req.destroy(); });
+  req.end();
 }
 // wait = not yet (red) | flash = it just became possible | window = inside the window (yellow) | up = past it (green)
 function _mapTimerState(t, now) {
@@ -52827,8 +53649,14 @@ function _mapPrune(zdoc, points, now) {
   let changed = false;
   const byId = new Map((points || []).map(p => [String(p.id), p]));
   for (const [k, t] of Object.entries(zdoc.timers)) {
-    const fresh = t && byId.size ? _mapMakeTimer(byId.get(String(t.point_id)), t.died_at, t.source, t.name) : null;
-    if (fresh && (fresh.earliest !== t.earliest || fresh.latest !== t.latest)) { t.earliest = fresh.earliest; t.latest = fresh.latest; changed = true; }
+    let fresh = t && byId.size ? _mapMakeTimer(byId.get(String(t.point_id)), t.died_at, t.source, t.name) : null;
+    // A slow-mode timer stays as it is until the bot's window is known again (just after a restart it is not), so a
+    // boot never cuts an 18-hour timer back to its usual length and drops it.
+    if (fresh && t.slow && !fresh.slow && !_mapSlowFlag) fresh = null;
+    if (fresh && (fresh.earliest !== t.earliest || fresh.latest !== t.latest || !!fresh.slow !== !!t.slow)) {
+      t.earliest = fresh.earliest; t.latest = fresh.latest; changed = true;
+      if (fresh.slow) t.slow = true; else delete t.slow;
+    }
     if (!t || !(now <= t.latest + MAP_TIMER_KEEP_MS)) { delete zdoc.timers[k]; changed = true; }
   }
   const keepU = zdoc.unassigned.filter(u => {
@@ -53039,6 +53867,8 @@ function _mapBrewallEnsure(short, now) {
 // ── Zone data: disk first, the bot second ───────────────────────────────────────────────────────
 const _mapZones = new Map();   // short -> { short, body, byId, etag, fetchedAt, retryAt, none, inflight }
 function _mapIndexBody(rec) {
+  // A Planes of Power zone (the bot's `slow_zone`): its points take slow mode's 18 hours (_mapMakeTimer).
+  if (rec.body && rec.body.slow_zone && Array.isArray(rec.body.points)) for (const p of rec.body.points) if (p) p.slow_zone = true;
   rec.byId = new Map(((rec.body && rec.body.points) || []).map(p => [String(p.id), p]));
   rec.version = rec.body ? (rec.body.zone || rec.short) + '@' + (rec.body.generated_at || '') : null;
 }
@@ -55065,6 +55895,7 @@ function _mapStatePayload(have, now, haveLocal, haveRoute) {
   const out = { zone: null, long_name: null, zone_id: null, version: null, status: character ? 'ok' : 'no-pipe', local_only: _localOnly(),
     map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], engaged: [], unassigned: [], copy: null, cc: [], paths: {}, watched: {}, corpses: [], route_ver: null, now };
   if (!st) return out;
+  _mapSlowRefresh(now);
   out.zone_id = Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
   out.pos_at = Number.isFinite(st.updatedAt) ? st.updatedAt : null;   // when the agent last heard from Mimic: the overlay's "pos NNN ms"
   const zone = _mapZoneShort(st.zone);
@@ -55993,6 +56824,104 @@ function fetchRaidBuffQueue(bufferClass, bufferCharacter) {
     req.on('timeout', () => { req.destroy(); _buffQueueInflight.delete(key); });
     req.end();
   } catch { _buffQueueInflight.delete(key); }
+}
+
+// ── Guest links for officers (Command Center "Guests" card) ──────────────────
+// The guild lead, 2026-10-30: "add guests to the command center for officers/admins with an extend button for +1/+3".
+// An OFFICER's agent asks the bot for the guest Mimic links (GET /api/agent/guest-links) and the card extends one by
+// 1 or 3 hours (POST /api/agent/guest-links/extend). Both routes are officer-only on the bot (utils/guestLinks.js); the
+// agent additionally never asks unless the signed-in identity is an officer, so a raider's agent makes no call at all.
+// Like fetchRaidBuffQueue the read is LAZY: _serializeCommandCenterState asks for it, and the Command Center polls
+// that only while its window is open, so a closed window costs nothing. Every failure is quiet: `guests` stays null
+// and the card is simply absent. A bot that predates the route (404) or a refusal (403) backs off for 5 minutes.
+const GUEST_LINKS_TTL_MS     = 30 * 1000;
+const GUEST_LINKS_BACKOFF_MS = 5 * 60 * 1000;
+let _guestLinks = { at: 0, guests: null, retryAt: 0, inflight: false, logged: false };
+function _guestLinksUrl(suffix) {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return null;
+  return opts.botUrl.replace(/\/encounter(\?.*)?$/, suffix);
+}
+function _guestLinksQuiet(why) {
+  if (!_guestLinks.logged) { _guestLinks.logged = true; console.log('[guest-links] no guest list (' + why + '); the Guests card stays hidden'); }
+}
+function fetchGuestLinks() {
+  if (!(_mimicIdentity && _mimicIdentity.is_officer)) return;
+  const now = Date.now();
+  if (_guestLinks.inflight || now < _guestLinks.retryAt || (now - _guestLinks.at) < GUEST_LINKS_TTL_MS) return;
+  const url = _guestLinksUrl('/guest-links');
+  if (!url) return;
+  _guestLinks.inflight = true;
+  // A refusal (403/404) drops the list; a blip (timeout, 5xx) keeps the last good one so the card does not flicker off.
+  const done = (guests, retryMs, why) => {
+    _guestLinks.inflight = false;
+    _guestLinks.at = Date.now();
+    if (guests || retryMs) _guestLinks.guests = guests;
+    _guestLinks.retryAt = retryMs ? Date.now() + retryMs : 0;
+    if (!guests && why) _guestLinksQuiet(why);
+  };
+  try {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+      headers: { 'Authorization': 'Bearer ' + _uploadOpts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+      timeout: 8000,
+    }, (res) => {
+      let body = '';
+      res.on('data', c => { if (body.length < 256 * 1024) body += c; });
+      res.on('end', () => {
+        if (res.statusCode === 404 || res.statusCode === 403) return done(null, GUEST_LINKS_BACKOFF_MS, 'bot answered ' + res.statusCode);
+        if (res.statusCode !== 200) return done(null, 0, 'bot answered ' + res.statusCode);
+        try {
+          const j = JSON.parse(body);
+          done(Array.isArray(j.guests) ? j.guests : null, 0, 'unreadable answer');
+        } catch { done(null, 0, 'unreadable answer'); }
+      });
+    });
+    req.on('error',   () => done(null, 0, 'bot unreachable'));
+    req.on('timeout', () => { req.destroy(); done(null, 0, 'timed out'); });
+    req.end();
+  } catch { done(null, 0, 'bad bot url'); }
+}
+// What the Command Center state carries: the list, or null for a non-officer / nothing known yet.
+function _guestLinksSnapshot() {
+  fetchGuestLinks();
+  return Array.isArray(_guestLinks.guests) ? _guestLinks.guests : null;
+}
+// POST /api/guest-extend { id, hours: 1 | 3 } -> the bot's reply, passed through. On success the cached row takes the
+// new expiry at once and the list is refetched on the next poll, so the card never flips back to the old time.
+function extendGuestLink(id, hours) {
+  return new Promise((resolve) => {
+    const url = _guestLinksUrl('/guest-links/extend');
+    if (!url) return resolve({ status: 503, body: { ok: false, error: 'not connected to the bot' } });
+    const payload = JSON.stringify({ id, hours });
+    try {
+      const u = new URL(url);
+      const mod = u.protocol === 'https:' ? https : http;
+      const req = mod.request({
+        method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+        headers: {
+          'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload),
+          'Authorization': 'Bearer ' + _uploadOpts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}`,
+        }, timeout: 10000,
+      }, (res) => {
+        let body = '';
+        res.on('data', c => { if (body.length < 64 * 1024) body += c; });
+        res.on('end', () => {
+          let j = null; try { j = JSON.parse(body); } catch { j = null; }
+          if (res.statusCode === 200 && j && j.ok && j.guest && Array.isArray(_guestLinks.guests)) {
+            _guestLinks.guests = _guestLinks.guests.map(g => (g && g.id === id ? { ...g, expires_at: j.guest.expires_at, revoked: false } : g));
+            _guestLinks.at = 0;   // refetch on the next poll
+          }
+          resolve({ status: res.statusCode || 502, body: j || { ok: false, error: 'unreadable answer' } });
+        });
+      });
+      req.on('error',   () => resolve({ status: 502, body: { ok: false, error: 'bot unreachable' } }));
+      req.on('timeout', () => { req.destroy(); resolve({ status: 504, body: { ok: false, error: 'bot timed out' } }); });
+      req.end(payload);
+    } catch { resolve({ status: 502, body: { ok: false, error: 'bad bot url' } }); }
+  });
 }
 
 // ── PoP raid objectives proxy (popraid.html) ─────────────────────────────────
@@ -57281,6 +58210,18 @@ function mobInfoFeedbackMeta(now) {
     };
   } catch { return null; }
 }
+// FB-111: is this character's EverQuest log quiet while Zeal still sees them in game? Then Target Info can only know
+// their own buffs (Zeal's list), never what lands on a mob. Two cases, the dashboard's two banners: the log went
+// silent mid-session (_logSilent), or no log is being read at all. null when the log is fine. Nothing volatile in it.
+function _logQuietFor(selfChar) {
+  const lc = String(selfChar || '').toLowerCase();
+  if (!lc) return null;
+  if (_logSilent && String(_logSilent.character || '').toLowerCase() === lc) return { character: _logSilent.character, file: _logSilent.file };
+  // No log for THIS character (none at all, or only other characters' logs) is the same blindness.
+  const logs = (typeof stats !== 'undefined' && stats && stats.watchedLogs) || [];
+  if (!logs.some(w => String((w && w.character) || '').toLowerCase() === lc)) return { character: selfChar, file: null };
+  return null;
+}
 function buildMobInfo() {
   const st = _currentTargetState();
   if (!st || !st.target_name) return null;
@@ -57399,6 +58340,7 @@ function buildMobInfo() {
     // FB-95: why there is no row to show (null when there is one) — the overlay prints it beside a ↻ retry.
     mob_miss:       _mobMiss(mobKey, cached, st.target_name, myZoneId),
     target_buffs:   buffs,
+    log_quiet:      _logQuietFor(selfChar),
     // PC = live buff data (own Zeal list OR the target's uploaded live-state)
     // — drives the "(live)" header suffix instead of "(observed)".
     target_is_pc:   zealBuffs !== null || liveBuffs !== null,
@@ -58905,6 +59847,103 @@ function _deadMobNameFromLine(line) {
   if (m) return m[1].trim().replace(/[!.]+$/, '');
   return null;
 }
+// ── Relv the Mysterious (Plane of Storms): the Command Center's mephit counter ───────────────────────────────
+// The guild lead, 2026-10-30: "add in a mephit counter into the command center ... for this event only." The
+// quest script (Relv.lua) spawns exactly 30 mobs, each `a blazing mephit` or `a burning mephit`; every death
+// leaves three `a fiery mepheeka`, and when none is left alive `Falto, Lord of Thunder` spawns. Falto then sends
+// blazing/burning mephit ADDS (same display names) while he fights, so deaths after Falto is up do not count.
+// ⚠ The count is what THIS client saw. EverQuest prints a death line only to players near it, so a kill far
+// across the clearing can be missed: the number is a floor, never exact. Nothing is shared across clients.
+// Starts on Relv's "As I had hoped" line or a port emote, or on the first mephit death seen in Plane of Storms
+// (Zeal zone, else the log's "You have entered" line). Ends on the pulled-back line, on leaving the zone, 3 h
+// after the start, or 10 min after Falto dies. Live tail only (the caller is the live loop), so it takes now.
+const RELV_MEPHITS = 30;
+const RELV_MAX_MS  = 3 * 3600 * 1000;
+const RELV_DONE_MS = 10 * 60 * 1000;
+const _RELV_START_RX   = /As I had hoped\. I regret that I have only enough strength to send four parties/;
+const _RELV_PORT_RX    = /A powerfully green aura surrounds Relv/;
+const _RELV_BACK_RX    = /pulled back to Relv the Mysterious/;
+const _RELV_MEPHIT_RX  = /^an? (?:blazing|burning) mephit$/i;
+const _RELV_MEPHEEKA_RX = /^an? fiery mepheeka$/i;
+const _RELV_FALTO_RX   = /^Falto, Lord of Thunder$/i;
+// Falto's own swings and ours at him; a guild-chat line that merely names him must not flip the count off.
+const _RELV_FALTO_SEEN_RX = /\]\s+(?:Falto, Lord of Thunder\s|You\b[^']*?\bFalto, Lord of Thunder\b)/;
+const _relvState   = new Map();   // character (lower) → { mephits, mepheekas, faltoUp, faltoSlainAt, startedAt }
+const _relvLogZone = new Map();   // character (lower) → last zone a zone-change line (CHAT_ZONE_RX) named (lower)
+// When this character last saw Falto (a swing, a hit on him, his death), kept even with no counter running. The guild
+// lead, 2026-10-30, mid-fight on a fresh agent: the counter was started by one of Falto's ADDS dying ("mephits 1/30")
+// because his earlier lines arrived before any counter existed. A counter that starts within FALTO_RECENT_MS of a
+// sighting therefore starts with Falto up, and counts nothing.
+const _relvFaltoSeenAt = new Map();
+const RELV_FALTO_RECENT_MS = 30 * 60 * 1000;
+function _relvFresh(now, cl) {
+  const seen = cl ? _relvFaltoSeenAt.get(cl) : 0;
+  return { mephits: 0, mepheekas: 0, faltoUp: !!seen && now - seen < RELV_FALTO_RECENT_MS, faltoSlainAt: 0, startedAt: now };
+}
+function _relvInStorms(cl) {
+  for (const ch of Object.keys(_zealState || {})) {
+    if (ch.toLowerCase() !== cl) continue;
+    const z = _mapZoneShort(_zealState[ch] && _zealState[ch].zone);
+    if (z) return z === 'postorms';
+  }
+  return _relvLogZone.get(cl) === 'plane of storms';
+}
+function _relvLive(cl, now) {
+  const st = _relvState.get(cl);
+  if (!st) return null;
+  if (now - st.startedAt > RELV_MAX_MS || (st.faltoSlainAt && now - st.faltoSlainAt > RELV_DONE_MS)) { _relvState.delete(cl); return null; }
+  return st;
+}
+function _relvNoteLine(line, character, now) {
+  if (!line || !character) return;
+  const cl = String(character).toLowerCase();
+  // The zone line is parsed in one place, the chat feed's CHAT_ZONE_RX (the cheap indexOf keeps the regex off most lines).
+  const zm = line.indexOf(' have entered ') !== -1 ? CHAT_ZONE_RX.exec(line) : null;
+  if (zm) {
+    const z = zm[1].trim().toLowerCase();
+    _relvLogZone.set(cl, z);
+    if (z !== 'plane of storms') _relvState.delete(cl);
+    return;
+  }
+  if (line.indexOf('Relv') === -1 && line.indexOf('mephit') === -1 && line.indexOf('mepheeka') === -1 && line.indexOf('Falto') === -1) return;
+  let st = _relvLive(cl, now);
+  if (_RELV_START_RX.test(line)) { _relvFaltoSeenAt.delete(cl); _relvState.set(cl, _relvFresh(now)); return; }   // a new run: no Falto yet
+  if (_RELV_BACK_RX.test(line)) { _relvState.delete(cl); return; }
+  if (_RELV_PORT_RX.test(line)) { if (!st) _relvState.set(cl, _relvFresh(now, cl)); return; }
+  const dead = _deadMobNameFromLine(line);
+  if (dead && _RELV_FALTO_RX.test(dead)) {
+    _relvFaltoSeenAt.set(cl, now);
+    if (!st && _relvInStorms(cl)) { st = _relvFresh(now, cl); _relvState.set(cl, st); }
+    if (st) { st.faltoUp = true; st.faltoSlainAt = now; }
+    return;
+  }
+  if (dead) {
+    if (_RELV_MEPHIT_RX.test(dead)) {
+      if (!st) {
+        if (!_relvInStorms(cl)) return;
+        st = _relvFresh(now, cl); _relvState.set(cl, st);
+      }
+      if (st.faltoUp) return;   // a Falto add, not one of the 30
+      st.mephits++;
+      if (st.mephits >= RELV_MEPHITS) { st.mephits = RELV_MEPHITS; st.faltoUp = true; }
+    } else if (st && _RELV_MEPHEEKA_RX.test(dead)) {
+      st.mepheekas++;
+    }
+    return;
+  }
+  if (_RELV_FALTO_SEEN_RX.test(line)) {
+    _relvFaltoSeenAt.set(cl, now);
+    if (!st && _relvInStorms(cl)) { st = _relvFresh(now, cl); _relvState.set(cl, st); }   // joined mid-fight: "Falto is up"
+    if (st) st.faltoUp = true;
+  }
+}
+// The Command Center row: null unless the event is running for this character (so nothing shows for any other fight).
+function _relvSnapshot(character, now) {
+  const st = _relvLive(String(character || '').toLowerCase(), now);
+  if (!st) return null;
+  return { mephits: st.mephits, total: RELV_MEPHITS, mepheekas: st.mepheekas, falto_up: !!st.faltoUp, falto_slain: !!st.faltoSlainAt, started_at: st.startedAt };
+}
+// ── end Relv mephit counter ────────────────────────────────────────────────────────────────────────────────────
 // ── Death timeline (the guild lead, 2026-10-21: "the death timers between mobs ... easily and clearly displayed
 // versus having to say it out loud ... a timeline view ... on the bottom of the TTS") ──────────────────────────
 // A small ring of recent boss / Tactics-brother deaths read off the lines THIS PC's logs see (a kill out of this
@@ -62979,6 +64018,11 @@ async function main() {
   setTimeout(scanInventoryUploads, 40_000);
   setInterval(scanInventoryUploads, 10 * 60_000);
 
+  // PoP flags export ingest — Zeal's <Char>-PoPFlags.txt (/camp export or /outputfile popflags), whose #popflags
+  // reply never reaches the log. Same dir, prefs gate and cadence as the three above.
+  setTimeout(scanPopFlagsFiles, 45_000);
+  setInterval(scanPopFlagsFiles, 10 * 60_000);
+
   // Buff-blocks socials queued while a character was logged in are written once
   // it has logged out. Local file work only (no bot, no network), and a no-op
   // until something is queued, so it runs in local mode too.
@@ -63779,6 +64823,11 @@ async function main() {
           // shouldKeep (default-DROP, and still ahead of us in this callback)
           // would have thrown it away. Local ring only — nothing uploads.
           if (!dbEvt) {
+            // FB-111: the mob buffing itself. Local Target Info only — nothing is queued for upload.
+            try {
+              const nbEvt = parseNpcSelfBuffLanding(line);
+              if (nbEvt) { nbEvt.target_id = _landingTargetId(b.character, nbEvt); recordTargetBuffLanding(nbEvt); }
+            } catch (e) { void e; }
             try { noteMechanicLanding(line, b.character, b.builder); } catch (e) { void e; }
           }
         }
@@ -63972,6 +65021,8 @@ async function main() {
         try { _meNoteRawLine(line, b.character); } catch { void 0; }
         // XP events: each experience line with the bars around it (FB-37 option B; live tail only).
         try { _xpNoteRawLine(line, b.character, Date.now()); } catch { void 0; }
+        // Relv event (Plane of Storms): the Command Center's mephit counter (live tail only).
+        try { _relvNoteLine(line, b.character, Date.now()); } catch { void 0; }
         // Corpse DM: your own death, with where the corpse lies (live tail only, so a backfill of an old
         // log never DMs anyone).
         try { _corpseNoteLine(line, b.character); } catch { void 0; }
@@ -65529,17 +66580,41 @@ function _rescanUploadMode() {
 function _rescanDays(v) { return Math.max(1, Math.min(RESCAN_MAX_DAYS, Math.trunc(Number(v)) || RESCAN_DEFAULT_DAYS)); }
 // (_rescanDrained and _rescanReport, which touch the queue and the network, sit next to the PoP parsers: the local
 // rebuild above must stay free of both, test/local-backfill.test.js.)
+// Zeal's own save of the #popflags reply (<Name>-PoPFlags.txt, popFlagsFileEvents): the NEWEST one beside each
+// character's log, whatever its age. It is a snapshot of what the server said, not a stretch of log, so the days
+// window does not apply; one small file, so there is no pacing. The same table, the file's own time as earned_at (a
+// re-read is the same rows), and a kept-out character is never read. Like the log read, the prefs must be known before
+// anything is going to leave. Returns the number of files read.
+function _rescanPopFlagsExports(files, sink, mode) {
+  if (mode.upload && !stats.characterPrefsCheckedAt) return 0;
+  let read = 0;
+  const seen = new Set();
+  for (const f of files) {
+    const cl = String(f.character).toLowerCase();
+    const dir = path.dirname(f.path);
+    if (seen.has(dir + '\0' + cl)) continue;
+    seen.add(dir + '\0' + cl);
+    const x = _latestPopFlagsExport(dir, cl);
+    if (!x || x.parsed.character.toLowerCase() !== cl) continue;   // a renamed copy of another character's file is not this one's
+    const r = popFlagsFileEvents(x.parsed, x.parsed.character);
+    for (const e of r.events) sink.events.push(e);
+    sink.found += r.found;
+    read++;
+  }
+  return read;
+}
 // One run, for either caller: {character|null, days}. `prog` (optional) is the progress record the status route
-// reads while it goes. Resolves to { ok, found, logs, sent, excluded, upload, why }: `logs` is the files opened,
-// `sent` the events handed to the upload queue (0 when the agent is in local mode or paused: the lines are still
-// read and counted, nothing leaves), `excluded` the characters left out because they are kept out of stats.
+// reads while it goes. Resolves to { ok, found, logs, exports, sent, excluded, upload, why }: `logs` is the files opened,
+// `exports` the Zeal PoP flags files read, `sent` the events handed to the upload queue (0 when the agent is in local
+// mode or paused: the lines are still read and counted, nothing leaves), `excluded` the characters left out because
+// they are kept out of stats.
 async function _rescanRun(req, prog) {
   const days = _rescanDays(req.days);
   const sinceMs = Date.now() - days * 86400_000;
   const info = { excluded: [] };
   const files = _rescanFiles(req.character, info);
   const mode = _rescanUploadMode();
-  const done = (o) => Object.assign({ ok: false, found: 0, logs: 0, sent: 0, excluded: info.excluded, upload: mode.upload, why: mode.why }, o);
+  const done = (o) => Object.assign({ ok: false, found: 0, logs: 0, exports: 0, sent: 0, excluded: info.excluded, upload: mode.upload, why: mode.why }, o);
   if (prog) { prog.days = days; prog.files = files.length; prog.filesDone = 0; prog.excluded = info.excluded; prog.upload = mode.upload; prog.why = mode.why; }
   if (!files.length) return done({});
   const opts = _uploadOpts || {};
@@ -65556,6 +66631,7 @@ async function _rescanRun(req, prog) {
   const ctx = { sinceMs, bytes: RESCAN_MAX_BYTES, waited: 0, stop: false };
   if (prog) { prog.ctx = ctx; prog.sink = sink; }
   let opened = 0;
+  let exportsRead = 0;
   await _rescanIsolate(files.map(f => f.character), async () => {
     for (const f of files) {
       if (prog) prog.current = f.character;
@@ -65563,11 +66639,13 @@ async function _rescanRun(req, prog) {
       sink.flush();
       if (prog) prog.filesDone++;
     }
+    exportsRead = _rescanPopFlagsExports(files, sink, mode);
+    if (prog) prog.exports = exportsRead;
   });
   sink.flush();
-  if (opened === 0) return done({});
+  if (opened === 0 && exportsRead === 0) return done({});
   if (sink.sent > 0) await _rescanDrained(90_000);
-  return done({ ok: true, found: sink.found, logs: opened, sent: sink.sent });
+  return done({ ok: true, found: sink.found, logs: opened, exports: exportsRead, sent: sink.sent });
 }
 // The website's requests, one at a time, under the shared guard. Also called when a dashboard run ends, so a
 // request that arrived meanwhile is not left waiting for the next poll.
@@ -65676,6 +66754,7 @@ function _rescanStatus() {
       bytesRead: p.ctx ? RESCAN_MAX_BYTES - p.ctx.bytes : 0,
       found: p.result ? p.result.found : (p.sink ? p.sink.found : 0),
       logs: p.result ? p.result.logs : 0,
+      exports: p.result ? p.result.exports : (p.exports || 0),
       sent: p.result ? p.result.sent : (p.sink ? p.sink.sent : 0),
       upload: p.upload !== false, why: p.why || null,
     };

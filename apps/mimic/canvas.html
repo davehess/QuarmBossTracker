@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>canvas</title>
+<link rel="stylesheet" href="theme.css">
 <style>
   /* ── The Timers canvas ─────────────────────────────────────────────────────
      One transparent window the size of the screen, holding the trigger
@@ -34,7 +35,7 @@
      Remove hands it back. Its size is the panel; its text size scales the
      whole page. The different views come later, one overlay at a time. */
   html,body{margin:0;width:100%;height:100%;background:transparent;overflow:hidden;
-    font-family:ui-monospace,"Cascadia Code",Consolas,Menlo,monospace;color:#c9d1d9;user-select:none}
+    font-family:ui-monospace,"Cascadia Code",Consolas,Menlo,monospace;color:var(--wp-text);user-select:none}
   #panels{position:fixed;inset:0}
   .panel{position:absolute;box-sizing:border-box}
   .panel > iframe{position:absolute;inset:0;width:100%;height:100%;border:0;
@@ -63,7 +64,7 @@
   .panel.back.fitempty:not(.part){background:transparent}
   :is(body.edit .panel, .panel.one).back.fitempty:not(.part){background:rgb(8 10 14 / 0.35)}
   .panel.part.back.fitempty > .pbody{background:transparent;box-shadow:none}
-  :is(body.edit .panel, .panel.one).part.back.fitempty > .pbody{background:rgba(13,17,23,0.35)}
+  :is(body.edit .panel, .panel.one).part.back.fitempty > .pbody{background:rgba(var(--wp-bg-rgb),0.35)}
   /* A page with its own builder open (the HUD ring's ⚙) takes the mouse even while arranging. */
   :is(body.edit .panel, .panel.one).building > iframe{pointer-events:auto}
   /* ...and so does one whose own options (⚙ → Page options) are showing. */
@@ -94,36 +95,36 @@
   :is(body.edit .panel, .panel.one).off{visibility:visible;opacity:0.4}
   :is(body.edit, .panel.one) .whb.on{display:block;position:absolute;left:2px;bottom:2px;z-index:3;max-width:calc(100% - 22px);
     padding:0 5px;font-size:10px;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-    pointer-events:none;color:#0d1117;background:rgba(210,153,34,0.92);border-radius:3px}
+    pointer-events:none;color:var(--wp-bg);background:rgba(210,153,34,0.92);border-radius:3px}
   :is(body.edit .panel, .panel.one).lift{z-index:50;outline-style:solid}
   :is(body.edit, .panel.one) .tab{display:flex;align-items:center;gap:6px;position:absolute;left:-1px;
     bottom:100%;max-width:calc(100% + 2px);box-sizing:border-box;
     padding:2px 6px;font-size:11px;line-height:16px;white-space:nowrap;
-    background:#161b22;color:#c9d1d9;border:1px solid #30363d;border-bottom:0;
+    background:var(--wp-panel);color:var(--wp-text);border:1px solid var(--wp-border);border-bottom:0;
     border-radius:4px 4px 0 0}
   /* No room above (a panel at the top edge): the tab sits inside. */
   :is(body.edit .panel, .panel.one).tabin .tab{bottom:auto;top:0;left:0;border-radius:0 0 4px 0;
-    border:0;border-right:1px solid #30363d;border-bottom:1px solid #30363d}
-  .tab .mv{color:#58a6ff}
+    border:0;border-right:1px solid var(--wp-border);border-bottom:1px solid var(--wp-border)}
+  .tab .mv{color:var(--wp-blue)}
   .tab .nm{font-weight:700;overflow:hidden;text-overflow:ellipsis}
-  .tab .what{color:#6e7681;overflow:hidden;text-overflow:ellipsis}
+  .tab .what{color:var(--wp-dim);overflow:hidden;text-overflow:ellipsis}
   /* 🔒 Locked in place: a badge on the tab while arranging, and a ◢ that is plainly not a handle. */
   .tab .lkb{display:none}
   :is(body.edit .panel, .panel.one).plock .tab .lkb{display:inline}
   :is(body.edit .panel, .panel.one).plock .grip{opacity:0.35;cursor:not-allowed}
   /* ✓ Done: only on the tab of the one item being edited (the whole canvas has its own Done in the bar). */
   .tab .done{display:none}
-  .panel.one .tab .done{display:inline;color:#56d364}
-  .tab .ctl{cursor:pointer;color:#6e7681;padding:0 3px;border-radius:3px}
+  .panel.one .tab .done{display:inline;color:var(--wp-green)}
+  .tab .ctl{cursor:pointer;color:var(--wp-dim);padding:0 3px;border-radius:3px}
   .tab .ctl:hover{color:#e6edf3;background:rgba(88,166,255,0.18)}
-  .tab .ctl.x:hover{color:#f85149;background:rgba(248,81,73,0.18)}
+  .tab .ctl.x:hover{color:var(--wp-red);background:rgba(248,81,73,0.18)}
   :is(body.edit, .panel.one) .grip{display:block;position:absolute;right:0;bottom:0;width:16px;height:16px;
-    line-height:16px;text-align:center;font-size:11px;color:#58a6ff;cursor:nwse-resize}
+    line-height:16px;text-align:center;font-size:11px;color:var(--wp-blue);cursor:nwse-resize}
   /* Resize corner ON (⚙ → Position): the ◢ stays on the piece while playing, on the hover handshake like the ✥ (it carries
      data-wp-interact), so the rest of the piece stays click-through. Locked pieces show none; a cut piece has no ◢ at all. */
   .panel.rc:not(.plock):not(.sect) > .grip{display:block;position:absolute;right:0;bottom:0;width:16px;height:16px;
-    line-height:16px;text-align:center;font-size:11px;color:#58a6ff;cursor:nwse-resize;
-    background:rgba(13,17,23,0.6);border-radius:3px 0 0 0;opacity:0.6}
+    line-height:16px;text-align:center;font-size:11px;color:var(--wp-blue);cursor:nwse-resize;
+    background:rgba(var(--wp-bg-rgb),0.6);border-radius:3px 0 0 0;opacity:0.6}
   .panel.rc:not(.plock):not(.sect) > .grip:hover{opacity:1}
   /* The right and bottom EDGES size one direction (width alone, height alone), like an overlay window's edges
      (the guild lead, 2026-10-21: "◢ grip and edge drags"). Page frames only: a piece has its ◢, and a cut piece
@@ -142,7 +143,7 @@
      corner so it never covers a timer; at the screen's left edge it tucks
      inside. While arranging, the panel's tab carries ✥ instead. */
   .mvbtn{position:absolute;top:0;right:100%;width:16px;height:16px;line-height:16px;
-    text-align:center;font-size:12px;color:#58a6ff;background:rgba(13,17,23,0.6);
+    text-align:center;font-size:12px;color:var(--wp-blue);background:rgba(var(--wp-bg-rgb),0.6);
     border-radius:3px 0 0 3px;opacity:0.6;cursor:move}
   .mvbtn:hover{opacity:1}
   .panel.mvin .mvbtn{right:auto;left:0;border-radius:0 0 3px 0}
@@ -150,14 +151,51 @@
      "Dismiss gets rid of it until they charm again"). On the hover handshake like the ✥, so the rest of the piece
      stays click-through; just outside the top-right corner; only that rule's pieces have one, and not while arranging. */
   .dsmbtn{display:none;position:absolute;top:0;left:100%;width:16px;height:16px;line-height:16px;
-    text-align:center;font-size:11px;color:#8b949e;background:rgba(13,17,23,0.6);
+    text-align:center;font-size:11px;color:#8b949e;background:rgba(var(--wp-bg-rgb),0.6);
     border-radius:0 3px 3px 0;opacity:0.6;cursor:pointer}
-  .dsmbtn:hover{opacity:1;color:#f85149}
+  .dsmbtn:hover{opacity:1;color:var(--wp-red)}
   .panel.chm .dsmbtn{display:block}
   :is(body.edit, .panel.one) .dsmbtn{display:none}
   body.edit .mvbtn{display:none}
   /* One ✥ per group: the top-left piece carries it and moves them all. */
   .panel.mvtail .mvbtn{display:none}
+
+  /* ▭ Minimize (the guild lead, 2026-10-28: "have a minimize tab if the window is wide enough, otherwise hover it
+     either over or to the side of ... Make sure you can always read a label of what the button is, even if you have
+     to move it. You can always put a little matching colored line in between if you must."). On every panel, all the
+     time, labelled in words and never shortened. The label sits in the panel's tab when the tab has room (arranging),
+     hugs the panel's top edge when the panel is wide enough (playing), and otherwise floats clear of everything, a
+     2px line in the panel's colour tying it to the panel (placeMin picks the side). The floating one is a <button>
+     with data-wp-interact, so it is on the same hover handshake as the ✥ and the window stays click-through. */
+  #mins{position:fixed;inset:0;z-index:60;pointer-events:none}
+  .minchip{display:none;position:absolute;left:0;top:0;margin:0;padding:0 7px;box-sizing:border-box;height:18px;
+    font:inherit;font-size:11px;line-height:16px;white-space:nowrap;color:#e6edf3;background:rgba(var(--wp-bg-rgb),0.92);
+    border:1px solid var(--acc,var(--wp-blue));border-radius:3px;cursor:pointer;pointer-events:auto;opacity:0.8}
+  .minchip:hover{opacity:1;background:rgba(31,111,235,0.35)}
+  #mins.hold .minchip,#mins.hold .minline{visibility:hidden}
+  /* Playing, the label shows only under the pointer (paintMins adds .hot); arranging, every one shows. Hidden ones keep their
+     place, so the label is where it was the moment it appears, and a hidden one takes no click. */
+  .minchip:not(.hot),.minline:not(.hot){visibility:hidden}
+  .minline{display:none;position:absolute;background:var(--acc,var(--wp-blue));opacity:0.8;pointer-events:none}
+  .tab .minb{display:none;flex:none;white-space:nowrap;color:#e6edf3;border:1px solid var(--acc,var(--wp-blue));padding:0 6px}
+  .tab.intab .minb{display:inline}
+  /* Collapsed to its tab: a panel with no mini of its own keeps its page running (a pinned callout lives there) but shows
+     only a strip with its name, in its colour. A group's other pieces step aside; the one ✥-carrying piece is the strip. */
+  /* (No overflow:hidden here: the ✥ sits just outside the strip's left edge, the tab above it and the dismiss ✕ outside its right, and
+     a clip hid all three: a minimized panel could not be grabbed, the guild lead, 2026-10-28: "minimized overlays need to be
+     draggable and resizable still". The page behind is visibility:hidden and the name below clips itself.) */
+  .panel.collapsed{background:rgba(var(--wp-bg-rgb),0.9)!important;border:1px solid var(--acc,var(--wp-blue))!important;border-radius:4px}
+  .panel.collapsed > iframe,.panel.collapsed > .pbody{visibility:hidden}
+  .panel.collapsed::after{content:attr(data-nm);position:absolute;left:6px;right:6px;top:0;line-height:16px;font-size:11px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--wp-text);pointer-events:none}
+  /* The strip sizes in width alone (startDrag pins its axis to x and keeps the height the page behind it has), so the ◢ stays
+     where it was shown (arranging, or the Resize corner switch) with the width cursor, and the name steps clear of it. The
+     right and bottom EDGES are drawn for the full box, which a strip is not. */
+  .panel.collapsed > .edge{display:none!important}
+  .panel.collapsed:not(.plock) > .grip{cursor:ew-resize!important}
+  :is(body.edit .panel, .panel.one).collapsed::after,.panel.rc.collapsed:not(.plock):not(.sect)::after{right:22px}
+  .panel.collapsed.mvin:not(.mvtail)::after{left:20px}   /* at the screen's left edge the ✥ tucks inside the strip: the name starts after it */
+  .panel.collapsed.mvtail{visibility:hidden}
 
   /* The drag shield: while a panel moves, one screen-sized interactive layer
      keeps the window taking the mouse, so a fast drag that outruns the panel
@@ -168,43 +206,54 @@
   /* Toolbar, top centre, only while arranging. */
   #bar{display:none;position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:90;
     align-items:center;gap:8px;flex-wrap:wrap;max-width:calc(100% - 32px);
-    padding:5px 10px;font-size:11px;background:rgba(22,27,34,0.96);
-    border:1px solid #1f6feb;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.5)}
+    padding:5px 10px;font-size:11px;background:rgba(var(--wp-panel-rgb),0.96);
+    border:1px solid var(--wp-accent);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.5)}
   body.edit #bar{display:flex}
   #bar b{color:#e6edf3}
-  #bar .dim{color:#6e7681}
+  #bar .dim{color:var(--wp-dim)}
   .btn{font:inherit;font-size:11px;padding:2px 9px;border-radius:4px;cursor:pointer;
-    background:#21262d;color:#c9d1d9;border:1px solid #30363d}
-  .btn:hover{border-color:#58a6ff;color:#e6edf3}
-  .btn.go{color:#56d364}
-  .btn.warn{color:#ffa657;border-color:#ffa657}
+    background:#21262d;color:var(--wp-text);border:1px solid var(--wp-border)}
+  .btn:hover{border-color:var(--wp-blue);color:#e6edf3}
+  .btn.go{color:var(--wp-green)}
+  .btn.warn{color:var(--wp-orange);border-color:var(--wp-orange)}
 
   /* Panel settings. */
   #menu{display:none;position:fixed;z-index:95;width:280px;box-sizing:border-box;
-    padding:8px;font-size:11px;background:#161b22;border:1px solid #30363d;
+    padding:8px;font-size:11px;background:var(--wp-panel);border:1px solid var(--wp-border);
     border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,0.6);max-height:80vh;overflow:auto}
   #menu.show{display:block}
   #menu .mh{font-weight:700;color:#e6edf3;margin-bottom:6px}
-  #menu .sec{margin:8px 0 3px;color:#6e7681;text-transform:uppercase;letter-spacing:0.06em;font-size:10px}
+  #menu .sec{margin:8px 0 3px;color:var(--wp-dim);text-transform:uppercase;letter-spacing:0.06em;font-size:10px}
   #menu .row{display:flex;align-items:center;gap:6px;margin:3px 0}
   #menu .note{color:#8b949e;line-height:1.4}
   #menu input[type=text]{flex:1;min-width:0;font:inherit;font-size:11px;padding:2px 6px;
-    background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px}
-  #menu input[type=text]:focus{outline:none;border-color:#58a6ff}
-  #menu input[type=range]{flex:1;min-width:0;accent-color:#1f6feb}
+    background:var(--wp-bg);color:#e6edf3;border:1px solid var(--wp-border);border-radius:4px}
+  #menu input[type=text]:focus{outline:none;border-color:var(--wp-blue)}
+  #menu input[type=range]{flex:1;min-width:0;accent-color:var(--wp-accent)}
   #menu label.chk{display:flex;align-items:baseline;gap:6px;padding:2px 0;cursor:pointer}
-  #menu label.chk input{accent-color:#1f6feb;cursor:pointer}
-  #menu label.chk .dim{color:#6e7681}
-  #menu .btn.on{background:rgba(31,111,235,0.25);border-color:#1f6feb;color:#e6edf3}
-  #menu .btn.sw{width:22px;height:20px;padding:0;border:2px solid #30363d;border-radius:4px}
+  #menu label.chk input{accent-color:var(--wp-accent);cursor:pointer}
+  #menu label.chk .dim{color:var(--wp-dim)}
+  #menu .btn.on{background:rgba(31,111,235,0.25);border-color:var(--wp-accent);color:#e6edf3}
+  #menu .btn.sw{width:22px;height:20px;padding:0;border:2px solid var(--wp-border);border-radius:4px}
   #menu .btn.sw.on{border-color:#e6edf3}
   .chips{display:flex;flex-wrap:wrap;gap:4px}
   .chip{display:inline-flex;align-items:center;gap:4px;padding:1px 6px;border-radius:10px;
-    background:#21262d;border:1px solid #30363d;cursor:pointer}
-  .chip:hover{border-color:#58a6ff}
-  .chip .cx{color:#6e7681}
-  .chip:hover .cx{color:#f85149}
-  .chip.add{color:#58a6ff}
+    background:#21262d;border:1px solid var(--wp-border);cursor:pointer}
+  .chip:hover{border-color:var(--wp-blue)}
+  .chip .cx{color:var(--wp-dim)}
+  .chip:hover .cx{color:var(--wp-red)}
+  .chip.add{color:var(--wp-blue)}
+  /* The name picker's list: one row per name, alphabetical, inside the menu (not a floating popup, so the menu's
+     own edge cannot clip it and it stays on the same hover handshake as the rest of the menu). */
+  #menu .sugg{display:none;flex-direction:column;max-height:150px;overflow-y:auto;margin:2px 0;
+    background:var(--wp-bg);border:1px solid var(--wp-border);border-radius:4px}
+  #menu .sugg.show{display:flex}
+  #menu .sg{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:2px 6px;cursor:pointer;
+    color:#e6edf3;border:0;border-radius:0;background:none}
+  #menu .sg:hover,#menu .sg.on{background:rgba(31,111,235,0.25)}
+  #menu .sg .sn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #menu .sg .st{flex:none;font-size:9px;color:#8b949e;white-space:nowrap}
+  #menu .sugg .none{padding:2px 6px;color:var(--wp-dim)}
 
   /* ── Pieces (3.0 alpha): single data elements drawn by parts.js ─────────── */
   .panel.part > .pbody{position:absolute;inset:0;padding:1px 3px;box-sizing:border-box;overflow:hidden}
@@ -212,7 +261,7 @@
      the same box, padding and content area with or without it. The outline is an inset shadow, not a
      border, so it takes no room; it used to add 1px border + 3px 6px padding, which shrank the piece's
      content box by 8 x 6 px and made Fit (+4) come up short. */
-  .panel.part.back > .pbody{background:rgba(13,17,23,var(--bg-alpha,0.72));box-shadow:inset 0 0 0 1px #30363d;border-radius:5px}
+  .panel.part.back > .pbody{background:rgba(var(--wp-bg-rgb),var(--bg-alpha,0.72));box-shadow:inset 0 0 0 1px var(--wp-border);border-radius:5px}
   :is(body.edit .panel, .panel.one).part.sample > .pbody{opacity:0.7}
   /* A Ring arc is drawn into its panel's whole box, so the arcs of one ring line up: no padding, no outline. */
   .panel.part.seg > .pbody{padding:0}
@@ -221,23 +270,23 @@
      on it (the piece itself drags; right-click opens its ⚙). */
   body.edit .panel.part .tab{display:none}
   body.edit .panel.part:hover .tab,body.edit .panel.part.lift .tab{display:flex;z-index:60}
-  body.edit .panel.sel{outline:2px solid #d29922;outline-offset:1px}
+  body.edit .panel.sel{outline:2px solid var(--wp-gold);outline-offset:1px}
   /* Two or more selected (a group, or a Shift-click set): one box around them all, and its ◢
      stretches every piece at once. The box itself lets clicks through; only the ◢ takes the mouse. */
   #gbox{display:none;position:fixed;z-index:55;border:1px dashed rgba(210,153,34,0.8);pointer-events:none}
   body.edit #gbox.on{display:block}
   #gbox .ggrip{position:absolute;right:-9px;bottom:-9px;width:16px;height:16px;pointer-events:auto;cursor:nwse-resize;
-    background:#d29922;color:#0d1117;font-size:11px;line-height:16px;text-align:center;border-radius:3px}
+    background:var(--wp-gold);color:var(--wp-bg);font-size:11px;line-height:16px;text-align:center;border-radius:3px}
   /* What is selected, and what can be done with it: lock together, save as a
      group, remove. A row of its own under the toolbar, only while there is one. */
-  #selbar{display:none;flex-basis:100%;align-items:center;gap:6px;flex-wrap:wrap;padding-top:4px;border-top:1px solid #30363d}
+  #selbar{display:none;flex-basis:100%;align-items:center;gap:6px;flex-wrap:wrap;padding-top:4px;border-top:1px solid var(--wp-border)}
   #selbar.on{display:flex}
-  #selbar b{color:#d29922}
-  #selbar select{font:inherit;font-size:11px;padding:2px 4px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px}
-  #selbar input{font:inherit;font-size:11px;padding:2px 6px;width:120px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px}
+  #selbar b{color:var(--wp-gold)}
+  #selbar select{font:inherit;font-size:11px;padding:2px 4px;background:var(--wp-bg);color:#e6edf3;border:1px solid var(--wp-border);border-radius:4px}
+  #selbar input{font:inherit;font-size:11px;padding:2px 6px;width:120px;background:var(--wp-bg);color:#e6edf3;border:1px solid var(--wp-border);border-radius:4px}
   /* ✕ on a piece deletes it; Undo stays here for a few seconds. */
   #toast{display:none;position:fixed;left:50%;bottom:48px;transform:translateX(-50%);z-index:96;align-items:center;gap:10px;
-    padding:6px 10px;font-size:12px;background:rgba(22,27,34,0.97);border:1px solid #d29922;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.5)}
+    padding:6px 10px;font-size:12px;background:rgba(var(--wp-panel-rgb),0.97);border:1px solid var(--wp-gold);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.5)}
   #toast.on{display:flex}
   #toast:not(.undo) #undoBtn{display:none}
 
@@ -245,20 +294,20 @@
      groups — today's overlays first. Only while arranging. */
   /* Wide enough to read, and wider on request: drag its right edge (the width is kept). */
   #chooser{display:none;position:fixed;z-index:85;width:360px;min-width:280px;max-width:640px;max-height:75vh;box-sizing:border-box;
-    flex-direction:column;font-size:12px;background:rgba(22,27,34,0.97);border:1px solid #1f6feb;
+    flex-direction:column;font-size:12px;background:rgba(var(--wp-panel-rgb),0.97);border:1px solid var(--wp-accent);
     border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,0.6);resize:horizontal;overflow:hidden}
   body.edit #chooser.open{display:flex}
-  #chooser .ch-h{display:flex;align-items:center;gap:6px;padding:5px 8px;cursor:move;border-bottom:1px solid #30363d}
+  #chooser .ch-h{display:flex;align-items:center;gap:6px;padding:5px 8px;cursor:move;border-bottom:1px solid var(--wp-border)}
   #chooser .ch-h b{color:#e6edf3;flex:1}
-  #chooser .ch-tabs{display:flex;flex-wrap:wrap;gap:3px;padding:5px 6px;border-bottom:1px solid #30363d}
-  #chooser .ch-tab{padding:1px 6px;border-radius:9px;border:1px solid #30363d;cursor:pointer;color:#8b949e;background:#0d1117}
-  #chooser .ch-tab.on{color:#e6edf3;border-color:#1f6feb;background:rgba(31,111,235,0.25)}
+  #chooser .ch-tabs{display:flex;flex-wrap:wrap;gap:3px;padding:5px 6px;border-bottom:1px solid var(--wp-border)}
+  #chooser .ch-tab{padding:1px 6px;border-radius:9px;border:1px solid var(--wp-border);cursor:pointer;color:#8b949e;background:var(--wp-bg)}
+  #chooser .ch-tab.on{color:#e6edf3;border-color:var(--wp-accent);background:rgba(31,111,235,0.25)}
   #chooser .ch-list{overflow:auto;padding:4px 6px;flex:1;min-height:60px}
-  #chooser .ch-sec{margin:6px 0 3px;color:#6e7681;text-transform:uppercase;letter-spacing:0.06em;font-size:10px}
+  #chooser .ch-sec{margin:6px 0 3px;color:var(--wp-dim);text-transform:uppercase;letter-spacing:0.06em;font-size:10px}
   #chooser .pc{display:flex;flex-wrap:wrap;align-items:center;gap:3px 6px;padding:4px 5px;border:1px solid transparent;border-radius:4px;cursor:grab}
-  #chooser .pc:hover{border-color:#30363d;background:#0d1117}
-  #chooser .pc-l{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c9d1d9}
-  #chooser .pc-v{color:#6e7681;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #chooser .pc:hover{border-color:var(--wp-border);background:var(--wp-bg)}
+  #chooser .pc-l{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--wp-text)}
+  #chooser .pc-v{color:var(--wp-dim);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* A piece: its whole name, what it reads now, then the ways to draw it on a line of their own
      (the guild lead, 2026-09-29, on one crowded line: "i can't read this"). */
   #chooser .pc.pp{border-bottom-color:#21262d;border-radius:0}
@@ -267,41 +316,42 @@
      piece makes); a fixed height so hovering a mode chip never moves the chips. It is not a drag target of its
      own: the mouse goes to its row. */
   #chooser .pc-pv{flex-basis:100%;height:42px;box-sizing:border-box;overflow:hidden;pointer-events:none;
-    padding:1px 3px;border-radius:4px;background:rgba(13,17,23,0.6)}
+    padding:1px 3px;border-radius:4px;background:rgba(var(--wp-bg-rgb),0.6)}
   #chooser .pc-pv.sample{opacity:0.55}
   #chooser .pc-ms{flex-basis:100%;display:flex;flex-wrap:wrap;gap:3px}
-  #chooser .pc-m{padding:0 5px;border:1px solid #30363d;border-radius:3px;color:#58a6ff;cursor:grab;font-size:11px;line-height:17px}
-  #chooser .pc-m:hover{border-color:#58a6ff}
+  #chooser .pc-m{padding:0 5px;border:1px solid var(--wp-border);border-radius:3px;color:var(--wp-blue);cursor:grab;font-size:11px;line-height:17px}
+  #chooser .pc-m:hover{border-color:var(--wp-blue)}
   /* A saved group's hotkey: dashed when it has none, blue with a key, amber while it listens, red when
      another program holds it. */
-  #chooser .pc-k{padding:0 5px;border:1px dashed #30363d;border-radius:3px;color:#6e7681;cursor:pointer;font-size:11px;line-height:17px}
-  #chooser .pc-k:hover{border-color:#58a6ff;color:#e6edf3}
-  #chooser .pc-k.set{border-style:solid;color:#58a6ff}
-  #chooser .pc-k.on{border-style:solid;border-color:#d29922;color:#d29922}
-  #chooser .pc-k.clash{border-style:solid;border-color:#f85149;color:#f85149}
-  #chooser .pc .x{color:#6e7681;cursor:pointer;padding:0 3px}
-  #chooser .pc .x:hover{color:#f85149}
-  #chooser .ch-f{border-top:1px solid #30363d;padding:5px 6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center}
-  #chooser .ch-f input{flex:1;min-width:80px;font:inherit;font-size:11px;padding:2px 6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px}
-  #chooser .dim{color:#6e7681}
+  #chooser .pc-k{padding:0 5px;border:1px dashed var(--wp-border);border-radius:3px;color:var(--wp-dim);cursor:pointer;font-size:11px;line-height:17px}
+  #chooser .pc-k:hover{border-color:var(--wp-blue);color:#e6edf3}
+  #chooser .pc-k.set{border-style:solid;color:var(--wp-blue)}
+  #chooser .pc-k.on{border-style:solid;border-color:var(--wp-gold);color:var(--wp-gold)}
+  #chooser .pc-k.clash{border-style:solid;border-color:var(--wp-red);color:var(--wp-red)}
+  #chooser .pc .x{color:var(--wp-dim);cursor:pointer;padding:0 3px}
+  #chooser .pc .x:hover{color:var(--wp-red)}
+  #chooser .ch-f{border-top:1px solid var(--wp-border);padding:5px 6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+  #chooser .ch-f input{flex:1;min-width:80px;font:inherit;font-size:11px;padding:2px 6px;background:var(--wp-bg);color:#e6edf3;border:1px solid var(--wp-border);border-radius:4px}
+  #chooser .dim{color:var(--wp-dim)}
   /* Where is it? A row of the chooser and the piece(s) it is on the screen as: the piece is outlined in green
      (steady while hovered, a short pulse after a click on an already-placed row) and a dashed line runs between
      them. The chooser and the pieces are one page, so the line is just an SVG over it that takes no clicks. */
-  .panel.hl,.panel.loc{outline:3px solid #56d364!important;outline-offset:2px;z-index:60;box-shadow:0 0 14px 3px rgba(86,211,100,0.6)}
+  .panel.hl,.panel.loc{outline:3px solid var(--wp-green)!important;outline-offset:2px;z-index:60;box-shadow:0 0 14px 3px rgba(86,211,100,0.6)}
   .panel.loc{animation:locpulse 0.5s ease-in-out 4 alternate}
   @keyframes locpulse{from{box-shadow:0 0 6px 1px rgba(86,211,100,0.3)}to{box-shadow:0 0 26px 8px rgba(86,211,100,0.9)}}
   body.edit .panel.off.hl,body.edit .panel.off.loc{opacity:0.9}
-  #chooser .pc.hl,#chooser .ch-tab.hl{border-color:#56d364;background:rgba(86,211,100,0.14)}
+  #chooser .pc.hl,#chooser .ch-tab.hl{border-color:var(--wp-green);background:rgba(86,211,100,0.14)}
   #loc{display:none;position:fixed;inset:0;width:100%;height:100%;z-index:84;pointer-events:none}
   #loc.on{display:block}
-  #loc line{stroke:#56d364;stroke-width:2.5;stroke-dasharray:7 5;filter:drop-shadow(0 0 3px #56d364);animation:locdash 0.5s linear infinite}
-  #loc circle{fill:#56d364}
+  #loc line{stroke:var(--wp-green);stroke-width:2.5;stroke-dasharray:7 5;filter:drop-shadow(0 0 3px var(--wp-green));animation:locdash 0.5s linear infinite}
+  #loc circle{fill:var(--wp-green)}
   @keyframes locdash{to{stroke-dashoffset:-12}}
   #ghost{display:none;position:fixed;z-index:99;pointer-events:none;padding:3px 8px;font-size:11px;
     background:rgba(31,111,235,0.85);color:#fff;border-radius:4px;white-space:nowrap}
 </style></head>
 <body data-wp-overlay>
   <div id="panels"></div>
+  <div id="mins"></div>
   <div id="gbox"><span class="ggrip" data-wp-interact title="Drag to size the whole group · Shift: keep its shape">◢</span></div>
   <div id="shield" data-wp-interact></div>
   <div id="bar" data-wp-interact>
@@ -345,7 +395,7 @@
     ['trigger', 'Trigger countdowns', 'debuffs and anything a trigger starts'],
     ['lull',    'Lulls',              'pacify, lull, harmony'],
     ['mez',     'Mezzes',             'mezzes you cast'],
-    ['spell',   'My spells on mobs',  ''],
+    ['spell',   'My spells',          'on mobs or players'],
     ['tick',    'Server tick',        ''],
     ['loot',    'Loot bids',          ''],
   ];
@@ -651,9 +701,30 @@
   // One name form for matching: the agent writes "Tashania?" for an
   // unconfirmed landing and "… ⏱" when the fade is on the mob's own tick, and
   // EQ logs possessives with a backtick.
+  // A curly quote (a name pasted from a web page or typed on a phone keyboard) folds to the same ' as the backtick.
   function normEffect(s) {
-    return String(s == null ? '' : s).replace(/`/g, "'").replace(/\s*⏱\s*$/, '')
+    return String(s == null ? '' : s).replace(/[`‘’]/g, "'").replace(/\s*⏱\s*$/, '')
       .replace(/\?+$/, '').trim().toLowerCase();
+  }
+  // The name picker's list (the guild lead, 2026-10-29: "autocomplete and also suggest your most often cast
+  // timers and the spells you have on your bars right now. alpha order"). src = { gems: [name], casts: [{ name, n }],
+  // live: [name] }. One row per normalized name, the sources it came from as tags, names already claimed by this panel
+  // left out, filtered by what was typed, ALPHABETICAL whatever the source, then the first `cap`.
+  function mergeSuggestions(src, query, claimed, cap) {
+    var q = normEffect(query), skip = {}, by = {}, keys = [];
+    (claimed || []).forEach(function (n) { skip[normEffect(n)] = true; });
+    function add(raw, tag) {
+      var k = normEffect(raw);
+      if (!k || skip[k]) return;
+      if (!by[k]) { by[k] = { name: k, tags: [] }; keys.push(k); }
+      if (tag && by[k].tags.indexOf(tag) < 0) by[k].tags.push(tag);
+    }
+    ((src && src.gems) || []).forEach(function (g) { add(g, 'on your bar'); });
+    ((src && src.casts) || []).forEach(function (c) { if (c) add(c.name, c.n > 0 ? 'cast ' + Math.max(1, Math.round(c.n)) + '×' : null); });
+    ((src && src.live) || []).forEach(function (n) { add(n, 'live now'); });
+    keys = keys.filter(function (k) { return !q || k.indexOf(q) >= 0; });
+    keys.sort(function (a, b) { return a < b ? -1 : a > b ? 1 : 0; });
+    return keys.slice(0, cap || 30).map(function (k) { return by[k]; });
   }
   function num(v, lo, hi, d) { v = Number(v); return (isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d); }
   // A panel's saved x / y are fractions of its screen. They were 0..1; a tall box or a piece set to "Keep inside
@@ -679,6 +750,8 @@
       if (src1.fit === false) o.fit = false;
       // Locked in place: stored only when set (absent = free), for every kind.
       if (src1.lock === true) o.lock = true;
+      // ▭ Minimized (a panel with no mini of its own collapses to its tab): stored only when set, for every kind.
+      if (src1.min === true) o.min = true;
       // Not kept inside the screen: stored only when chosen (absent = kept inside), for every kind.
       if (src1.free === true) o.free = true;
       // Resize corner while playing: stored only when chosen (absent = the ◢ shows only while arranging / editing one).
@@ -894,6 +967,86 @@
     return (stacked ? ['top', 'middle', 'bottom'] : ['left', 'middle', 'right'])[n === 2 ? (i ? 2 : 0) : (i === 0 ? 0 : i === n - 1 ? 2 : 1)];
   }
 
+  // ── ▭ Minimize: where the label goes (pure; test/canvas-minimize.test.js runs it as written) ───────────────
+  // Rects are {x, y, w, h} in canvas pixels. The label ({w, h}) is measured, never shortened: when it does not fit
+  // beside the panel's other controls it moves, it does not shrink.
+  //   panel   the panel's box          label   the control's own size          canvas  {w, h}
+  //   tabRoom the width the panel's tab has left for the label (a panel narrower than its label has none)
+  //   tabBox  while playing, where the control would hug the panel's top edge ({x, y, w, h}); null while the tab shows
+  //   avoid   every other panel, panel control (✥, ✕, tab), toolbar and label already placed: nothing may cover these
+  // Answer: { side: 'tab' | 'right' | 'left' | 'above' | 'below', box, line, boxed }. box is where the label goes (null
+  // for the in-tab control); line is the 2px connector back to the panel (null when the label touches it); boxed is
+  // true when every side was taken and the least-bad one was used.
+  var MIN_GAP = 8, MIN_LINE = 2, MIN_H = 18;
+  function minHit(a, b) { return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h; }
+  function minInside(a, c) { return a.x >= 0 && a.y >= 0 && a.x + a.w <= c.w && a.y + a.h <= c.h; }
+  function minHull(a, b) {
+    if (!b) return a;
+    var x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+    return { x: x, y: y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
+  }
+  function minOverlap(a, b) {
+    var w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x), h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+    return w > 0 && h > 0 ? w * h : 0;
+  }
+  function placeMin(o) {
+    var pn = o.panel, lb = o.label, cv = o.canvas, avoid = o.avoid || [], G = MIN_GAP;
+    function clear(r) { if (!minInside(r, cv)) return false; for (var i = 0; i < avoid.length; i++) if (minHit(r, avoid[i])) return false; return true; }
+    if (o.tabRoom >= lb.w) {
+      if (!o.tabBox) return { side: 'tab', box: null, line: null, boxed: false };
+      if (clear(o.tabBox)) return { side: 'tab', box: o.tabBox, line: null, boxed: false };
+    }
+    // Beside the panel: below the ✥/✕ that sit on its top corners, kept on the canvas, and the line at a height where the
+    // label and the panel both are, so it meets both. Above or below: the label slides along the edge to stay on the canvas
+    // (the panel's own edge still runs under it), and the line is dropped where the two overlap.
+    var by = Math.max(0, Math.min(pn.y + Math.max(0, Math.min(18, pn.h - lb.h)), cv.h - lb.h));
+    var ly = Math.max(Math.max(pn.y, by), Math.min(Math.min(pn.y + pn.h, by + lb.h) - MIN_LINE, by + Math.floor((lb.h - MIN_LINE) / 2)));
+    var bx = Math.max(0, Math.min(pn.x, cv.w - lb.w));
+    var lx = Math.max(pn.x, bx) + Math.max(0, Math.min(8, Math.min(pn.x + pn.w, bx + lb.w) - Math.max(pn.x, bx) - MIN_LINE));
+    var tries = [
+      { side: 'right', box: { x: pn.x + pn.w + G, y: by, w: lb.w, h: lb.h }, line: { x: pn.x + pn.w, y: ly, w: G, h: MIN_LINE } },
+      { side: 'left',  box: { x: pn.x - G - lb.w, y: by, w: lb.w, h: lb.h }, line: { x: pn.x - G, y: ly, w: G, h: MIN_LINE } },
+      { side: 'above', box: { x: bx, y: pn.y - G - lb.h, w: lb.w, h: lb.h }, line: { x: lx, y: pn.y - G, w: MIN_LINE, h: G } },
+      { side: 'below', box: { x: bx, y: pn.y + pn.h + G, w: lb.w, h: lb.h }, line: { x: lx, y: pn.y + pn.h, w: MIN_LINE, h: G } }
+    ];
+    for (var i = 0; i < tries.length; i++) if (clear(minHull(tries[i].box, tries[i].line))) return { side: tries[i].side, box: tries[i].box, line: tries[i].line, boxed: false };
+    // Boxed in on all four sides: the one that covers the least (and leaves the canvas least), whole label kept.
+    var best = null, bestCost = Infinity;
+    tries.forEach(function (t) {
+      var h = minHull(t.box, t.line), cost = 0;
+      avoid.forEach(function (a) { cost += minOverlap(h, a); });
+      cost += (h.w * h.h - minOverlap(h, { x: 0, y: 0, w: cv.w, h: cv.h })) * 4;
+      if (cost < bestCost) { bestCost = cost; best = t; }
+    });
+    return { side: best.side, box: best.box, line: best.line, boxed: true };
+  }
+  // Which panel's label the pointer is keeping up: zones are [{id, rects:[…]}] (panel, ✥, label + line), later ones win.
+  var MIN_GRACE = 400;
+  function minHot(zones, x, y) {
+    var id = null;
+    (zones || []).forEach(function (z) { if (z.rects.some(function (r) { return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h; })) id = z.id; });
+    return id;
+  }
+  // Whether a label is drawn right now. Placement is the same either way; this only decides if it shows.
+  //   collapsed: the panel is minimized (its ▭ Restore is how it comes back: always)   edit: arranging, or this one being edited
+  //   empty: nothing showing in the panel   hovered: the pointer is on the panel, its ✥ or the label (or just left)
+  function minVisible(s) { return !!s.collapsed || (!s.empty || !!s.edit) && (!!s.edit || !!s.hovered); }
+  // A collapsed panel is just its tab-high strip; one anchored to the bottom keeps its bottom edge.
+  function collapsedBox(p, topPx, up, collapsed) {
+    return collapsed ? { y: up ? topPx + p.h - MIN_H : topPx, h: MIN_H } : { y: topPx, h: p.h };
+  }
+  // …and its inverse: the strip's top edge as dropped by a ✥ drag, back to the panel's saved top. Without it a bottom-anchored
+  // strip saved the STRIP's top as the panel's, and collapsedBox hung it another (p.h − MIN_H) lower on the next draw.
+  function topFromBox(p, boxY, up, collapsed) {
+    return collapsed && up ? boxY - (p.h - MIN_H) : boxY;
+  }
+  // What a press on a panel starts from. A strip is MIN_H tall on screen but the page behind it keeps p.h, so a SIZE press on
+  // it works in width alone (axis 'x') from that height; every other press starts from the box as drawn.
+  function sizeStart(p, collapsed, mode, axis, shownH) {
+    return collapsed && mode === 'size' ? { axis: 'x', h0: p.h } : { axis: axis || '', h0: shownH };
+  }
+  // ── end ▭ Minimize placement ─────────────────────────────────────────────────
+
   // ── Routing: which panel shows a countdown ──────────────────────────────────
   // Called by every timers part (window.parent.wpCanvasRoute). A timer claimed
   // BY NAME goes to that panel; else to the first panel claiming its group;
@@ -919,6 +1072,7 @@
 
   // ── Panels ──────────────────────────────────────────────────────────────────
   var panelsEl = document.getElementById('panels');
+  var minsEl = document.getElementById('mins');
   var shield = document.getElementById('shield');
   var menuEl = document.getElementById('menu');
   var _els = {};
@@ -974,6 +1128,7 @@
     tab.className = 'tab';
     tab.innerHTML = '<span class="mv">✥</span><span class="lkb" title="Locked in place — its ⚙ unlocks it">🔒</span><span class="nm"></span><span class="what"></span>'
       + '<span class="ctl done" role="button" title="Finish editing this one (Esc does the same)">✓ Done</span>'
+      + '<span class="ctl minb" role="button" data-wp-interact></span>'
       + '<span class="ctl gear" role="button" title="What this panel shows, its text size">⚙</span>'
       + '<span class="ctl x" role="button"></span>';
     // A piece is drawn right here (parts.js); every other panel is a page.
@@ -1012,7 +1167,19 @@
     er.setAttribute('data-wp-interact', ''); eb.setAttribute('data-wp-interact', '');
     er.title = 'Drag to set the width'; eb.title = 'Drag to set the height';
     root.appendChild(fr || body); root.appendChild(tab); root.appendChild(grip); root.appendChild(er); root.appendChild(eb); root.appendChild(mv); root.appendChild(dsm); root.appendChild(whb);
-    var e = { root: root, tab: tab, frame: fr, body: body, grip: grip, mv: mv, whb: whb };
+    // ▭ Minimize, floating: its own button on the hover handshake (data-wp-interact + <button>, both on the armed list),
+    // outside the panel so a locked, click-through panel keeps all of its area for the game. placeMins() decides where.
+    var chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'minchip';
+    chip.setAttribute('data-wp-interact', '');
+    var line = document.createElement('div');
+    line.className = 'minline';
+    minsEl.appendChild(line); minsEl.appendChild(chip);
+    function flip(ev) { ev.stopPropagation(); toggleMin(p.id); }
+    chip.addEventListener('click', flip);
+    tab.querySelector('.minb').addEventListener('click', flip);
+    var e = { root: root, tab: tab, frame: fr, body: body, grip: grip, mv: mv, whb: whb, dsm: dsm, chip: chip, line: line };
     if (fr) fr.addEventListener('load', function () {
       var q = panelById(p.id);
       if (!q) return;
@@ -1061,6 +1228,145 @@
     try { w.dispatchEvent(new w.Event('wp-mini-change')); w.dispatchEvent(new w.Event('resize')); } catch (err) { /* page mid-load */ }
   }
 
+  // ── ▭ Minimize / ▭ Restore, on every panel ──────────────────────────────────────────────────────────────────
+  // An overlay that has a mini rendition (main's _MINI_KEYS) drives that, the same setting its ⚙ menu row, its own
+  // right-click menu, the dashboard and Ctrl+Shift+M change. Any other panel (the trigger parts, a piece, a cut
+  // section, an overlay with no mini) collapses to its tab: `min: true` on the panel, saved with the layout like
+  // its lock or its opacity, and its page keeps running behind the strip. A group's pieces go together.
+  function hasMini(p) { return p.kind === 'overlay' && !!miniOf(p.key); }
+  function isMin(p) { return p.min === true && !hasMini(p); }
+  function minOn(p) { return hasMini(p) ? !!miniOf(p.key).on : isMin(p); }
+  function minLabel(p) { return minOn(p) ? '▭ Restore' : '▭ Minimize'; }
+  function accentOf(p) { return /^#[0-9a-fA-F]{6}$/.test(String(p.color || '')) ? p.color : 'var(--wp-blue)'; }
+  // The overlay's own setting (pin: its "Keep mini"); returns main's promise when there is one.
+  function flipMini(p, pin) {
+    var mm = miniOf(p.key);
+    try { return pin ? (M.setOverlayMiniPin && M.setOverlayMiniPin(p.key, !(mm && mm.pin))) : (M.setOverlayMini && M.setOverlayMini(p.key, !(mm && mm.on))); } catch (err) { return null; }
+  }
+  function setMin(p) {
+    var on = !isMin(p);
+    var set = _layout.panels.filter(function (q) { return (q === p || (p.grp && q.grp === p.grp)) && !hasMini(q); });
+    set.forEach(function (q) { if (on) q.min = true; else delete q.min; });
+  }
+  function toggleMin(id) {
+    var p = panelById(id); if (!p) return;
+    if (hasMini(p)) {
+      var done = flipMini(p, false);
+      if (done && done.then) done.then(refresh, function () {});
+      return;
+    }
+    setMin(p); save(); render();
+    if (_menuFor === id && _els[id]) openMenu(id, _menuAnchor || _els[id].root);
+  }
+  // Where each panel's label goes. Recomputed when something moves (a panel's box or class changes, a render, the
+  // canvas resizes) and nowhere else: one pass per frame at most, writes first, then every read, then the writes.
+  var _minsRaf = 0;
+  function scheduleMins() { if (!_minsRaf) _minsRaf = requestAnimationFrame(placeMins); }
+  function elRect(el) { var r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; }
+  function drawn(el) { return !!el && el.getClientRects().length > 0; }
+  // The width the tab keeps for what is not the label: the ✥, 🔒, ✓ Done, ⚙ and ✕ it shows, its padding, and a few letters of the name.
+  function tabFixed(tab) {
+    var w = 14 + 36;
+    Array.prototype.forEach.call(tab.children, function (c) {
+      if (c.classList.contains('nm') || c.classList.contains('what') || c.classList.contains('minb')) return;
+      if (drawn(c)) w += c.offsetWidth + 6;
+    });
+    return w;
+  }
+  function placeMins() {
+    _minsRaf = 0;
+    minsEl.classList.toggle('hold', !!_drag);
+    if (_drag) return;   // a drag moves panels per mouse move; the end of it renders
+    var cv = { w: window.innerWidth, h: window.innerHeight }, live = [], obst = [];
+    var editing = document.body.classList.contains('edit');
+    _layout.panels.forEach(function (p) {
+      var e = _els[p.id]; if (!e) return;
+      // Playing, a panel with nothing showing (an empty trigger box, a Timers panel with no rows) gets no label at all.
+      var c = e.root.classList, txt = minLabel(p), show = !p.gone && !p.off && !c.contains('wh') && !c.contains('mvtail') && !(p.kind === 'sect' && c.contains('nodata'))
+        && (editing || _one === p.id || minOn(p) || !c.contains('fitempty'));
+      if (e.chip.textContent !== txt) {
+        e.chip.textContent = txt;
+        e.tab.querySelector('.minb').textContent = txt;
+      }
+      var tip = hasMini(p) ? 'The overlay\'s own mini setting (the same as ⚙ → Mini mode)' : minOn(p) ? 'Bring the panel back' : 'Collapse the panel to its tab';
+      e.chip.title = tip; e.tab.querySelector('.minb').title = tip;
+      e.chip.style.setProperty('--acc', accentOf(p)); e.line.style.setProperty('--acc', accentOf(p)); e.tab.style.setProperty('--acc', accentOf(p));
+      e.chip.style.display = show ? 'block' : 'none';
+      e.line.style.display = 'none';
+      if (show) live.push({ p: p, e: e });
+    });
+    _layout.panels.forEach(function (p) {
+      var e = _els[p.id]; if (!e) return;
+      var c = e.root.classList;
+      if (p.gone || p.off || c.contains('wh') || (p.kind === 'sect' && c.contains('nodata')) || (c.contains('collapsed') && c.contains('mvtail'))) return;
+      obst.push({ id: p.id, root: true, r: elRect(e.root) });
+      [e.mv, e.dsm, e.tab].forEach(function (el) { if (drawn(el)) obst.push({ id: p.id, root: false, r: elRect(el) }); });
+    });
+    if (editing) [document.getElementById('bar'), chEl].forEach(function (el) { if (drawn(el)) obst.push({ id: '', root: false, r: elRect(el) }); });
+    var placed = [], plans = [];
+    _minZones = [];
+    live.forEach(function (it) {
+      var e = it.e, pr = elRect(e.root), lb = { w: Math.ceil(e.chip.offsetWidth), h: e.chip.offsetHeight };
+      var tabUp = drawn(e.tab);
+      var hoverTab = !tabUp && editing && it.p.kind === 'part';   // a piece's tab is drawn only under the mouse: its spot is not the label's
+      var avoid = obst.filter(function (o) { return !(o.root && o.id === it.p.id); }).map(function (o) { return o.r; }).concat(placed);
+      var res = placeMin({
+        panel: pr, label: lb, canvas: cv, avoid: avoid,
+        tabRoom: tabUp ? pr.w + 2 - tabFixed(e.tab) - 6 : hoverTab ? 0 : pr.w,
+        tabBox: tabUp ? null : { x: pr.x, y: pr.y - lb.h, w: lb.w, h: lb.h }
+      });
+      if (res.box) placed.push(minHull(res.box, res.line));
+      // Where the pointer keeps the label up while playing: the panel, its ✥, and the label with its line (so the way across is covered).
+      var zone = [pr];
+      if (drawn(e.mv)) zone.push(elRect(e.mv));
+      if (res.box) zone.push(minHull(res.box, res.line));
+      _minZones.push({ id: it.p.id, rects: zone });
+      plans.push({ e: e, res: res });
+    });
+    plans.forEach(function (pl) {
+      var e = pl.e, res = pl.res, inTab = res.side === 'tab' && !res.box;
+      e.tab.classList.toggle('intab', inTab);
+      e.chip.setAttribute('data-side', res.side + (res.boxed ? '-boxed' : ''));
+      if (inTab) { e.chip.style.display = 'none'; return; }
+      e.chip.style.left = Math.round(res.box.x) + 'px'; e.chip.style.top = Math.round(res.box.y) + 'px';
+      if (res.line) {
+        e.line.style.left = Math.round(res.line.x) + 'px'; e.line.style.top = Math.round(res.line.y) + 'px';
+        e.line.style.width = res.line.w + 'px'; e.line.style.height = res.line.h + 'px';
+        e.line.style.display = 'block';
+      }
+    });
+    paintMins();
+  }
+  // Playing, a label shows only while the pointer is over its panel, its ✥ or the label itself, and for MIN_GRACE ms after it
+  // leaves (long enough to cross the gap). Arranging, the one being edited, and a minimized panel's ▭ Restore always show.
+  // Event-driven: the pointer's moves (the page's own, and main's cursor reports) are tested against zones kept from the last
+  // placement, so a move reads no layout and a hide is one timer.
+  var _minZones = [], _hoverId = null, _hoverT = 0;
+  function paintMins() {
+    var editing = document.body.classList.contains('edit');
+    _layout.panels.forEach(function (p) {
+      var e = _els[p.id]; if (!e) return;
+      var on = minVisible({ edit: editing || _one === p.id, collapsed: minOn(p), empty: e.root.classList.contains('fitempty'), hovered: _hoverId === p.id });
+      e.chip.classList.toggle('hot', on); e.line.classList.toggle('hot', on);
+    });
+  }
+  function hoverMins(x, y) {
+    var id = minHot(_minZones, x, y);
+    if (id) {
+      clearTimeout(_hoverT); _hoverT = 0;
+      if (id !== _hoverId) { _hoverId = id; paintMins(); }
+    } else if (_hoverId && !_hoverT) {
+      _hoverT = setTimeout(function () { _hoverT = 0; _hoverId = null; paintMins(); }, MIN_GRACE);
+    }
+  }
+  document.addEventListener('mousemove', function (ev) { hoverMins(ev.clientX, ev.clientY); }, true);
+  // Only a panel's own box or class moving matters (its page's insides changing does not), so the watch ignores deeper nodes.
+  try {
+    new MutationObserver(function (ms) {
+      for (var i = 0; i < ms.length; i++) if (ms[i].target.parentNode === panelsEl) { scheduleMins(); return; }
+    }).observe(panelsEl, { attributes: true, attributeFilter: ['class', 'style'], subtree: true });
+  } catch (err) { /* no observer: the render hook still places them */ }
+
   // Same-origin, so the canvas reaches into each part directly: its text
   // size, its stack direction, whether it is being arranged (sample rows),
   // and the card alpha the overlay-wide slider sets.
@@ -1087,13 +1393,15 @@
     // Wider while its page's builder is open, toward the side with room; the page's own part keeps its place.
     // Kept whole on the screen holding its middle (the whole window when there is one screen).
     var wd = _widen[p.id];
-    var f = fitRect(screenList(W, H), Math.round(p.x * W) - (wd && wd.left ? wd.add : 0), Math.round(p.y * H), p.w + (wd ? wd.add : 0), p.h, growsUp(p), isFree(p));
+    // ▭ Minimized: only a tab-high strip is held (a bottom-anchored one keeps its bottom edge); p.h stays what it was.
+    var cb =collapsedBox(p, Math.round(p.y * H), growsUp(p), isMin(p));
+    var f = fitRect(screenList(W, H), Math.round(p.x * W) - (wd && wd.left ? wd.add : 0), cb.y, p.w + (wd ? wd.add : 0), cb.h, growsUp(p), isFree(p));
     var x = f.x, y = f.y, w = f.w, h = f.h;
     e.root.style.left = x + 'px'; e.root.style.top = y + 'px';
     e.root.style.width = w + 'px'; e.root.style.height = h + 'px';
     e.root.classList.toggle('tabin', y < 22);
     e.root.classList.toggle('mvin', x < 18);
-    sizeFrame(e, p, w, h);
+    sizeFrame(e, p, w, isMin(p) ? p.h : h);   // the page behind a strip keeps the layout it had
   }
   // An overlay page lays out at the panel's size ÷ its scale, then is scaled
   // back up, so A+ makes the whole overlay bigger the way its window zoom did.
@@ -1285,6 +1593,9 @@
       e.root.classList.toggle('fitempty', !!_fitEmpty[p.id]);
       e.root.classList.toggle('sel', !!_sel[p.id]);
       e.root.classList.toggle('one', _one === p.id);
+      e.root.classList.toggle('collapsed', isMin(p));
+      e.root.setAttribute('data-nm', p.name || (partDef(p) ? partDef(p).label : p.part || ''));
+      e.root.style.setProperty('--acc', accentOf(p));
       place(e, p);
       e.root.classList.toggle('off', !!p.off);
       if (isEd(p.id)) e.root.setAttribute('data-wp-interact', ''); else e.root.removeAttribute('data-wp-interact');
@@ -1296,7 +1607,7 @@
       applyFrame(e, p);
     });
     Object.keys(_els).forEach(function (id) {
-      if (!keep[id]) { _els[id].root.remove(); delete _els[id]; delete _widen[id]; delete _fitAdd[id]; }
+      if (!keep[id]) { _els[id].root.remove(); _els[id].chip.remove(); _els[id].line.remove(); delete _els[id]; delete _widen[id]; delete _fitAdd[id]; }
     });
     if (_one != null && !_els[_one]) _one = null;   // the item being edited was deleted
     applyWhen();
@@ -1306,6 +1617,7 @@
     renderChooser();
     renderSelbar();
     placeGbox();
+    scheduleMins();
   }
 
   // One ✥ per group (the guild lead, 2026-09-30, FB-40: "Some huds will want to be closer and overlap
@@ -1406,8 +1718,13 @@
       try { e.frame.contentWindow.wpCloseBuilder(); } catch (err) { /* page gone */ }
       delete _widen[id]; e.root.classList.remove('building'); place(e, panelById(id));
     }
-    _drag = { id: id, mode: mode, axis: axis || '', sx: ev.clientX, sy: ev.clientY, add: ev.shiftKey || ev.ctrlKey, alt: ev.altKey, fromMv: !!anyTime,
-      x0: e.root.offsetLeft, y0: e.root.offsetTop, w0: e.root.offsetWidth, h0: e.root.offsetHeight };
+    // ▭ A minimized strip sizes in width alone: its height is the page behind it (kept in p.h), not the strip's 18px, so the
+    // press starts from that height and the axis is pinned to x (the guild lead, 2026-10-28: "minimized overlays need to be
+    // draggable and resizable still").
+    var dq = panelById(id), ss = sizeStart(dq, !!dq && isMin(dq), mode, axis, e.root.offsetHeight);
+    axis = ss.axis;
+    _drag = { id: id, mode: mode, axis: axis, sx: ev.clientX, sy: ev.clientY, add: ev.shiftKey || ev.ctrlKey, alt: ev.altKey, fromMv: !!anyTime,
+      x0: e.root.offsetLeft, y0: e.root.offsetTop, w0: e.root.offsetWidth, h0: ss.h0 };
     // What moves together (the guild lead, 2026-09-29: "I should also be able to drag the whole group …
     // instead of grabbing the top one and having it get disconnected"): the selection, if this panel is in
     // it; else the group it was placed or locked with. Alt-drag moves this one alone and takes it out.
@@ -1421,7 +1738,9 @@
       ids.forEach(function (k) {
         if (!_els[k]) return;
         var r = _els[k].root, q = panelById(k);
-        _drag.members.push({ id: k, x0: r.offsetLeft, y0: r.offsetTop, w0: r.offsetWidth, h0: r.offsetHeight, sc0: (q && q.scale) || 1, lock: isLocked(q) });
+        // (A minimized strip rides a group's move, but a group SIZE leaves it as it is: its box is the page's, not the strip's.)
+        var kStrip = !!q && isMin(q) && mode === 'size';
+        _drag.members.push({ id: k, x0: r.offsetLeft, y0: r.offsetTop, w0: r.offsetWidth, h0: kStrip ? q.h : r.offsetHeight, sc0: (q && q.scale) || 1, lock: isLocked(q) || kStrip });
         _drag.skip[k] = true;
       });
       if (mode === 'size') _drag.box = groupBox(_drag.members);
@@ -1536,7 +1855,7 @@
         var m = d.members.filter(function (k) { return k.id === n.id; })[0];
         m.x = n.x; m.y = n.y; m.w = n.w; m.h = n.h; m.scale = n.scale;
         ee.root.style.left = n.x + 'px'; ee.root.style.top = n.y + 'px';
-        ee.root.style.width = n.w + 'px'; ee.root.style.height = n.h + 'px';
+        ee.root.style.width = n.w + 'px'; if (!isMin(q)) ee.root.style.height = n.h + 'px';
         if (q.kind === 'part') ee.root.style.setProperty('--ps', String(n.scale));
         sizeFrame(ee, q, n.w, n.h);
       });
@@ -1555,7 +1874,7 @@
       var isPart = dp && dp.kind === 'part';
       var w = d.axis === 'y' ? d.w0 : Math.max(isPart ? 40 : (dp && dp.kind === 'overlay') ? 80 : 120, Math.min(sizeMax(dp, 4000, W - d.x0), d.w0 + ev.clientX - d.sx));
       var h = d.axis === 'x' ? d.h0 : Math.max(isPart ? 16 : 36, Math.min(sizeMax(dp, 3000, H - d.y0), d.h0 + ev.clientY - d.sy));
-      e.root.style.width = w + 'px'; e.root.style.height = h + 'px';
+      e.root.style.width = w + 'px'; if (!(dp && isMin(dp))) e.root.style.height = h + 'px';   // a strip keeps its strip height
       if (dp) sizeFrame(e, dp, w, h);
       d.w = w; d.h = h;
     }
@@ -1600,14 +1919,14 @@
       d.members.forEach(function (m) {
         var q = panelById(m.id);
         if (isLocked(q)) return;   // 🔒 it stayed where it was
-        if (q && m.x != null) { q.x = m.x / window.innerWidth; q.y = m.y / window.innerHeight; }
+        if (q && m.x != null) { q.x = m.x / window.innerWidth; q.y = topFromBox(q, m.y, growsUp(q), isMin(q)) / window.innerHeight; }
         // A group size: each piece's size, and a piece's text with it.
         if (q && m.w != null) { q.w = m.w; q.h = m.h; if (q.kind === 'part') q.scale = m.scale; }
         // A height chosen by hand is the item's now: it stops following its content (⚙ → ↕ Fit height turns it back on).
         if (q && m.w != null && Math.abs(m.h - m.h0) > 2 && fitOn(q, pdefOf(q))) q.fit = false;
       });
       save();
-    } else if (p && d.mode === 'move' && d.x != null) { p.x = d.x / window.innerWidth; p.y = d.y / window.innerHeight; save(); }
+    } else if (p && d.mode === 'move' && d.x != null) { p.x = d.x / window.innerWidth; p.y = topFromBox(p, d.y, growsUp(p), isMin(p)) / window.innerHeight; save(); }
     if (p && d.mode === 'size' && d.w != null) {
       // Dragging the height by hand turns the live fit off for this item, and says so; dragging only the width does not.
       if (Math.abs(Math.round(d.h) - p.h) > 2 && fitOn(p, pdefOf(p))) { p.fit = false; note('Fit height is off for this one (its ⚙ turns it back on)', 3500); }
@@ -1649,6 +1968,19 @@
     }, TEST_MS + 100);
   }
   var _menuFor = null, _menuAnchor = null;
+  // The guild's palette, read live from the shared colour variables (with the guild's own over them) so it follows what
+  // the guild chose and shows the defaults when it chose nothing. A pick is written as the HEX, like the colours below it:
+  // a saved piece keeps its colour if the guild repaints, and meaning colours (green, red, gold) stay in the row below.
+  var GUILD_SWATCHES = [['accent', 'Brand'], ['blue', 'Blue'], ['purple', 'Purple'], ['text', 'Text'], ['dim', 'Dim'], ['border', 'Border'], ['panel', 'Panel'], ['bg', 'Background']];
+  function guildPaletteHtml(p) {
+    var cs = getComputedStyle(document.documentElement), h = '';
+    GUILD_SWATCHES.forEach(function (s) {
+      var c = String(cs.getPropertyValue('--wp-' + s[0]) || '').trim().toLowerCase();
+      if (!/^#[0-9a-f]{6}$/.test(c)) return;
+      h += '<button class="btn sw' + (p.color === c ? ' on' : '') + '" data-color="' + c + '" title="' + s[1] + ' ' + c + '" style="background:' + c + '"></button>';
+    });
+    return h ? '<div class="sec">Guild palette</div><div class="row" style="flex-wrap:wrap">' + h + '</div>' : '';
+  }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
   function closeMenu() { _menuFor = null; menuEl.classList.remove('show'); }
 
@@ -1721,7 +2053,7 @@
         WpParts.ROT.forEach(function (r) { h += '<button class="btn' + ((p.rot || '') === r[0] ? ' on' : '') + '" data-rot="' + r[0] + '">' + esc(r[1]) + '</button>'; });
         h += '</div>';
       }
-      h += '<div class="sec">Colour</div><div class="row" style="flex-wrap:wrap">'
+      h += guildPaletteHtml(p) + '<div class="sec">Colour</div><div class="row" style="flex-wrap:wrap">'
         + '<button class="btn' + (!p.color ? ' on' : '') + '" data-color="" title="The data\'s own colour (health goes green → red)">Auto</button>';
       WpParts.PALETTE.forEach(function (c) {
         h += '<button class="btn sw' + (p.color === c ? ' on' : '') + '" data-color="' + c + '" title="' + c + '" style="background:' + c + '"></button>';
@@ -1770,7 +2102,9 @@
       if (!p.names.length) h += '<span class="dim">none</span>';
       p.names.forEach(function (n) { h += '<span class="chip" data-rm="' + esc(n) + '" title="Stop claiming this">' + esc(n) + ' <span class="cx">✕</span></span>'; });
       h += '</div>';
-      h += '<div class="row"><input type="text" id="mAdd" maxlength="48" placeholder="a timer or spell name"><button class="btn" id="mAddBtn">Add</button></div>';
+      h += '<div class="row"><input type="text" id="mAdd" maxlength="48" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-controls="mSugg" '
+        + 'placeholder="a timer or spell name"><button class="btn" id="mAddBtn">Add</button></div>';
+      h += '<div class="sugg" id="mSugg" role="listbox"></div>';
       h += '<div class="sec">On screen now — click to claim</div><div class="chips" id="mLive"><span class="dim">…</span></div>';
     }
     // Height (the guild lead, 2026-10-19: "Canvas should be able to grow up as well"): every item whose height
@@ -1807,6 +2141,10 @@
       h += '<div class="sec">Mini mode</div><div class="row">'
         + '<button class="btn' + (mini.on ? ' on' : '') + '" data-mini title="The overlay\'s own mini setting: the same one its right-click menu, the dashboard and Ctrl+Shift+M change">▭ Mini mode: ' + (mini.on ? 'ON' : 'off') + '</button>'
         + '<button class="btn' + (mini.pin ? ' on' : '') + '" data-minipin title="Stays mini when Ctrl+Shift+M restores the others">📌 Keep mini: ' + (mini.pin ? 'ON' : 'off') + '</button></div>';
+    } else {
+      // No mini of its own: the panel collapses to its tab (the same control that floats by it).
+      h += '<div class="sec">Minimize</div><div class="row">'
+        + '<button class="btn' + (isMin(p) ? ' on' : '') + '" data-min title="Collapse this panel to its tab; its page keeps running behind it">' + minLabel(p) + '</button></div>';
     }
     // The page's own options (its setup bar's extras: Charm's "recharm warn at"), which the panel hides with the rest of that bar.
     if (p.kind === 'overlay' && pageOptEl(_els[p.id])) {
@@ -1858,7 +2196,7 @@
     menuEl.classList.add('show');
     _menuAnchor = anchor;
     placeMenu();
-    if (p.kind === 'timers' && !p.all) fillLive(p);
+    if (p.kind === 'timers' && !p.all) { _sugg.open = false; _sugg.at = -1; fillLive(p); fillSuggestions(p); }
   }
   // Whole on the screen wherever the panel sits (the guild lead, 2026-09-29:
   // "This view could go off the screen"), and beside the panel rather than on it
@@ -1913,16 +2251,79 @@
         var box = document.getElementById('mLive');
         if (!box || _menuFor !== p.id) return;
         var seen = {}, h = '';
+        _sugg.live = [];
         (s.activeTimers || []).forEach(function (t) {
           var n = normEffect(t.effect || t.name);
-          if (!n || seen[n] || p.names.indexOf(n) >= 0) return;
+          if (!n || seen[n]) return;
           seen[n] = true;
+          _sugg.live.push(n);
+          if (p.names.indexOf(n) >= 0) return;
           h += '<span class="chip add" data-add="' + esc(n) + '">＋ ' + esc(n) + '</span>';
         });
         box.innerHTML = h || '<span class="dim">no countdowns right now</span>';
         placeMenu();
+        renderSugg(p);
       })
       .catch(function () { var box = document.getElementById('mLive'); if (box) box.innerHTML = '<span class="dim">agent not answering</span>'; });
+  }
+
+  // ── The name picker's autocomplete (the guild lead, 2026-10-29) ──────────────────────────────────────────────
+  // Three sources, merged by mergeSuggestions: the spells on the bar now and the ones you cast most (the agent's
+  // GET /api/timer-suggestions: Zeal's gem labels and a local cast count), and the countdowns up now (fillLive).
+  // The list is part of the ⚙ menu, not a popup, so it rides the menu's hover handshake and cannot be clipped. It
+  // opens when the box is clicked into (nothing takes the keyboard before that), narrows as you type, Up/Down + Enter
+  // or a click claims a row, Escape closes it (a second Escape closes the menu), and Enter on typed text still adds it.
+  var _sugg = { gems: [], casts: [], live: [], open: false, at: -1, shown: [] };
+  function fillSuggestions(p) {
+    fetch('http://127.0.0.1:' + PORT + '/api/timer-suggestions', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (s) {
+        if (!s || _menuFor !== p.id) return;
+        _sugg.gems = Array.isArray(s.gems) ? s.gems : [];
+        _sugg.casts = Array.isArray(s.casts) ? s.casts : [];
+        renderSugg(p);
+      })
+      .catch(function () { /* an older agent has no such route: the live list is all there is */ });
+  }
+  function renderSugg(p) {
+    var box = document.getElementById('mSugg'), inp = document.getElementById('mAdd');
+    if (!box || !inp || _menuFor !== p.id) return;
+    if (!_sugg.open) { box.classList.remove('show'); inp.setAttribute('aria-expanded', 'false'); return; }
+    _sugg.shown = mergeSuggestions(_sugg, inp.value, p.names, 30);
+    if (_sugg.at >= _sugg.shown.length) _sugg.at = -1;
+    var h = '';
+    _sugg.shown.forEach(function (it, i) {
+      h += '<div class="chip add sg' + (i === _sugg.at ? ' on' : '') + '" role="option" data-add="' + esc(it.name) + '"><span class="sn">' + esc(it.name)
+        + '</span><span class="st">' + esc(it.tags.join(' · ')) + '</span></div>';
+    });
+    box.innerHTML = h || '<div class="none">nothing matches — Enter adds what you typed</div>';
+    box.classList.add('show');
+    inp.setAttribute('aria-expanded', 'true');
+    placeMenu();
+  }
+  function suggKey(ev, p) {
+    var n = _sugg.shown.length;
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      if (!_sugg.open) { _sugg.open = true; renderSugg(p); return true; }
+      if (!n) return true;
+      _sugg.at = ev.key === 'ArrowDown' ? (_sugg.at + 1) % n : (_sugg.at <= 0 ? n - 1 : _sugg.at - 1);
+      renderSugg(p);
+      var cur = document.querySelector('#mSugg .sg.on');
+      if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: 'nearest' });
+      return true;
+    }
+    if (ev.key === 'Enter' && _sugg.open && _sugg.at >= 0 && _sugg.shown[_sugg.at]) {
+      ev.preventDefault();
+      claimName(p, _sugg.shown[_sugg.at].name); save(); render(); openMenu(p.id, _menuAnchor || _els[p.id].root);
+      return true;
+    }
+    if (ev.key === 'Escape' && _sugg.open) {
+      ev.preventDefault(); ev.stopPropagation();
+      _sugg.open = false; _sugg.at = -1; renderSugg(p);
+      return true;
+    }
+    return false;
   }
 
   // A name lives in one panel: claiming it here releases it everywhere else.
@@ -2182,15 +2583,13 @@
     else if (t.hasAttribute('data-al')) { stepAlpha(p, Number(t.getAttribute('data-al')) < 0 ? -1 : 1); }
     else if (t.hasAttribute('data-mini') || t.hasAttribute('data-minipin')) {
       // The overlay's own setting, through the same setters as its right-click menu and the dashboard; the canvas hears it back.
-      var mm = miniOf(p.key), isPin = t.hasAttribute('data-minipin');
-      try {
-        var done = isPin ? (M.setOverlayMiniPin && M.setOverlayMiniPin(p.key, !(mm && mm.pin))) : (M.setOverlayMini && M.setOverlayMini(p.key, !(mm && mm.on)));
-        if (done && done.then) done.then(refresh).then(function () {
-          if (_menuFor === p.id && _els[p.id]) openMenu(p.id, _menuAnchor || _els[p.id].root);
-        }, function () {});
-      } catch (err) { /* main gone */ }
+      var done = flipMini(p, t.hasAttribute('data-minipin'));
+      if (done && done.then) done.then(refresh).then(function () {
+        if (_menuFor === p.id && _els[p.id]) openMenu(p.id, _menuAnchor || _els[p.id].root);
+      }, function () {});
       return;
     }
+    else if (t.hasAttribute('data-min')) { setMin(p); }
     else if (t.hasAttribute('data-popt')) {
       var oe = _els[p.id], od = oe && oe.frame && oe.frame.contentDocument;
       if (od && od.body) { var oo = !od.body.classList.contains('wp-opts'); od.body.classList.toggle('wp-opts', oo); oe.root.classList.toggle('opts', oo); }
@@ -2219,6 +2618,7 @@
   // arrow key) and is the one save, as the A−/A+ buttons do.
   menuEl.addEventListener('input', function (ev) {
     var t = ev.target, p = panelById(_menuFor);
+    if (p && t.id === 'mAdd') { _sugg.open = true; _sugg.at = -1; renderSugg(p); return; }
     if (!p || t.id !== 'mScale') return;
     var scr = scaleRange(p);
     p.scale = Math.round(num(Number(t.value) / 100, scr[0], scr[1], 1) * 10) / 10;
@@ -2242,8 +2642,20 @@
     save(); render();
   });
   menuEl.addEventListener('keydown', function (ev) {
+    var sp = ev.target.id === 'mAdd' ? panelById(_menuFor) : null;
+    if (sp && suggKey(ev, sp)) return;
     if (ev.key === 'Enter' && ev.target.id === 'mAdd') { ev.preventDefault(); document.getElementById('mAddBtn').click(); }
     if (ev.key === 'Escape') closeMenu();
+  });
+  // The name box: clicking into it opens the list and typing narrows it. Leaving the box does NOT close the list: it
+  // would collapse under the pointer mid-click and the control that was pressed would slide away (Escape, a claim or
+  // closing the menu end it). A row is picked on mousedown-without-blur (preventDefault), so typing carries on.
+  menuEl.addEventListener('focusin', function (ev) {
+    var p = ev.target.id === 'mAdd' ? panelById(_menuFor) : null;
+    if (p && !_sugg.open) { _sugg.open = true; _sugg.at = -1; renderSugg(p); }
+  });
+  menuEl.addEventListener('mousedown', function (ev) {
+    if (ev.target.closest && ev.target.closest('#mSugg')) ev.preventDefault();
   });
   document.addEventListener('mousedown', function (ev) {
     if (menuEl.classList.contains('show') && !menuEl.contains(ev.target) && !(ev.target.closest && ev.target.closest('.gear'))) closeMenu();
@@ -2473,7 +2885,7 @@
     var H = window.innerHeight, changed = false;
     _layout.panels.forEach(function (p) {
       var e = _els[p.id];
-      if (!e || p.off || _widen[p.id] || _fitAdd[p.id] || _fitStop[p.id]) return;
+      if (!e || p.off || isMin(p) || _widen[p.id] || _fitAdd[p.id] || _fitStop[p.id]) return;   // a strip's content is not measured: its height is not a fit
       if (!fitOn(p, pdefOf(p))) { if (_fitEmpty[p.id]) { delete _fitEmpty[p.id]; e.root.classList.remove('fitempty'); } return; }
       var need = contentNeed(p, e);
       if (need == null) return;
@@ -2570,7 +2982,7 @@
               + '<span class="x" data-delgrp="' + g.id + '" title="Delete the group; its pieces stay where they are">delete, keep them</span>'
             : '<span class="x" data-delgrp="' + g.id + '">sure?</span>';
         lh += '<div class="pc" data-drag="group:' + g.id + '"><span class="pc-l">'
-          + (_renId === g.id ? '<input data-renin="' + esc(g.id) + '" maxlength="24" value="' + esc(g.name) + '" style="width:100%;font:inherit;font-size:11px;background:#0d1117;color:#e6edf3;border:1px solid #58a6ff;border-radius:4px">' : '★ ' + esc(g.name))
+          + (_renId === g.id ? '<input data-renin="' + esc(g.id) + '" maxlength="24" value="' + esc(g.name) + '" style="width:100%;font:inherit;font-size:11px;background:var(--wp-bg);color:#e6edf3;border:1px solid var(--wp-blue);border-radius:4px">' : '★ ' + esc(g.name))
           + '</span><span class="pc-v">' + g.parts.length + ' pieces' + (here ? ' · ' + here + ' here' : '') + groupHiddenText(g.id) + '</span>'
           + groupKeyChip(g)
           + '<span class="x" data-dupgrp="' + g.id + '" title="Save a copy to change (the original stays as it is)">⧉</span>'
@@ -3562,6 +3974,7 @@
   document.addEventListener('mouseup', function () { _pressed = 0; }, true);
   try {
     if (M.onCanvasCursor) M.onCanvasCursor(function (p) {
+      hoverMins(p ? p.x : -1, p ? p.y : -1);   // ▭ Minimize shows under the pointer (main reports it where Windows forwards no moves)
       if (_edit || (_pressed && Date.now() - _pressed < 10000)) return;
       if (!p) { if (_panelHot) panelHover(false); return; }   // the cursor left the Canvas window
       pointerOn(document.elementFromPoint(p.x, p.y), p.x, p.y);
@@ -3986,6 +4399,9 @@
     // First time on: keep the starting layout and open arranging, so the three
     // panels are placed before a pull (and not re-opened on the next refresh).
     if (fresh) {
+      // "Split callouts and timers into their own boxes" (FB-110): the starting boxes keep the size they are given,
+      // so Fit height starts off on each (a layout of the person's own is never touched: fresh is "none saved").
+      if (st.splitFitOff && _layout && _layout.panels) _layout.panels.forEach(function (p) { if (fitKind(p, pdefOf(p))) p.fit = false; });
       save();
       if (!_arrange && M.canvasEdit) { try { M.canvasEdit(true); } catch (e) {} }
     }

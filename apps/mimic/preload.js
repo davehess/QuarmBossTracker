@@ -379,12 +379,70 @@ function _wpApplyTheme(theme) {
   try {
     if (!_wpOverlayDoc()) return;
     const cl = document.body.classList;
-    for (const c of [...cl]) if (c.indexOf('wp-theme-') === 0) cl.remove(c);
+    // wp-theme-guild is the GUILD's layer (below), not one of the raider's filters: a pick here must not strip it.
+    for (const c of [...cl]) if (c.indexOf('wp-theme-') === 0 && c !== 'wp-theme-guild') cl.remove(c);
     if (_WP_CVD_MATRICES[theme]) _wpCvdDefs();
     if (theme && theme !== 'default') cl.add('wp-theme-' + theme);
   } catch (e) {}
 }
 ipcRenderer.on('wp-theme', function (_e, theme) { _wpApplyTheme(theme); });
+
+// ── The guild theme (docs/DESIGN-theming.md sections 3 and 4) ────────────────────────────────────────────────────────
+// Layers, bottom to top: theme.css defaults -> THIS (the guild's slots as :root variables) -> the raider's own look (the
+// body filters above, which act on the finished picture and so still apply on top). Main sends the cached theme on
+// 'wp-guild-theme' and answers 'wp-guild-theme-get' at load. Only the themable slots are ever written, and only as
+// six-digit hex: green, red, gold and orange carry meanings and are not in the list, whatever main sends. A null theme
+// removes the style. Only pages that load theme.css take it (the dashboard and the website have their own layers).
+const _WP_GT_SLOTS = ['bg', 'panel', 'border', 'text', 'dim', 'accent', 'blue', 'purple'];
+function _wpGuildThemeCss(theme) {
+  if (!theme || typeof theme !== 'object' || !theme.slots || typeof theme.slots !== 'object') return '';
+  let out = '';
+  for (const s of _WP_GT_SLOTS) {
+    const v = theme.slots[s];
+    if (typeof v !== 'string' || !/^#[0-9a-f]{6}$/i.test(v)) continue;
+    out += '--wp-' + s + ':' + v.toLowerCase() + ';';
+    if (s === 'bg' || s === 'panel') {   // the rgba(var(--wp-bg-rgb), a) triplets follow their hex
+      const n = parseInt(v.slice(1), 16);
+      out += '--wp-' + s + '-rgb:' + ((n >> 16) & 255) + ', ' + ((n >> 8) & 255) + ', ' + (n & 255) + ';';
+    }
+  }
+  return out ? ':root{' + out + '}' : '';
+}
+function _wpUsesTokens(doc) {
+  try { return !!doc.querySelector('link[rel="stylesheet"][href$="theme.css"]'); } catch (e) { return false; }
+}
+function _wpApplyGuildThemeTo(doc, theme) {
+  const css = _wpGuildThemeCss(theme);
+  let st = doc.getElementById('wp-guild-theme');
+  if (!css) {
+    if (st) st.remove();
+    if (doc.body) doc.body.classList.remove('wp-theme-guild');
+    return;
+  }
+  if (!st) {
+    st = doc.createElement('style');
+    st.id = 'wp-guild-theme';
+    (doc.head || doc.documentElement).appendChild(st);
+  }
+  st.textContent = css;
+  if (doc.body) doc.body.classList.add('wp-theme-guild');
+}
+function _wpApplyGuildTheme(theme) {
+  try {
+    if (_wpUsesTokens(document)) _wpApplyGuildThemeTo(document, theme);
+    // The Timers canvas' panels are same-origin iframes whose own preloads only pull at load; a live change reaches them here.
+    for (const f of document.querySelectorAll('iframe')) {
+      try { const d = f.contentDocument; if (d && _wpUsesTokens(d)) _wpApplyGuildThemeTo(d, theme); } catch (e) { void e; }
+    }
+  } catch (e) { void e; }
+}
+ipcRenderer.on('wp-guild-theme', function (_e, theme) { _wpApplyGuildTheme(theme); });
+document.addEventListener('DOMContentLoaded', function () {
+  try {
+    if (!_wpUsesTokens(document)) return;
+    ipcRenderer.invoke('wp-guild-theme-get').then(function (t) { _wpApplyGuildTheme(t); }).catch(function () {});
+  } catch (e) { void e; }
+});
 
 // ── ▭ Mini mode — the shared half ──────────────────────────────────────────
 // Each overlay owns its OWN `body.wp-mini` rules (the rendition the guild voted
@@ -405,6 +463,15 @@ const _WP_MINI_CSS =
   // closable, and a control that vanishes reads as a control that is gone.
   'body.wp-mini #move-btn,body.wp-mini #hide-btn,body.wp-mini #wp-grip,body.wp-mini #wp-grip-top{opacity:0.12;transition:opacity 0.12s ease}' +
   'body.wp-mini:hover #move-btn,body.wp-mini:hover #hide-btn,body.wp-mini:hover #wp-grip,body.wp-mini:hover #wp-grip-top{opacity:1}' +
+  // ▭ Fold (the guild lead, 2026-10-28: "minimized overlays need to be draggable and resizable still"). A folded window is
+  // its title row and nothing else, so the corner controls ARE the window: they stay readable (the 12% fade is for a designed
+  // mini, which still has data to read). Its height is the row's, so only the width resizes: the ◢ becomes a strip along the
+  // bottom edge, 8px tall, which ends where the ✕ (6 + 18 from the top of a 32px window) begins instead of sitting on it,
+  // and the grow-up corner keeps its place with the width cursor. (After the rules above, same specificity.)
+  'body.wp-fold #move-btn,body.wp-fold #hide-btn,body.wp-fold #wp-grip,body.wp-fold #wp-grip-top{opacity:0.6}' +
+  'body.wp-fold #wp-grip{width:18px;height:8px;cursor:ew-resize;' +
+  'background:linear-gradient(90deg,transparent 0 30%,rgba(230,237,243,.85) 30% 40%,transparent 40% 55%,rgba(230,237,243,.85) 55% 65%,transparent 65% 80%,rgba(230,237,243,.85) 80% 90%,transparent 90%)}' +
+  'body.wp-fold #wp-grip-top{cursor:ew-resize}' +
   'body.wp-mini .wp-mini-hide{display:none !important}' +
   'body.wp-mini .wp-mini-bar{height:var(--wp-mini-bar-h) !important;border-radius:2px}' +
   'body.wp-mini .wp-mini-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}' +
@@ -412,18 +479,255 @@ const _WP_MINI_CSS =
   // Density: a mini overlay earns its name on height, not on hiding data.
   'body.wp-mini #wrap{padding:2px 4px}' +
   'body.wp-mini h1,body.wp-mini h2{display:none}';
-function _wpApplyMini(on) {
+// `fold` is true for an overlay with no designed mini (main's _FOLD_KEYS): it folds to its title row instead.
+function _wpApplyMini(on, fold) {
   try {
     if (!_wpOverlayDoc()) return;
     document.body.classList.toggle('wp-mini', !!on);
+    document.body.classList.toggle('wp-fold', !!on && !!fold);
     // Overlays that lay out from JS (bar widths, row counts) need a nudge, and
     // a mode flip changes the height every auto-height caller reads. Cheap,
     // and far less brittle than each overlay wiring its own observer.
     try { window.dispatchEvent(new Event('wp-mini-change')); } catch (e) {}
     try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+    _wpSyncNameChip(!!on);
+    _wpFoldSync(!!on && !!fold);
   } catch (e) {}
 }
-ipcRenderer.on('wp-mini', function (_e, p) { _wpApplyMini(p && p.mini); });
+ipcRenderer.on('wp-mini', function (_e, p) { _wpApplyMini(p && p.mini, p && p.fold); });
+
+// ── Press an overlay's NAME to minimize it (the guild lead, 2026-10-28) ─────────────────────────────────────────
+// Every overlay page marks the element that shows its name with data-wp-name (test/mini-press-picker.test.js holds
+// it to exactly one per page). Pointer down on it lights it (gold, dark text); letting go ON it, having moved no more
+// than WP_NAME_MOVE_PX, flips THIS overlay's mini through the same 'wp-mini-toggle' as the right-click row. Moving off
+// it, or dragging, cancels. Held WP_NAME_LONG_MS without moving, or right-clicked, it opens the overlay picker
+// instead, and the release that follows does not toggle. The ✥ stays the move handle: nothing here moves a window.
+// A page whose name is hidden while mini (the nine designed minis hide their title rows) or that has no title row
+// gets a small name chip in the corner, which stands in for the name.
+const WP_NAME_MOVE_PX = 4;
+const WP_NAME_LONG_MS = 500;
+// The press as a small state machine over injected effects, so a test can drive it with fake timers.
+function _wpMakeNamePress(h) {
+  let st = null;
+  const api = {
+    down: function (x, y) {
+      api.cancel();
+      st = { x: x, y: y, long: false, timer: null };
+      st.timer = h.setTimer(function () { if (st) { st.long = true; h.pressed(false); h.picker(); } }, WP_NAME_LONG_MS);
+      h.pressed(true);
+    },
+    move: function (x, y) {
+      if (!st || st.long) return;
+      if (Math.hypot(x - st.x, y - st.y) > WP_NAME_MOVE_PX) api.cancel();
+    },
+    // Released on the name. True when that toggled mini.
+    up: function () {
+      if (!st) return false;
+      const s = st; st = null;
+      h.clearTimer(s.timer); h.pressed(false);
+      if (s.long) return false;
+      h.toggle();
+      return true;
+    },
+    cancel: function () {
+      if (!st) return;
+      const s = st; st = null;
+      h.clearTimer(s.timer); h.pressed(false);
+    },
+  };
+  return api;
+}
+const _WP_NAME_CSS =
+  '[data-wp-name],.wp-name-chip{cursor:pointer;user-select:none;-webkit-user-select:none}' +
+  '.wp-name-down{background:#d29922 !important;color:#14181d !important;box-shadow:0 0 0 2px #d29922;border-radius:3px}' +
+  '.wp-name-down *{color:inherit !important}' +
+  // The chip: a name for a page that shows none (map, alerts) or hides it while mini. Sits right of the ✥, left of the ✕.
+  '.wp-name-chip{position:fixed;top:6px;left:28px;z-index:61;box-sizing:border-box;height:18px;max-width:calc(100% - 64px);' +
+  'padding:0 7px;display:flex;align-items:center;border-radius:4px;background:rgba(14,17,22,0.6);color:#8b949e;' +
+  'border:1px solid rgba(110,118,129,0.3);font:600 10px ui-monospace,Menlo,Consolas,monospace;line-height:1;white-space:nowrap;' +
+  'overflow:hidden;text-overflow:ellipsis;opacity:0.45;transition:opacity 0.12s ease}' +
+  '.wp-name-chip:hover,.wp-name-chip.wp-name-down{opacity:1}' +
+  // In a designed mini the stand-in chip is there only while the pointer is over the window (it fades in, as the ✥ and ✕ do),
+  // takes no clicks while hidden, and sits where no text, control or bar is (_wpPlaceNameChip); with no room it is not drawn.
+  // (!important: the whole-overlay fade rule below keys on body>:not(#…) and would otherwise win on opacity.)
+  '.wp-name-proxy{opacity:0 !important;pointer-events:none}body.wp-mini:hover .wp-name-proxy{opacity:1 !important;pointer-events:auto}' +
+  '.wp-name-proxy[data-nospot]{display:none !important}' +
+  // The Map's top strip is full (✥, its toolbar, Timers), so its chip sits bottom-left; folded, it is the only row left, at the top.
+  '.wp-name-chip.wp-name-bl{top:auto;bottom:6px;left:6px}' +
+  'body.wp-fold .wp-name-chip{top:6px !important;bottom:auto !important;left:28px !important}' +
+  // A folded window with no title row of its own (the alerts window, the Map) is NOTHING BUT this chip over a see-through
+  // window, and a member read that as the overlay having vanished (the guild lead, 2026-10-30: "I clicked mini and it went
+  // away"). So the one handle left is plain to see and says what a press does: solid, full strength whatever the overlay's
+  // opacity is set to (!important: the whole-overlay fade rule keys on body>:not(#…)), the name first so a narrow window
+  // ellipsizes the instruction and never the name. A designed mini's stand-in chip (.wp-name-proxy) keeps its quiet look.
+  'body.wp-fold .wp-name-chip:not(.wp-name-proxy){opacity:1 !important;height:20px;gap:5px;font-size:12px;color:#f0f6fc;' +
+  'background:rgba(13,17,23,0.97);border:1px solid #d29922;box-shadow:0 0 0 1px rgba(0,0,0,0.7)}' +
+  'body.wp-fold .wp-name-chip:not(.wp-name-proxy)::before{content:"▭"}' +
+  'body.wp-fold .wp-name-chip:not(.wp-name-proxy)::after{content:"\\2014  click to restore";color:#d29922}' +
+  'body.setup .wp-name-chip{display:none}' +
+  (WP_IS_DOCKED ? '.wp-name-chip{display:none !important}' : '') +
+  // ▭ Fold: the rows the fold hid, and a window that is one row tall.
+  'body.wp-fold .wp-fold-hide{display:none !important}';
+let _wpMiniCapable = false;      // pulled at load with the menu state: can THIS window minimize?
+let _wpOverlayLabel = null;      // …and the name main gives it, for the chip
+function _wpNameVisible(el) {
+  try { return !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden'; } catch (e) { return false; }
+}
+// The proxy chip stands in while the page's own name is hidden (mini) and goes the moment it shows again.
+function _wpSyncNameChip(mini) {
+  try {
+    if (WP_IS_DOCKED) return;
+    const host = document.querySelector('[data-wp-name]');
+    let chip = document.querySelector('.wp-name-proxy');
+    const need = mini && !!host && !host.classList.contains('wp-name-chip') && !_wpNameVisible(host);
+    if (!need) { if (chip) chip.remove(); return; }
+    if (!chip) {
+      chip = document.createElement('div');
+      chip.className = 'wp-name-chip wp-name-proxy';
+      document.body.appendChild(chip);
+    }
+    chip.textContent = _wpOverlayLabel || String(host.textContent || '').trim() || 'overlay';
+    requestAnimationFrame(_wpPlaceNameChip);
+  } catch (e) {}
+}
+// Where the stand-in chip can sit without covering anything: the first strip (top-most, then left-most) between the ✥ and
+// ✕ gutters that is `w` x `h` and clear of every obstacle ({left, top, right, bottom} in the page's px) by 2px. Null when
+// there is none. Pure, so a test can hand it rows of "text".
+function _wpFreeSpot(obs, W, H, w, h) {
+  const gap = 2, x0 = 28, x1 = W - 28;
+  for (let y = 6; y + h <= H - 4; y += 3) {
+    const hit = obs.filter(function (o) { return o.bottom + gap > y && o.top - gap < y + h && o.right > x0 && o.left < x1; })
+      .sort(function (a, b) { return a.left - b.left; });
+    let x = x0;
+    for (let i = 0; i < hit.length; i++) {
+      if (hit[i].left - gap - x >= w) return { x: x, y: y };
+      x = Math.max(x, hit[i].right + gap);
+    }
+    if (x1 - x >= w) return { x: x, y: y };
+  }
+  return null;
+}
+// Everything the chip must not cover: each run of text that is showing, and the controls, images and bars.
+function _wpContentRects() {
+  const out = [];
+  const add = function (r) { if (r && r.width > 0 && r.height > 0) out.push({ left: r.left, top: r.top, right: r.right, bottom: r.bottom }); };
+  const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  const rg = document.createRange();
+  for (let n = tw.nextNode(); n; n = tw.nextNode()) {
+    if (!/\S/.test(n.nodeValue)) continue;
+    const p = n.parentElement;
+    if (!p || p.closest('.wp-name-proxy,script,style')) continue;
+    rg.selectNodeContents(n);
+    const rs = rg.getClientRects();
+    for (let i = 0; i < rs.length; i++) add(rs[i]);
+  }
+  const els = document.body.querySelectorAll('img,canvas,svg,input,button,select,.wp-mini-bar,#move-btn,#hide-btn,#clear-btn,#wp-grip,#wp-grip-top');
+  for (let i = 0; i < els.length; i++) if (!els[i].closest('.wp-name-proxy')) add(els[i].getBoundingClientRect());
+  return out;
+}
+function _wpPlaceNameChip() {
+  try {
+    const chip = document.querySelector('.wp-name-proxy');
+    if (!chip) return;
+    chip.removeAttribute('data-nospot');
+    chip.style.maxWidth = '';
+    const W = document.documentElement.clientWidth, H = document.documentElement.clientHeight;
+    const obs = _wpContentRects();
+    let w = Math.min(chip.offsetWidth, W - 56);
+    let s = _wpFreeSpot(obs, W, H, w, 18);
+    if (!s && w > 44) { w = 44; s = _wpFreeSpot(obs, W, H, w, 18); }   // squeezed, with an ellipsis, before giving up
+    if (!s) { chip.setAttribute('data-nospot', ''); return; }
+    chip.style.left = s.x + 'px';
+    chip.style.top = s.y + 'px';
+    chip.style.maxWidth = w + 'px';
+  } catch (e) {}
+}
+// ▭ Fold. Everything outside the title row goes (siblings of the row, and of each ancestor up to <body>, bar the
+// overlay's own corner controls), then the window is asked for the row's height. Un-folding shows it all again;
+// main gives the old height back and a page that fits itself fits again.
+const _WP_FOLD_KEEP = '#move-btn,#hide-btn,#clear-btn,#drag-controls,#setupbar,#wpResizeMenu,#mimic-conn-banner,#mimic-update-banner,'
+  + '#wp-cvd-defs,#wp-grip,#wp-grip-top,.wp-name-chip,script,style,link';
+let _wpFoldSetRaw = false;       // the last window height this page asked for was the fold's
+function _wpFoldRow() {
+  const proxy = document.querySelector('.wp-name-proxy');
+  if (proxy) return proxy;
+  const host = document.querySelector('[data-wp-name]');
+  if (!host) return null;
+  if (host.classList.contains('wp-name-chip')) return host;
+  const p = host.parentElement;
+  return (p && p !== document.body) ? p : host;
+}
+function _wpFoldSync(fold) {
+  try {
+    for (const el of document.querySelectorAll('.wp-fold-hide')) el.classList.remove('wp-fold-hide');
+    if (!fold) {
+      if (_wpFoldSetRaw) {
+        _wpFoldSetRaw = false; _wpLastFitWasRaw = false; _wpLastRawH = null;
+        if (_wpPageUsesAutoFit) _autoFitOverlay();
+      }
+      return;
+    }
+    const row = _wpFoldRow();
+    if (!row) return;
+    for (let n = row; n && n.parentElement; n = n.parentElement) {
+      const p = n.parentElement;
+      for (const s of p.children) if (s !== n && !s.matches(_WP_FOLD_KEEP)) s.classList.add('wp-fold-hide');
+      if (p === document.body) break;
+    }
+    requestAnimationFrame(function () {
+      try {
+        if (!document.body.classList.contains('wp-fold')) return;
+        _wpFoldSetRaw = true;
+        _overlayAutoHeightRaw(Math.max(32, Math.ceil(row.getBoundingClientRect().bottom) + 6));   // never under the ✥/✕ squares (6 + 18)
+      } catch (e) {}
+    });
+  } catch (e) {}
+}
+document.addEventListener('DOMContentLoaded', function () {
+  try {
+    if (WP_IS_DOCKED || !_wpOverlayDoc()) return;
+    let host = null;
+    const target = function (ev) { return (ev.target && ev.target.closest) ? ev.target.closest('[data-wp-name],.wp-name-proxy') : null; };
+    const press = _wpMakeNamePress({
+      setTimer: function (f, ms) { return setTimeout(f, ms); },
+      clearTimer: function (t) { clearTimeout(t); },
+      pressed: function (on) { if (host) host.classList.toggle('wp-name-down', !!on && _wpMiniCapable); },
+      toggle: function () { ipcRenderer.invoke('wp-mini-toggle').catch(function () {}); },
+      picker: function () { _wpOpenPicker(); },
+    });
+    const cancel = function () { press.cancel(); host = null; };
+    document.addEventListener('mousedown', function (ev) {
+      if (ev.button !== 0) return;
+      const t = target(ev);
+      if (!t) return;
+      host = t;
+      press.down(ev.clientX, ev.clientY);
+    }, true);
+    document.addEventListener('mousemove', function (ev) { if (host) press.move(ev.clientX, ev.clientY); }, true);
+    // The stand-in chip finds its clear spot again as the mini's rows change, while the pointer is over the window.
+    let placeTimer = null;
+    document.addEventListener('mousemove', function () {
+      if (placeTimer || !document.body.classList.contains('wp-mini') || !document.querySelector('.wp-name-proxy')) return;
+      placeTimer = setTimeout(function () { placeTimer = null; _wpPlaceNameChip(); }, 150);
+    }, true);
+    document.addEventListener('mouseup', function (ev) {
+      if (ev.button !== 0 || !host) return;
+      const same = target(ev) === host;
+      if (same) press.up(); else press.cancel();
+      host = null;
+    }, true);
+    document.addEventListener('mouseout', function (ev) {
+      if (host && !host.contains(ev.relatedTarget)) cancel();
+    }, true);
+    window.addEventListener('blur', cancel);
+    document.addEventListener('contextmenu', function (ev) {
+      if (!target(ev)) return;
+      ev.preventDefault();
+      cancel();
+      _wpOpenPicker();
+    }, true);
+  } catch (e) {}
+});
 
 // ── Opacity — the whole overlay (2.7.1; main's applyOverlayOpacity) ──────────
 // Everything the overlay SHOWS fades, its background with it; what you use to
@@ -597,6 +901,7 @@ document.addEventListener('DOMContentLoaded', function () {
         + 'body.setup:has(#drag-controls) #move-btn,body.setup:has(#drag-controls) #hide-btn{display:none}')
       + _WP_THEME_CSS
       + _WP_MINI_CSS
+      + _WP_NAME_CSS
       + (WP_IS_DOCKED ? '' : _WP_OPACITY_CSS);
     document.head.appendChild(st);
     ipcRenderer.invoke('wp-overlay-menu-state').then(function (s) {
@@ -608,7 +913,8 @@ document.addEventListener('DOMContentLoaded', function () {
       // mini flag was already on (re-enabled from the tray, restored after a
       // crash, or simply opened later) would otherwise come up full size and
       // silently contradict its own setting.
-      if (s && s.miniCapable && s.mini) _wpApplyMini(true);
+      if (s) { _wpMiniCapable = !!s.miniCapable; _wpOverlayLabel = s.label || null; }
+      if (s && s.miniCapable && s.mini) _wpApplyMini(true, s.fold);
     }).catch(function () {});
   } catch (e) {}
 });
@@ -723,14 +1029,17 @@ function _buildOverlayMenu(onClose, state) {
   if (st.canvasOn) menu.appendChild(mkItem('🧩 Arrange the canvas (pieces)', '#1f3d57', () => ipcRenderer.invoke('canvas-edit', true)));
   // Visibility + layout actions (a member, 2026-07-10). `state` comes from
   // main's wp-overlay-menu-state so the toggles show their current value.
-  // ▭ / 📌 — mini mode. Built ONLY for the nine overlays that have a mini
-  // rendition (main's _MINI_KEYS sets miniCapable); offering the row on an
-  // overlay whose CSS has no mini rules would be a switch that does nothing.
+  // ▭ / 📌 — mini mode. Built ONLY where main says the overlay can minimize
+  // (miniCapable: the nine with a designed mini, and every foldable one); offering the row
+  // on an overlay that cannot would be a switch that does nothing. The 📌 belongs to the
+  // nine alone: it is "stay mini when Minimize ALL restores", and a folded overlay is not part of that hotkey.
   if (st.miniCapable) {
-    menu.appendChild(mkItem('▭ Mini mode: ' + (st.mini ? 'ON' : 'off') + ' (this overlay)', '#1f4f47',
+    menu.appendChild(mkItem(st.mini ? '▭ Mini — click to restore (this overlay)' : '▭ Mini mode: off (this overlay)', st.mini ? '#9a6a00' : '#1f4f47',
       () => ipcRenderer.invoke('wp-mini-toggle')));
-    menu.appendChild(mkItem('📌 Keep mini on restore: ' + (st.miniPinned ? 'ON' : 'off'), '#4a3a1f',
-      () => ipcRenderer.invoke('wp-mini-pin-toggle')));
+    if (st.miniDesigned) {
+      menu.appendChild(mkItem('📌 Keep mini on restore: ' + (st.miniPinned ? 'ON' : 'off'), '#4a3a1f',
+        () => ipcRenderer.invoke('wp-mini-pin-toggle')));
+    }
   }
   menu.appendChild(mkItem('👁 Hide this overlay', '#6b2130', () => ipcRenderer.invoke('hide-overlay')));
   // Windows: overlays sit under other apps while EverQuest isn't focused (main's _applyOverlayZ); this keeps THIS one on top
@@ -753,6 +1062,14 @@ function _buildOverlayMenu(onClose, state) {
   if (st.key === 'trigger') {
     menu.appendChild(mkItem('⇅ Timers start at: ' + (st.timersTopDown ? 'TOP (list grows down)' : 'bottom (list grows up)'), '#20374a',
       () => ipcRenderer.invoke('wp-timers-order-toggle')));
+    // 🔒 The window keeps the size it is dragged to (FB-110); the rows past what fit fold into "+N more".
+    menu.appendChild(mkItem('🔒 Lock size: ' + (st.triggerLockSize ? 'ON (drag ◢ to resize)' : 'off (grows with content)'), '#20374a',
+      () => ipcRenderer.invoke('wp-trigger-lock-size')));
+    // 🧩 Callouts and timers as two boxes of their own: the Timers canvas, on (the tray's Canvas item, same internals).
+    // With it already on, the way in to the boxes is arranging them.
+    menu.appendChild(st.canvasOn
+      ? mkItem('🧩 Open the Canvas to arrange', '#1f3d57', () => ipcRenderer.invoke('canvas-edit', true))
+      : mkItem('🧩 Split callouts and timers into their own boxes', '#1f3d57', () => ipcRenderer.invoke('canvas-split')));
   }
   // Color theme — cycles Wolf (dark) → Light → Vivid → Muted → High contrast
   // → the three colour-blind ones
@@ -845,13 +1162,17 @@ function _attachOverlayMenu(moveBtn) {
   });
 }
 
-function _openOverlayMenu(state) {
+// `build` makes the menu's DOM (default: the right-click chrome menu; the overlay picker passes its own) and `minH`
+// is the height it borrows from the window.
+function _openOverlayMenu(state, build, minH) {
+  const make = build || _buildOverlayMenu;
+  const need = minH || 420;
   // Re-open while one is up: tear the old one down cleanly first.
   // (That close hands the menu's borrowed height back, and this menu needs it
   // again: borrow it once more, after the give-back, in the same IPC order.)
   if (_wpMenuCleanupFn) {
     try { _wpMenuCleanupFn(); } catch (e) {}
-    try { ipcRenderer.invoke('overlay-ensure-min-height', 420); } catch (e) {}
+    try { ipcRenderer.invoke('overlay-ensure-min-height', need); } catch (e) {}
   }
   _wpMenuOpen = true;
   _wpMenuOpenAt = Date.now();
@@ -884,7 +1205,7 @@ function _openOverlayMenu(state) {
       _wpMenuSuppressedRawH = null;
     }
   };
-  const menu = _buildOverlayMenu(cleanup, state);
+  const menu = make(cleanup, state);
   _wpMenuCleanupFn = cleanup;
   _hoverOn();
   // Idle auto-close: arms on open and whenever the cursor leaves the menu;
@@ -903,6 +1224,124 @@ function _openOverlayMenu(state) {
     document.addEventListener('keydown', onKey, true);
     window.addEventListener('blur', onBlur);
   }, 0);
+}
+
+// ── Overlay picker (the guild lead, 2026-10-28): right-click or long-press an overlay's name ───────────────────────
+// Header "Overlays", the STANDARD overlays with a ✓ on those shown, then ▸ MORE (every other overlay window, with an A–Z
+// switch) and ▸ CANVAS. A row flips that overlay through main's existing 'toggle-overlay' (the dashboard's and the
+// hotkeys' own path); the order comes from main, per character (most recently shown first). Same visual family as the
+// chrome menu above, and the same open/close lifecycle (_openOverlayMenu), so it borrows window height the same way.
+const WP_PICKER_MIN_H = 560;     // MORE open: the whole list
+const WP_PICKER_SHORT_H = 330;   // MORE folded: Overlays + two headings
+function _buildOverlayPicker(onClose, data) {
+  const prior = document.getElementById('wpResizeMenu'); if (prior) prior.remove();
+  const d = data || {};
+  const menu = document.createElement('div');
+  menu.id = 'wpResizeMenu';
+  menu.style.cssText = [
+    'position:fixed', 'top:30px', 'left:6px', 'z-index:200',
+    'background:rgba(14,17,22,0.95)', 'border:1px solid rgba(88,166,255,0.4)',
+    'border-radius:5px', 'padding:4px',
+    'display:flex', 'flex-direction:column', 'gap:2px',
+    'font-family:ui-monospace,Menlo,Consolas,monospace',
+    'min-width:190px', 'box-shadow:0 4px 12px rgba(0,0,0,0.6)',
+    'max-height:calc(100vh - 40px)', 'overflow-y:auto',
+  ].join(';');
+  const close = function () { menu.remove(); _hoverOff(); if (onClose) onClose(); };
+  const heading = function (text, extra) {
+    const h = document.createElement('div');
+    h.style.cssText = 'display:flex;align-items:center;gap:6px;padding:3px 6px 1px;color:#8b949e;font-size:10px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase';
+    const t = document.createElement('span'); t.textContent = text; t.style.flex = '1';
+    h.appendChild(t);
+    if (extra) h.appendChild(extra);
+    return h;
+  };
+  const sep = function () {
+    const s = document.createElement('div');
+    s.style.cssText = 'height:1px;background:rgba(255,255,255,0.08);margin:3px 0';
+    return s;
+  };
+  const btn = function (label, accent, color, onClick) {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.style.cssText = [
+      'background:#21262d', 'color:' + color, 'border:1px solid #30363d',
+      'border-radius:3px', 'padding:4px 10px', 'cursor:pointer',
+      'text-align:left', 'font-family:inherit', 'font-size:11px', 'white-space:nowrap',
+    ].join(';');
+    b.onmouseenter = function () { b.style.background = accent; b.style.color = '#fff'; _hoverOn(); };
+    b.onmouseleave = function () { b.style.background = '#21262d'; b.style.color = color; };
+    b.onclick = function () { try { onClick(); } catch (e) {} };
+    return b;
+  };
+  const overlayRow = function (o) {
+    return btn((o.on ? '✓  ' : '    ') + o.label, '#1f6feb', o.on ? '#7ee787' : '#c9d1d9', function () {
+      ipcRenderer.invoke('toggle-overlay', o.toggle).catch(function () {});
+      close();
+    });
+  };
+  menu.appendChild(heading('Overlays'));
+  (d.standard || []).forEach(function (o) { menu.appendChild(overlayRow(o)); });
+  // ▸ MORE and ▸ CANVAS are collapsed sections: the heading is the switch (▸ closed, ▾ open), the rows open in place, and the
+  // choice is kept in the config (main's wp-picker-open-set). Opening one borrows the height it needs; the A–Z switch
+  // belongs to MORE and is only there while MORE is open.
+  const open = d.open || {};
+  const section = function (name, title, extra) {
+    menu.appendChild(sep());
+    const body = document.createElement('div');
+    body.style.cssText = 'display:flex;flex-direction:column;gap:2px';
+    const h = heading('', extra);
+    h.style.cursor = 'pointer';
+    h.setAttribute('data-wp-interact', '');
+    const label = h.firstChild;
+    const paint = function (on) {
+      label.textContent = (on ? '▾ ' : '▸ ') + title;
+      body.style.display = on ? 'flex' : 'none';
+      if (extra) extra.style.display = on ? '' : 'none';
+    };
+    let isOpen = open[name] === true;
+    paint(isOpen);
+    h.onmouseenter = _hoverOn;
+    h.onclick = function () {
+      isOpen = !isOpen;
+      paint(isOpen);
+      if (isOpen) { try { ipcRenderer.invoke('overlay-ensure-min-height', WP_PICKER_MIN_H); } catch (e) {} }
+      ipcRenderer.invoke('wp-picker-open-set', name, isOpen).catch(function () {});
+    };
+    menu.appendChild(h);
+    menu.appendChild(body);
+    return body;
+  };
+  const az = document.createElement('button');
+  az.textContent = 'A–Z';
+  az.title = 'Sort this list by name instead of by what you used last';
+  az.style.cssText = 'cursor:pointer;font-family:inherit;font-size:10px;padding:0 6px;border-radius:3px;border:1px solid '
+    + (d.alpha ? '#d29922' : '#30363d') + ';background:' + (d.alpha ? '#d29922' : '#21262d') + ';color:' + (d.alpha ? '#14181d' : '#8b949e');
+  az.onmouseenter = _hoverOn;
+  az.onclick = function (ev) {
+    ev.stopPropagation();   // the heading around it folds the section; this only re-sorts it
+    ipcRenderer.invoke('wp-picker-alpha-toggle').then(function () { _wpOpenPicker(); }).catch(function () {});
+  };
+  const more = section('more', 'More', az);
+  (d.more || []).forEach(function (o) { more.appendChild(overlayRow(o)); });
+  const canvas = section('canvas', 'Canvas');
+  canvas.appendChild(btn('🧩  Open Timers canvas', '#1f3d57', '#c9d1d9', function () {
+    ipcRenderer.invoke('canvas-edit', true).catch(function () {});
+    close();
+  }));
+  document.body.appendChild(menu);
+  return menu;
+}
+function _wpOpenPicker() {
+  if (WP_IS_DOCKED) return;
+  _wpMenuOpen = true;
+  _wpMenuOpenAt = Date.now();
+  ipcRenderer.invoke('wp-overlay-picker').catch(function () { return null; }).then(function (data) {
+    // Borrow only what the picker shows: the short one while MORE is folded.
+    const need = (data && data.open && data.open.more) ? WP_PICKER_MIN_H : WP_PICKER_SHORT_H;
+    try { ipcRenderer.invoke('overlay-ensure-min-height', need); } catch (e) {}
+    _openOverlayMenu(data, _buildOverlayPicker, need);
+  });
 }
 
 // ── Content watcher: a page that has fit once keeps fitting (the guild lead, 2026-10-19: "we should always
@@ -1009,6 +1448,7 @@ contextBridge.exposeInMainWorld('mimic', {
   voiceStatus:      ()                    => ipcRenderer.invoke('voice:status'),
   voiceInstall:     (engine, voice, accept) => ipcRenderer.invoke('voice:install', engine, voice, accept),
   voiceRemove:      (engine, voice)       => ipcRenderer.invoke('voice:remove', engine, voice),
+  voiceAddCustom:   (src, accept)         => ipcRenderer.invoke('voice:add-custom', src, accept),
   voiceSynth:       (text, spec)          => ipcRenderer.invoke('voice:synth', text, spec),
   // A JSON POST to one of the engine's pronunciation routes (main keeps the list); → { ok, status, body }.
   agentPost:        (route, body) => ipcRenderer.invoke('agent-post', route, body),
@@ -1226,6 +1666,13 @@ contextBridge.exposeInMainWorld('mimic', {
   canvasNextDisplay: ()       => ipcRenderer.invoke('canvas-next-display'),
   // "Span all screens": one Canvas over every monitor (same scaling only). → { ok, span, why }
   canvasSpan:        (on)     => ipcRenderer.invoke('canvas-span', !!on),
+  // "Split callouts and timers into their own boxes" (FB-110): the Canvas on, as the tray's Canvas item does. → { ok, already }
+  canvasSplit:       ()       => ipcRenderer.invoke('canvas-split'),
+  // 🔒 Lock size on the alerts window (FB-110): the same setter as its right-click menu. → the new state
+  triggerLockSize:   (on)     => ipcRenderer.invoke('wp-trigger-lock-size', !!on),
+  // ⇅ Timers start at top/bottom on the alerts window (a member, 2026-09-27; the dashboard twin, 2026-10-30): the same
+  // setter as its right-click row. → the new state (true = top)
+  timersTopDown:     ()       => ipcRenderer.invoke('wp-timers-order-toggle'),
   // The panel menu's "Background" row: the SAME writer as the shared overlay menu, Ctrl+Shift+B and the dashboard
   // button (main's wp-backdrop-toggle finds the key from the sender window). Resolves to the new on/off state.
   toggleBackdropThis: ()      => ipcRenderer.invoke('wp-backdrop-toggle'),
@@ -1309,6 +1756,14 @@ contextBridge.exposeInMainWorld('mimic', {
   uiStudioListSnapshots:  (character)=> ipcRenderer.invoke('ui-studio-list-snapshots', character),
   uiStudioGetSnapshot:    (params)  => ipcRenderer.invoke('ui-studio-get-snapshot', params),
   uiStudioRestore:        (params)  => ipcRenderer.invoke('ui-studio-restore', params),
+  // Compare-first restore, Keep in sync and This PC (main.js "compare-first restore" block).
+  uiRestorePlan:          (params)  => ipcRenderer.invoke('ui-restore-plan', params),
+  uiRestoreParts:         (params)  => ipcRenderer.invoke('ui-restore-parts', params),
+  uiSyncGet:              ()        => ipcRenderer.invoke('ui-sync-get'),
+  uiSyncSet:              (patch)   => ipcRenderer.invoke('ui-sync-set', patch),
+  uiSyncDismiss:          (character) => ipcRenderer.invoke('ui-sync-dismiss', character),
+  uiThisPc:               ()        => ipcRenderer.invoke('ui-this-pc'),
+  uiThisPcInches:         (value)   => ipcRenderer.invoke('ui-this-pc-inches', value),
   // Visual UI Studio editor — read/write per-character ini bundles for the
   // graphical resolution-rescaling editor. Read returns a raw filename →
   // text map; write takes the edited map and persists with .bak backups.
@@ -1347,6 +1802,11 @@ contextBridge.exposeInMainWorld('mimic', {
   mimicLinkStart:   ()  => ipcRenderer.invoke('mimic-link-start'),
   mimicLinkCancel:  ()  => ipcRenderer.invoke('mimic-link-cancel'),
   mimicLinkSignOut: ()  => ipcRenderer.invoke('mimic-link-signout'),
+  // The guild picker. `hubList` returns { hubs, current } (the directory, cached up to a day, Wolf Pack first). `hubSet`
+  // takes { slug } for a listed guild or { address } for a pasted one and returns { ok, changed, signedOut, hub } or
+  // { ok:false, error }. Switching guilds signs out: a session belongs to one guild's server.
+  hubList: ()       => ipcRenderer.invoke('hub-list'),
+  hubSet:  (choice) => ipcRenderer.invoke('hub-set', choice),
 
   // Updates.
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),

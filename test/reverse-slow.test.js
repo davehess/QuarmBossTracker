@@ -260,6 +260,6 @@ describe('Target Info mini', () => {
   it('the CSS paints the badge and the row red, never amber', () => {
     const css = stripCss(MOB);
     expect(css).toMatch(/\.slowbadge\.rev\{[^}]*rgba\(248,81,73/);
-    expect(css).toMatch(/\.mini-row\.rev \.mini-bar i\{background:#f85149\}/);
+    expect(css).toMatch(/\.mini-row\.rev \.mini-bar i\{background:var\(--wp-red\)\}/);
   });
 });

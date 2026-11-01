@@ -98,20 +98,30 @@ window.POP_RAIDS = {
           pageImages: ['Nitram-Map.png'],
         },
         {
+          // Thresholds come from the server's script, not the guide (FB-109, 2026-10-28):
+          // nightmareb/Terris_Thule.lua at SecretsOTheP/quests d4625cdd (unchanged on HEAD) —
+          //   :3-4   header: "dream defilers at 79% and 69%, dispel at 50%, gargoyles at 40%"
+          //   :35-56 SpawnDefilers: one defiler per CLIENT on her hate list with damage > 0
+          //          (so pets, and players who have not hit her, add nothing); each is a
+          //          coin-flip between the small (221045) and large (221044) type
+          //   :64-70 hp events 79 and 69 both call SpawnDefilers
+          //   :72-75 50% casts Direption of Dreams (spell 3150, SPA 27 cancel magic, PB AE)
+          //   :77-98 40% turns the four statues into gargoyles (221043)
           id: 'terris-a', name: 'Terris-Thule (flag)', zone: 'Plane of Nightmare B', npcName: 'Terris Thule',
           callouts: [
             'Requires the 18-man Hedge Maze first. Clear trash to her chamber.',
-            '75%: small adds (some mez).',
+            '79% and 69%: dream defilers, one for EVERY player who has damaged her (pets do not count), so the add count grows with your DPS crowd. The big ones are immune to some spells.',
             '50%: MASS AE DISPEL — all but MT + 2 healers hide behind the wall, wait it out, return.',
-            '~35% (often delayed): 4 Gargoyles — off-tank/kite them and burn Terris.',
+            '40%: 4 Gargoyles — off-tank/kite them and burn Terris.',
             'Kill gargoyles after; hail the Projection.',
           ],
           stats: { hp: '500K (MoTM)', hits: '1100+', slow: 'slowable', ramp: null },
           abilities: [],
           tracker: [
-            { id: 'p75', label: '75% adds' },
+            { id: 'p79', label: '79% defilers' },
+            { id: 'p69', label: '69% defilers' },
             { id: 'p50', label: '50% dispel dodged' },
-            { id: 'p35', label: '35% gargoyles' },
+            { id: 'p40', label: '40% gargoyles' },
             { id: 'boss', label: 'Terris down' },
             { id: 'gargs', label: 'Gargoyles cleared' },
             { id: 'proj', label: 'Projection hailed' },
@@ -258,11 +268,11 @@ window.POP_RAIDS = {
         {
           id: 'agnarr', name: 'Agnarr the Storm Lord (3 phases)', zone: 'Bastion of Thunder', npcName: 'Agnarr the Storm Lord',
           callouts: [
-            'Need Symbol of Torden key (1 person) for the statue. Askr ports between rooms.',
+            'Symbol of Torden holder clicks the courtyard tower: the raid then has about 1 min to click up, each person clicking. Every holder click restarts that minute. Askr ports between rooms.',
             'P1: Evynd Firestorm (FIRE-IMMUNE, 500K) + kill 3 red summon portals fast → "transport".',
             'P2: Emmerik Skyfury (high cold resist, 600K; nasty AEs Meteor Storm / Storm Comet) + 3 portals → "storm".',
             'P3: tanks in FIRST (instant aggro), then healers. 5 portals (middle unkillable). Named adds ~100/75/50/25%: Jolur / Ekil (fire-immune) / Oljin (cold-immune) / Hibdin (slow-immune).',
-            'Karana → "follow the path of the fallen". Karana stays 20 min; Askr (both floors) and the Vortex no longer despawn at 55 min, they stay until his flagging window ends.',
+            'Karana → say "follow the path of the fallen" (a hail alone gives nothing). Karana stays 20 min; Askr (both floors) and the Vortex no longer despawn at 55 min, they stay until his flagging window ends.',
           ],
           stats: { hp: '1.1M', hits: '1600+', slow: null, ramp: null },
           abilities: [
@@ -409,7 +419,10 @@ window.POP_RAIDS = {
             'Pull mezzables 1 at a time → DPS to 5-10% → enchanters hold. Pull team roots/debuffs the 6 rootables.',
             'Earthen Vengeance (AE DoT/−atk speed/1000 DD) = REMOVE GREATER CURSE.',
             'Don\'t let a councilman exit combat (regens). Kill all 12; the Council round has no time limit → Avatar of Earth spawns.',
-            'Avatar of Earth: 50 minutes of idle time, paused while it is fighting; if it loses all aggro the clock refills to the full 50. Warnings at 20, 10 and 5 minutes left.',
+            // Server patch 2026-10-28, poearthb/encounters/RatheCouncil.lua at SecretsOTheP/quests 572bc06:
+            //   :8 AVATAR_IDLE 2100 s (was 3000) · :156-158 SetAvatarCombat only pauses (the wipe refill is gone)
+            //   :74 saved runs capped at 35 min · :295-300 warnings at 900/1500/1800 s elapsed = 20/10/5 left
+            'Avatar of Earth: 35 minutes of idle time (it was 50), paused while it is fighting. It does not refill after a wipe: the clock resumes where it stopped. Warnings at 20, 10 and 5 minutes left; at zero the attempt fails and can be retried after 15 minutes.',
             'Avatar: Ashen Form drops MT aggro −95% — AGGRO DISCIPLINE. Essence of Earth → Mound of Living Stone.',
           ],
           stats: { hp: 'Avatar 550K (MoTM)', hits: 'council ~3000 · Avatar 2400+', slow: 'Avatar slowable', ramp: null },
