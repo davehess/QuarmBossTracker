@@ -10732,6 +10732,9 @@ async function _handleAgentBuffCasts(req, res) {
       // case and means UNPROVEN, never "a different mob" — see _idScopeKeep.
       target_id:    Number.isFinite(Number(c.target_id)) ? Math.trunc(Number(c.target_id)) : null,
       is_charm_spell: !!c.is_charm_spell,
+      // The uploader's own cast line resolved to this landing (the agent's _selfCast), so `observer` cast it.
+      // Every agent since resolveSelfCastLanding has sent it; the column is what lets target-buffs say so.
+      self_cast:    c._selfCast === true,
       uploaded_by_discord_id: identity.discord_id,
     };
     (sid !== 0 ? resolved : ambiguous).push(row);
@@ -12457,7 +12460,7 @@ async function _handleAgentTargetBuffs(req, res) {
     const rows = await supabase.select('buff_casts',
       `guild_id=eq.${encodeURIComponent(guildId)}&target=ilike.${encodeURIComponent(name)}` +
       `&cast_at=gte.${encodeURIComponent(since)}` +
-      `&select=spell_name,dur_ticks,cast_at,observer,is_charm_spell,target_id&order=cast_at.desc&limit=50`);
+      `&select=spell_name,dur_ticks,cast_at,observer,is_charm_spell,target_id,self_cast&order=cast_at.desc&limit=50`);
     const now = Date.now();
     // Dedup by spell_name — most recent cast wins (a recast overwrites the
     // previous landing's timer).
@@ -12480,7 +12483,14 @@ async function _handleAgentTargetBuffs(req, res) {
       if (durSecs > 0 && (now - castMs) > durSecs * 1000) continue;     // expired
       const k = String(r.spell_name).toLowerCase();
       const prev = bySpell.get(k);
-      if (!prev || castMs > prev.castMs) bySpell.set(k, { row: r, castMs, durSecs });
+      // The newest landing of a spell wins (a recast overwrites), EXCEPT that the CASTER's own report outranks a
+      // bystander's of the same cast: within 10 s of each other they are one landing, and the caster's is the
+      // one that names the spell's owner (the guild lead, 2026-11-01).
+      const sameCast = prev && Math.abs(castMs - prev.castMs) <= 10_000;
+      const better = !prev
+        || (sameCast ? (!!r.self_cast !== !!prev.row.self_cast ? !!r.self_cast : castMs > prev.castMs)
+                     : castMs > prev.castMs);
+      if (better) bySpell.set(k, { row: r, castMs, durSecs });
     }
     const buffs = [];
     for (const v of bySpell.values()) {
@@ -12494,6 +12504,11 @@ async function _handleAgentTargetBuffs(req, res) {
         // even when catalog good_effect says otherwise.
         good:           v.row.is_charm_spell ? 0 : null,
         owner:          v.row.observer || null,
+        // The landing came from its CASTER's own agent (its own cast line resolved to this landing), so
+        // `observer` is the caster. Agents let it outrank a bystander's landing of the same effect, and a
+        // caster row with no spawn id still counts for the mob on screen. null id = unproven, never spawn 0.
+        by_caster:      !!v.row.self_cast,
+        target_id:      Number(v.row.target_id) > 0 ? Number(v.row.target_id) : null,
       });
     }
     return JSON.stringify({ buffs });
@@ -15264,6 +15279,65 @@ async function _handleAgentMyParses(req, res) {
   res.writeHead(200, Object.assign({ 'Content-Type': 'application/json', 'Vary': 'Accept-Encoding' },
     gzip ? { 'Content-Encoding': 'gzip' } : {}));
   return res.end(gzip ? require('zlib').gzipSync(body) : body);
+}
+
+// GET /api/agent/raid-fights?since=<ISO>
+// Every fight the guild uploaded since `since` (default 8 h, at most 12 h back), each once, ended only, newest
+// first, at most 60: the "Raid" list beside "Mine" in Mimic's DPS History (the guild lead, 2026-11-01).
+// One row per ENCOUNTER, which find_or_create_encounter already merged across clients. A fight's board is the
+// existing /api/agent/live-damage?boss=<name>&fight_start=<started_at>. Guild kills and guild wipes only
+// (classification null or 'wipe'). A hub or guest session never gets here (requireAgentAuth's allowlists).
+// 50 Mimics polling cost one set of three reads per 20 s: the cache key is the guild + the since minute.
+const _raidFightsCache = new Map();
+const _RAID_FIGHTS_TTL_MS = 20_000;
+async function _handleAgentRaidFights(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const supabase = require('./utils/supabase');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const now = Date.now();
+  let sinceMs = NaN;
+  try { sinceMs = Date.parse(new URL(req.url, 'http://x').searchParams.get('since') || ''); } catch { /* */ }
+  if (!Number.isFinite(sinceMs)) sinceMs = now - 8 * 3600_000;
+  sinceMs = Math.min(now, Math.max(sinceMs, now - 12 * 3600_000));
+  const sinceBucket = Math.floor(sinceMs / 60_000) * 60_000;   // down: a minute more, never a minute less
+
+  const out = await require('./utils/ttlCache').cached(_raidFightsCache, guildId + '|' + sinceBucket, _RAID_FIGHTS_TTL_MS, async () => {
+    const encs = await supabase.select('encounters',
+      `guild_id=eq.${encodeURIComponent(guildId)}`
+      + `&ended_at=not.is.null&started_at=gte.${encodeURIComponent(new Date(sinceBucket).toISOString())}`
+      + '&or=(classification.is.null,classification.eq.wipe)'
+      + '&select=id,npc_id,started_at,ended_at,duration_sec,is_wipe,eqemu_npc_types(name)'
+      + '&order=started_at.desc&limit=60').catch(() => null);
+    if (!Array.isArray(encs)) return { status: 502, body: JSON.stringify({ error: 'unavailable' }), keep: false };
+    if (!encs.length) return { status: 200, body: JSON.stringify({ fights: [] }), keep: true };
+
+    // Paged (60 fights × dozens of uploaders runs past PostgREST's 1,000-row page). Players are not read: the Raid row
+    // shows only how many clients sent the fight, and its board comes from /live-damage.
+    const contribs = await supabase.selectAllPaged('contributions',
+      `encounter_id=in.(${encs.map(e => e.id).join(',')})&select=encounter_id,uploaded_by_discord_id,contributor_character`, 'id').catch(() => null);
+    const clients = new Map();
+    for (const c of Array.isArray(contribs) ? contribs : []) {
+      const who = c.uploaded_by_discord_id || ('c:' + String(c.contributor_character || '').toLowerCase());
+      if (!clients.has(c.encounter_id)) clients.set(c.encounter_id, new Set());
+      clients.get(c.encounter_id).add(who);
+    }
+    const qd = require('./utils/questDialog');
+    const fights = encs.map(e => ({
+      id: e.id,
+      name: qd.displayName(e.eqemu_npc_types?.name),
+      npc_id: e.npc_id,
+      started_at: e.started_at,
+      ended_at: e.ended_at,
+      duration_s: e.duration_sec ?? Math.max(0, Math.round((Date.parse(e.ended_at) - Date.parse(e.started_at)) / 1000)),
+      wipe: !!e.is_wipe,
+      clients: Array.isArray(contribs) ? (clients.get(e.id)?.size || 0) : null,
+    }));
+    // A failed side read leaves `clients` null: answer now, but ask again next time.
+    return { status: 200, body: JSON.stringify({ fights }), keep: Array.isArray(contribs) };
+  }, { shouldCache: (r) => r.keep, max: 20 });
+  res.writeHead(out.status, { 'Content-Type': 'application/json' });
+  return res.end(out.body);
 }
 
 // The live raid split (§124, utils/raidGroups.js): which raid each uploader and raider is in when
@@ -25108,6 +25182,14 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentMyParses(req, res); }
     catch (err) {
       console.error('[my-parses] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/raid-fights')) {
+    try { return await _handleAgentRaidFights(req, res); }
+    catch (err) {
+      console.error('[raid-fights] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

@@ -3058,6 +3058,13 @@ the website has not cached the zone). Six-hour per-zone cache, weak ETag over th
 budget kind `zone_spawns` (30/min, GET, not sheddable). Instance sentinel respawn (1,700,000 s)
 reads `respawn_s: null`. Consumer: the Mimic overlay (`docs/DESIGN-mimic-2.9-spawn-map.md`).
 
+### DPS History: Mine / Raid; the caster's landing wins in Target Info — 2026-11-02 (§513 §514)
+Bot `_handleAgentRaidFights` (GET `/api/agent/raid-fights?since=`, guild kills and wipes, ended, ≤60, 20 s `ttlCache`) lists
+the night's fights with `clients` (distinct uploaders from `contributions`, a paged read); the agent serves it to the
+overlay at `/api/raid-fights` and a fight's board at `/api/raid-fights/board` (the bot's `/live-damage`). `buff_casts.self_cast`
+is set from the agent's `_selfCast` at ingest, and `insert_buff_casts` promotes a stored row when the caster's copy lost the
+dedup race; `/api/agent/target-buffs` returns `by_caster` and `target_id` and prefers the caster's row of the same cast.
+
 ### Mobs that split, and slow mode, on the Map (zone-spawns) — 2026-11-01 (§511)
 Bot `utils/splitSpawns.js` (called from `zoneSpawns.build` beside the traps, never throws): reads the zone's death scripts from
 `eqemu_quest_scripts` (`event_death` / `event_death_complete`), counts `eq.spawn2` / `eq.unique_spawn` calls placed at the dead

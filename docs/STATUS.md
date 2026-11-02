@@ -169,6 +169,13 @@ next touch one rather than assuming a missing row means a missing doc.
   `encounter_threat_graph` is not archived on Tower and stays in Supabase; its watermark was not read (the RPC timed out), so the first
   nights may clear less than the backlog. Copy method for Tower's file: `docs/HANDOFF-tower-archive-catchup.md`.
 
+- **🧪 DPS History Raid list + the debuffer's landing wins (bot 4.0.47 `main`, agent on beta, 2026-11-02, §513 §514).** GET
+  `/api/agent/raid-fights` (guild fights of the last 8 h, each once, merged; 20 s cache) feeds History's Mine / Raid switch; a
+  Raid row's board is `/live-damage?boss=&fight_start=`. `buff_casts.self_cast` (migration 20261102090000, applied) marks a
+  caster's own landing; target-buffs serves `by_caster` and lets it beat a bystander's row of the same cast. Agent half on beta:
+  the slow badge and debuff list take the caster's landing over emote guesses, and hour-off landings are put back or dropped.
+  Tests `test/raid-fights-route.test.js`, `test/buff-casts-self-cast.test.js` (main), `test/raid-fights-history.test.js`,
+  `test/debuffer-precedence.test.js` (beta).
 - **✅ Agent 4.0.53: a log a whole hour off the PC's clock is put back on the hour (beta + main, 2026-11-02, §512).** The first raid after
   the clocks went back dropped about a third of the projection hails (log times exactly 1 h early or late, measured in `pop_flags`).
   `_fixLogClock` in the live tail rewrites a log's timestamps once 5 live lines in a row sit on a 1–2 hour step. Test
