@@ -1285,6 +1285,15 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   `test/relv-mephit-counter.test.js`. Agent 4.0.47 (§471): the row reads "Falto:", and a counter started after Falto was
   seen (a mid-fight start) counts nothing. A cross-client count through the bot is not built (open if the floor proves too low).
 
+### Tower of Solusek Ro brazier clicks (agent 4.0.59 beta, 2026-11-02, first draft)
+- **What:** a Command Center row per live brazier in the Tower of Solusek Ro (the game calls it a flaming cauldron, the raid says
+  brazier): the wing, a countdown to its depop (30 minutes after the wing boss died), and whether THIS character has clicked it
+  yet ("click it (part N)" / "clicked"; red under five minutes). A wing boss killed out of this client's range shows no row.
+  Rizlona leaves one only on the SECOND Rizlona death (within 2 h 30 of the first; both display as "Rizlona").
+- **Where:** agent `_solroNoteLine` / `_solroSnapshot` (beside the Relv tracker) → Command Center state `solro_cauldrons` →
+  `apps/mimic/command.html` `solroHtml`. The click lines are the same ones `parsePopFlagLine` reads for the flag. Source:
+  SecretsOTheP/quests `solrotower/*.lua` @ 572bc06. Test: `test/solro-cauldrons.test.js`.
+
 ### Several rampages at once (agent 3.8.4 beta, 2026-10-19; DECISIONS §373)
 - **What:** one Command Center row per rampaging boss, and named bosses' rampages spoken by name.
 - **Where:** agent `stats.currentRampages`, tank state `rampages`, `apps/mimic/command.html` `rampHtml`. Test:

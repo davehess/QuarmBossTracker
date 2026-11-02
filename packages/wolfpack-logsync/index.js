@@ -18241,6 +18241,7 @@ function _serializeCommandCenterState() {
     rampage:       tank.rampage,
     rampages:      tank.rampages,
     relv:          _relvSnapshot(activeChar, Date.now()),   // null unless the Relv event is running
+    solro_cauldrons: _solroSnapshot(activeChar, Date.now()),   // null unless a Tower of Solusek Ro cauldron is up
     enrage:        tank.enrage,
     deathtouch:    tank.deathtouch,
     needs_rez:     _rezBoardSnapshot(),
@@ -35396,12 +35397,14 @@ const COMMAND_HTML = `<!doctype html>
   @keyframes flash{from{box-shadow:0 0 8px rgba(248,113,113,0.9)}to{box-shadow:0 0 16px rgba(248,113,113,0.4)}}
   .dt{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(107,33,168,0.5);
     border:1px solid #c084fc;border-radius:5px;margin-bottom:4px;font-size:11px}
-  .dt.crit{background:rgba(220,38,38,0.5);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
+  .dt.crit,.solro.crit{background:rgba(220,38,38,0.5);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
   .dt .sec{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
-  .relv{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(180,83,9,0.5);
+  .relv,.solro{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(180,83,9,0.5);
     border:1px solid #fb923c;border-radius:5px;margin-bottom:4px;font-size:11px}
-  .relv .n{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
-  .relv .sub{margin-left:auto;font-size:9px;color:#d0d7de}
+  .relv .n,.solro .n{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
+  .relv .sub,.solro .sub{margin-left:auto;font-size:9px;color:#d0d7de}
+  .solro.done{background:rgba(22,101,52,0.5);border-color:rgba(86,211,100,0.9)}
+  .solro.gone{opacity:0.5}
   .ramp{display:flex;flex-direction:column;gap:4px;padding:4px 7px;background:rgba(180,32,32,0.55);
     border:1px solid #f87171;border-radius:5px;margin-bottom:4px;font-size:11px}
   .ramp .row{display:flex;align-items:center;gap:6px}
@@ -36064,6 +36067,22 @@ const COMMAND_HTML = `<!doctype html>
     return '<div class="relv"><span>🔥 Falto: ' + main + '</span>'
          +   '<span class="sub">mepheekas killed ' + (Number(v.mepheekas) || 0) + '</span></div>';
   }
+  // Tower of Solusek Ro braziers (the guild lead, 2026-11-02; the game calls it a flaming cauldron, the raid calls it a
+  // brazier, and the row says brazier): one row per wing boss killed, counting down to the brazier's depop (30 minutes after it spawned) and saying whether THIS character has clicked it. The agent sends
+  // s.solro_cauldrons only while one is up; the countdown is worked out here from expires_at on each poll.
+  // Red flashing in the last five minutes while unclicked, green once clicked, dim once it has depopped.
+  function solroHtml(list, nowMs){
+    var out = '';
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i], left = Math.round((Number(c.expires_at) - nowMs) / 1000);
+      var gone = !(left > 0), clock = gone ? 'gone' : Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0');
+      var cls = 'solro' + (gone ? ' gone' : (c.clicked ? ' done' : (left <= 300 ? ' crit' : '')));
+      out += '<div class="' + cls + '"><span>' + (c.clicked ? '✓ ' : '🔥 ') + esc(c.wing) + ' brazier</span>'
+           +   '<span class="n">' + clock + '</span>'
+           +   '<span class="sub">' + (c.clicked ? 'clicked' : 'click it') + ' (part ' + (Number(c.part) || 0) + ')</span></div>';
+    }
+    return out;
+  }
   // 🎟 Guests (officers only; the guild lead, 2026-10-30: "add guests to the command center for officers/admins with an
   // extend button for +1/+3"). s.guests is the agent's copy of the bot's guest-link list, or null for anyone who is not
   // an officer, so the card simply is not there for a raider. A guest whose key ended more than 12 hours ago is left
@@ -36190,6 +36209,7 @@ const COMMAND_HTML = `<!doctype html>
     var rampRows = (s.rampages && s.rampages.length > 1) ? s.rampages : (s.rampage && s.rampage.target ? [s.rampage] : []);
     for (var ri = 0; ri < rampRows.length; ri++) html += rampHtml(rampRows[ri], rampRows.length > 1);
     if (s.relv) html += relvHtml(s.relv);
+    if (s.solro_cauldrons && s.solro_cauldrons.length) html += solroHtml(s.solro_cauldrons, Date.now());
 
     // PoP hail board — straight under the fight cluster (target, enrage, Death Touch, Main Tank, rampage),
     // above the long lists: after a kill there is no fight to push it down, and a fight that starts while
@@ -60208,6 +60228,84 @@ function _relvSnapshot(character, now) {
   return { mephits: st.mephits, total: RELV_MEPHITS, mepheekas: st.mepheekas, falto_up: !!st.faltoUp, falto_slain: !!st.faltoSlainAt, started_at: st.startedAt };
 }
 // ── end Relv mephit counter ────────────────────────────────────────────────────────────────────────────────────
+// ── Tower of Solusek Ro cauldrons (the guild lead, 2026-11-02: "add in for the command center timers the clicks for
+// the braziers for tower of solro after the mini bosses are completed") ─────────────────────────────────────────────
+// The game calls it a flaming cauldron, the raid calls it a brazier (the Command Center row says brazier; the
+// identifiers here and the click-line regexes keep the game's "cauldron"). Each of the five wing bosses leaves one when it dies; every raider clicks it
+// once for that wing's part of the Solusek Ro room flag, and it depops 30 minutes after it spawned. Source: SecretsOTheP/
+// quests @572bc06 solrotower/*.lua (the cauldron script sets `eq.set_timer("depop", 1800000)` on spawn; that timer
+// also pauses while the cauldron is in combat, which we ignore). The spawns are on the wing boss's death_complete:
+// Xuzl (part 1), Arlyxir (2), The Protector of Dresolik (3), the SECOND Rizlona (4), Jiva (5). Rizlona's first death
+// spawns a second mob with the same display name and only that one's death leaves a cauldron; the second one leaves
+// after 2 h 30, so a Rizlona death within that gap of an earlier one is the second.
+// ⚠ A client sees only the deaths that print near it, so a wing fought out of range shows no row, and a first Rizlona
+// death that was missed makes the second read as the first. Per character, from the live tail only (it takes now).
+// The click lines are the same ones parsePopFlagLine reads for the flag; here they only mark "this character clicked".
+const SOLRO_CAULDRON_MS       = 30 * 60 * 1000;
+const SOLRO_CAULDRON_GRACE_MS = 2 * 60 * 1000;   // a spent row stays this long past the depop, then goes
+const SOLRO_RIZLONA_GAP_MS    = 150 * 60 * 1000;
+const SOLRO_ZONE_LONG         = 'tower of solusek ro';
+const SOLRO_WINGS = [
+  { wing: 'Xuzl',     part: 1, death: /^Xuzl$/i,                      click: /arcane wisdom pulsing in your mind/ },
+  { wing: 'Arlyxir',  part: 2, death: /^Arlyxir$/i,                   click: /a wealth of knowledge enter your mind/ },
+  { wing: 'Dresolik', part: 3, death: /^The Protector of Dresolik$/i, click: /a bolt of energy surge through your arm/ },
+  { wing: 'Rizlona',  part: 4, death: /^Rizlona$/i,                   click: /relaxed as a short tune slips into your thoughts/ },
+  { wing: 'Jiva',     part: 5, death: /^Jiva$/i,                      click: /your body fill with strength/ },
+];
+const _SOLRO_CLICK_RX = /\]\s+As you place your hand on the burning cauldron, you feel (.+?)\.\s*$/;
+const _solroState   = new Map();   // character (lower) → { cauldrons: Map(wing → { part, diedAt, clickedAt }), rizlonaAt }
+const _solroLogZone = new Map();   // character (lower) → last zone a zone-change line named (lower)
+function _solroInTower(cl) {
+  for (const ch of Object.keys(_zealState || {})) {
+    if (ch.toLowerCase() !== cl) continue;
+    const z = _mapZoneShort(_zealState[ch] && _zealState[ch].zone);
+    if (z) return z === 'solrotower';
+  }
+  return _solroLogZone.get(cl) === SOLRO_ZONE_LONG;
+}
+function _solroNoteLine(line, character, now) {
+  if (!line || !character) return;
+  const cl = String(character).toLowerCase();
+  const zm = line.indexOf(' have entered ') !== -1 ? CHAT_ZONE_RX.exec(line) : null;
+  if (zm) {
+    const z = zm[1].trim().toLowerCase();
+    _solroLogZone.set(cl, z);
+    if (z !== SOLRO_ZONE_LONG) _solroState.delete(cl);
+    return;
+  }
+  if (line.indexOf('cauldron') !== -1) {
+    const st = _solroState.get(cl);
+    const cm = st ? _SOLRO_CLICK_RX.exec(line) : null;
+    const w = cm ? SOLRO_WINGS.find(x => x.click.test(cm[1])) : null;
+    const c = w ? st.cauldrons.get(w.wing) : null;
+    if (c && !c.clickedAt && now < c.diedAt + SOLRO_CAULDRON_MS) c.clickedAt = now;
+    return;
+  }
+  if (line.indexOf('slain') === -1 && line.indexOf('died') === -1) return;
+  const dead = _deadMobNameFromLine(line);
+  const w = dead ? SOLRO_WINGS.find(x => x.death.test(dead)) : null;
+  if (!w || !_solroInTower(cl)) return;
+  let st = _solroState.get(cl);
+  if (!st) { st = { cauldrons: new Map(), rizlonaAt: 0 }; _solroState.set(cl, st); }
+  if (w.wing === 'Rizlona') {
+    const second = st.rizlonaAt && now - st.rizlonaAt <= SOLRO_RIZLONA_GAP_MS;
+    st.rizlonaAt = second ? 0 : now;
+    if (!second) return;   // the first Rizlona only counts; the second one's death leaves the cauldron
+  }
+  st.cauldrons.set(w.wing, { part: w.part, diedAt: now, clickedAt: 0 });
+}
+// The Command Center rows: null unless a cauldron is up (or just gone) for this character, soonest depop first.
+function _solroSnapshot(character, now) {
+  const st = _solroState.get(String(character || '').toLowerCase());
+  if (!st) return null;
+  const out = [];
+  for (const [wing, c] of st.cauldrons) {
+    if (now > c.diedAt + SOLRO_CAULDRON_MS + SOLRO_CAULDRON_GRACE_MS) { st.cauldrons.delete(wing); continue; }
+    out.push({ wing, part: c.part, expires_at: c.diedAt + SOLRO_CAULDRON_MS, clicked: !!c.clickedAt });
+  }
+  return out.length ? out.sort((a, b) => a.expires_at - b.expires_at) : null;
+}
+// ── end Solusek Ro cauldrons ───────────────────────────────────────────────────────────────────────────────────
 // ── Death timeline (the guild lead, 2026-10-21: "the death timers between mobs ... easily and clearly displayed
 // versus having to say it out loud ... a timeline view ... on the bottom of the TTS") ──────────────────────────
 // A small ring of recent boss / Tactics-brother deaths read off the lines THIS PC's logs see (a kill out of this
@@ -65292,6 +65390,8 @@ async function main() {
         try { _xpNoteRawLine(line, b.character, Date.now()); } catch { void 0; }
         // Relv event (Plane of Storms): the Command Center's mephit counter (live tail only).
         try { _relvNoteLine(line, b.character, Date.now()); } catch { void 0; }
+        // Tower of Solusek Ro cauldrons: wing boss deaths and your clicks (live tail only).
+        try { _solroNoteLine(line, b.character, Date.now()); } catch { void 0; }
         // Corpse DM: your own death, with where the corpse lies (live tail only, so a backfill of an old
         // log never DMs anyone).
         try { _corpseNoteLine(line, b.character); } catch { void 0; }
