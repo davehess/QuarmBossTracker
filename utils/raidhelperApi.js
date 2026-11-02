@@ -264,8 +264,11 @@ async function freshnessSnapshot() {
       `guild_id=eq.${encodeURIComponent(guildId)}&start_time=gte.${encodeURIComponent(nowIso)}`
       + `&start_time=lte.${encodeURIComponent(horizonIso)}&select=id,title,start_time&order=start_time.asc&limit=20`),
   ]);
-  const lastSyncMs = Array.isArray(latest) && latest[0]?.synced_at
-    ? Date.parse(latest[0].synced_at) : 0;
+  // A read that FAILED (null: a timeout, the breaker, a 5xx) is not "never synced": it is no answer, and no
+  // verdict (the guild lead, 2026-11-02: "Raid-Helper sync has never landed" posted dozens of times while the
+  // mirror was syncing every 30 minutes; each one was a single failed read).
+  if (!Array.isArray(latest) || !Array.isArray(events)) return null;
+  const lastSyncMs = latest[0]?.synced_at ? Date.parse(latest[0].synced_at) : 0;
   const upcoming = [];
   for (const e of (Array.isArray(events) ? events : [])) {
     // Count per event rather than trusting a join — an event row can exist with
