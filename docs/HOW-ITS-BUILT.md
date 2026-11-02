@@ -97,6 +97,13 @@ writes.
 
 ## Identity & auth
 
+- **Free flag syncing for players outside Wolf Pack (bot 4.0.50, 2026-11-02, §526/§527; slice 1).** `utils/mimicLink.js`:
+  `FREE_ROUTES` / `PAID_HUB_ROUTES` (`hubFreeRouteAllowed`, `hubPlanPaid`: paid = `hub_guilds.plan = 'managed'`), 403
+  `plan_required` before a body is read; a player link (`{player:true}`, hub `'~player'`, `_hubPlayerOf`) mints `scope:
+  'player'` sessions that resolve through `hub_players` only. `utils/hubSync.js` (`decideClaim`, `flagRowsFromEvents`,
+  `handleRequest`) writes `hub_flags` and `hub_characters` (migration `20261102210000_hub_sync.sql`, RLS on, no policies);
+  dispatched from `_handleAgentPopFlags` before any Wolf Pack write. `web/lib/mimicLinkHub.ts` lets any raidmimic.com player
+  claim a player code. `test/hub-sync.test.js`, `test/mimic-link-hub.test.js`.
 - **Flag events board, `/pop/flag-events` (web 2.1.99 on `main`, `[beta]`, 2026-11-02; DECISIONS §522 pick A).** Officers post
   a target (catalog `web/lib/flagTargets.ts`, 12 targets, each a set of gate pieces from `popGatePieces.ts`; the demo shares it)
   and an Eastern date/time, an optional note and an optional Raid-Helper event (`actions.ts`: session + `isOfficer` re-checked,

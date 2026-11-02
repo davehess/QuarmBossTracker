@@ -10051,6 +10051,8 @@ const _popStatus = () => _popStatusInst || (_popStatusInst = require('./utils/po
 async function _handleAgentPopFlags(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
+  // A session linked to another guild, or a player with no guild (2026-11-02, §526): the free flag-sync tier. It never touches Wolf Pack's tables.
+  if (identity.hub_guild || identity.scope === 'player') return require('./utils/hubSync').handleRequest(req, res, identity, { supabase: require('./utils/supabase'), popFlagStages, bossFlagMap: POP_FLAG_BY_BOSS, bossKey: _popBossKey });
   const chunks = []; let total = 0;
   for await (const chunk of req) {
     total += chunk.length;
@@ -21854,6 +21856,9 @@ async function _handleAgentPoll(req, res) {
   // A session linked to another guild (2026-10-31, §499) is served no stream either: the tuning bundle, triggers, prefs
   // and backfill below are this process's guild's, and nothing in them is keyed by the session's guild yet.
   if (identity.hub_guild) want.clear();
+  // A player session (the free flag-sync link, no guild; 2026-11-02) is served no stream either. Its guild_id is the
+  // '~player' marker, so the theme stream above answers { theme: null } and never falls back to this process's guild.
+  if (identity.scope === 'player') want.clear();
   if (themeWanted) want.add('theme');
 
   // One tuning read powers the control plane, the shed checks, and the tuning

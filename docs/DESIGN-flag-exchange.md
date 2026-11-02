@@ -54,9 +54,8 @@ Eleven parts:
   ticks (own, or an officer). Readers treat every `source` alike; "a full read" (`recital`, `popflags`, `popflags_paste`) is
   what turns a missing flag from ❓ into ❌.
 - **Hosted guilds.** `hub_guilds` / `hub_players` / `hub_memberships` (role owner / officer / member / guest; one owner) /
-  `hub_invites`. Production: 0 hosted guilds. Officers can only make invite codes. A hosted player's agent can upload fights
-  only (`HUB_ALLOWED_ROUTES` in `utils/mimicLink.js`); `pop_flags` is not on that list, and the handler writes the process's
-  own guild.
+  `hub_invites`. Production: 0 hosted guilds. Officers can only make invite codes. (As researched: a hosted player's agent
+  could upload fights only and `pop_flags` was refused; changed 2026-11-02, see Supply below.)
 - **The bot.** The Raid Mimic app (§507) runs the community server. No invite flow for a hosted guild, no per-guild role table
   (`guild_roles` is named in `docs/DESIGN-raidmimic-hosted.md`, unbuilt), and `hub_guilds.discord_guild_id` is typed in by hand.
 - **Restricted-table pattern.** `hub_*` and `terms_acceptances`: RLS on, no policies, grants revoked from `anon` and
@@ -78,8 +77,17 @@ Mimic. Not your zone, not when you got a flag, nothing from your logs. Turn it o
 - All three: RLS on, no policies, grants revoked; read only through the web's server actions after checking the caller's
   grant and the entry's live consent. Never through the bot's service role.
 
-**Supply.** A hosted player's flags need a way in: a hub-scoped `pop_flags` route for the agent (added to
-`HUB_ALLOWED_ROUTES`, writing the player's own guild) and the web paste on raidmimic.com. Third-party capture (§516) lands as
+**Supply.** A hosted player's flags need a way in: a hub-scoped `pop_flags` route for the agent and the web paste on
+raidmimic.com. **Built 2026-11-02 (bot 4.0.50, slice 1 of free syncing, §526):** `utils/mimicLink.js` splits the hub
+routes into `FREE_ROUTES` (poll, latest-version, link routes, `pop_flags`) and `PAID_HUB_ROUTES` (adds the fight upload,
+for a guild on the `managed` plan); a free session hitting a paid route gets 403 `plan_required` before any body is read
+(§527). A **player session** (link start `{player:true}`, code hub `'~player'`, no guild needed, only a raidmimic.com
+account) resolves through `hub_players` alone. Its flags go to `utils/hubSync.js` → `hub_flags` (person-scoped, no
+guild_id) with the characters in `hub_characters` (proof `claimed` by uploading as the character; a name Wolf Pack links to
+another member is refused; two players on one name both become `contested`). Neither table is Wolf Pack's: the dispatch in
+`_handleAgentPopFlags` runs before any Wolf Pack write (`test/hub-sync.test.js`). Still to do: Mimic's "no guild, just sync"
+choice (beta), kills, the player page, the guild feed, and **self-delete and export covering `hub_flags` / `hub_characters`
+(a launch blocker: `member_self_delete` anonymises `hub_players`, so the cascade never fires)**. Third-party capture (§516) lands as
 "reported", shows ✅ marked reported, never ❌, until the owner confirms.
 
 **Events.** `flag_events (guild_id, target_key, starts_at, posted_by, note, visibility)`, `target_key` from the catalog;

@@ -193,6 +193,12 @@ next touch one rather than assuming a missing row means a missing doc.
   picked (§522) and the real board is live for Wolf Pack at https://wolfpack.quest/pop/flag-events (web 2.1.99, `[beta]`;
   officers post, everyone sees who still needs it; "Ping" waits on the bot). The Discord setup checklist is an artifact
   (link in the private briefing).
+- **🧪 Free flag syncing outside Wolf Pack, slice 1 (bot 4.0.50 `main`, migration `20261102210000_hub_sync.sql` applied,
+  2026-11-02, §526, §527).** A player session (no guild) and the free/paid route gate; flags into `hub_flags` /
+  `hub_characters`; the fight upload only for `managed` guilds. Nobody can start a player link yet (Mimic's choice is the next
+  beta slice). **⚠ Launch blocker:** self-delete and the data export must cover `hub_flags` and `hub_characters` before
+  player links are offered. Then kills (`hub_kills`), the player page `/player`, the guild feed, the in-game proof code.
+  Plan: `docs/DESIGN-flag-exchange.md` §3 Supply.
 - **✅ PoP guide: what each character is missing, per gate, and the small paste box (web 2.1.94 `main`, 2026-11-02, FB-115).**
   On the guild lead's "looks right now, ship it": https://wolfpack.quest/pop/guide opens on the family table (every piece of the
   picked gate per character, and what is left); a character's name opens their piece-by-piece list (`?v=gate-a`). The paste box
