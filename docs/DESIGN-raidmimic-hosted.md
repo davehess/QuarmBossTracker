@@ -412,6 +412,29 @@ would be a lifetime liability unless the quota is small and fixed. Options, cost
 - **C — One-time $20 Personal (lifetime, fixed quota) + Guild flat $25/mo**: works only because the Personal quota is bounded;
   no recurring personal revenue, so the guild fee carries everything.
 
+### 8e. The rule: what costs us money is what we charge for (2026-11-02, DECISIONS §527)
+
+The guild lead: *"Any of the things that cost us money are the things that we charge for."* Free is everything that costs us
+nothing or next to nothing to run; a plan pays for everything that stores much, computes much, or is read often. Each line
+below is checked against what it costs, measured on 2026-11-02 (whole-history table sizes, indexes included):
+
+| What | What it costs us | Measured | Plan |
+|---|---|---|---|
+| Overlays, triggers, the DPS meter on your own PC | nothing: it runs on the player's machine | 0 | Free |
+| PoP flags and boss kills, synced | a few rows per player per night | flags 15 MB, fights 36 MB, all history | Free |
+| A guild's feed of its members' flags and kills into its own site or bot | a push of a few hundred bytes per event | negligible; a pull API is rate-limited so polling cannot become egress | Free |
+| The per-second fight feed: replays, threat, the raid review, spectator | the biggest store we have | threat snapshots 2.49 GB, fight events 183 MB, threat graph 40 MB; ~41 MB per guild raid night | Pro · Guild |
+| Fight detail beyond flags and kills: merged parses, per-ability rollups, every raider's row | storage that grows every night | rollups 193 MB, contributions 63 MB, per-player rows 62 MB | Pro · Guild |
+| Chat relay and /who history | storage | chat 292 MB, /who 182 MB | Pro · Guild |
+| Buff landings shared across the raid | storage, kept 7 days | 88 MB | Pro · Guild |
+| A Raid Mimic bot in the guild's own Discord (timers, raid cards, role wizard) | bot compute and its connection per server | today's one bot ≈ $2 a month; per-guild bots cost more | Pro · Guild |
+| Cloud backups of a player's UI and layouts | storage per player | 10 MB today, grows per player | Pro · Individual |
+| Anything a page or overlay reads from us every few seconds | egress (Supabase bills reads, not writes) | not measurable from here (dashboard only) | Pro |
+
+Consequences: free syncing must send flags and kills ONLY (the server enforces it, so a free player's agent cannot fill the
+fight-feed tables); the Free tile's "your own parses" means the meter on the player's PC, and a parse uploaded to us is a
+Pro feature; a pull feed gets a rate limit. A new feature takes a line in this table before it takes a tier.
+
 ## 9. Bots at scale: one per guild or one for all, subdomains, where guest data lives, and other games (2026-10-31)
 
 The guild lead: *"we're also going to need to account for the additional load on railway bots. each Guild will probably want
