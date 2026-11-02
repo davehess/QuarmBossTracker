@@ -31,6 +31,9 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const js = (rel) => stripJs(read(rel));
 const SQL_REL = 'supabase/migrations/20261101140000_member_self_delete.sql';
 const sql = () => stripSql(read(SQL_REL));
+// 2026-11-02: member_self_delete was redefined to also remove the synced flags and characters; THAT is the live one.
+const SQL_HUB_REL = 'supabase/migrations/20261102220000_self_delete_hub_sync.sql';
+const sqlHub = () => stripSql(read(SQL_HUB_REL));
 
 const ME = { userId: '11111111-1111-4111-8111-111111111111', discordId: '700000000000000001' };
 const OTHER_DISCORD = '700000000000000002';
@@ -742,7 +745,7 @@ describe('the delete action', () => {
 
 describe('the migration: one transaction for the person\'s own data, slices for the guild\'s records', () => {
   const s = sql();
-  const DEL = s.slice(s.indexOf('create or replace function public.member_self_delete'), s.indexOf('create or replace function public.member_self_unlink_batch'));
+  const DEL = sqlHub().slice(sqlHub().indexOf('create or replace function public.member_self_delete'));   // the live definition
   const UNL = s.slice(s.indexOf('create or replace function public.member_self_unlink_batch'));
   const tuples = (block) => [...block.matchAll(/\(\s*'([a-z_]+)'\s*,\s*'([a-z_]+)'\s*\)/g)].map(m => [m[1], m[2]]);
   // tables the function handles with a hand-written statement rather than a VALUES row
@@ -752,6 +755,8 @@ describe('the migration: one transaction for the person\'s own data, slices for 
     hub_players: /update public\.hub_players\s+set discord_id = 'deleted:'/,
     hub_memberships: /update public\.hub_memberships set left_at/,
     hub_player_activity: /delete from public\.hub_player_activity where player_id = v_player/,
+    hub_flags: /delete from public\.hub_flags where player_id = v_player/,
+    hub_characters: /delete from public\.hub_characters where player_id = v_player/,
   };
 
   it('both functions are security definer, revoked from everyone, granted to service_role only', () => {
@@ -848,5 +853,80 @@ describe('where the section lives', () => {
     expect(g).toContain('{onHost && <div className="mt-6"><YourData exportHref="/guilds/data/export" /></div>}');
     expect(g).toContain("href={onHost ? '#your-data' : '/me#your-data'}");
     expect(g).toContain('Your data →');
+  });
+});
+
+// ─── the synced flags and characters (DECISIONS §526): hub_players is anonymised, never deleted, so the ON DELETE
+// CASCADE on hub_flags / hub_characters never fires; the function has to remove them itself.
+describe('free flag syncing: Delete and Download cover hub_flags and hub_characters', () => {
+  const NEW = sqlHub();
+  const OLD = sql();
+  const fnOf = (text) => text.slice(text.indexOf('create or replace function public.member_self_delete'), text.indexOf('create or replace function public.member_self_unlink_batch') > 0 ? text.indexOf('create or replace function public.member_self_unlink_batch') : undefined);
+  const NEW_DEL = fnOf(NEW);
+  const OLD_DEL = fnOf(OLD);
+  const HUB_LINES = [
+    /^ *delete from public\.hub_flags where player_id = v_player;\n/m,
+    /^ *delete from public\.hub_characters where player_id = v_player;\n/m,
+  ];
+
+  it('the new migration deletes both hub tables for the player BEFORE the hub_players row is anonymised', () => {
+    const iFlags = NEW_DEL.search(/delete from public\.hub_flags where player_id = v_player;/);
+    const iChars = NEW_DEL.search(/delete from public\.hub_characters where player_id = v_player;/);
+    const iAnon = NEW_DEL.search(/update public\.hub_players\s+set discord_id = 'deleted:'/);
+    expect(iFlags).toBeGreaterThan(0);
+    expect(iChars).toBeGreaterThan(0);
+    expect(iAnon).toBeGreaterThan(iFlags);
+    expect(iAnon).toBeGreaterThan(iChars);
+    // both sit inside the `if v_player is not null` block that also leaves the guilds and clears the activity log
+    expect(NEW_DEL.lastIndexOf('if v_player is not null then', iFlags)).toBeGreaterThan(NEW_DEL.indexOf('owns_guild'));
+    expect(NEW_DEL.slice(NEW_DEL.lastIndexOf('if v_player is not null then', iFlags), iAnon)).toMatch(/delete from public\.hub_player_activity/);
+    // the counts reach the audit row like every other table
+    expect(NEW_DEL).toContain("jsonb_build_object('hub_flags', n)");
+    expect(NEW_DEL).toContain("jsonb_build_object('hub_characters', n)");
+  });
+
+  it('nothing else changed: with the hub lines (and the two counts after them) removed, the body equals the previous definition', () => {
+    let stripped = NEW_DEL;
+    for (const re of HUB_LINES) {
+      const m = re.exec(stripped);
+      expect(m, String(re)).toBeTruthy();
+      // the delete line, then its `get diagnostics` and `v_counts :=` lines
+      const rest = stripped.slice(m.index + m[0].length);
+      const tail = /^ *get diagnostics n = row_count;\n *v_counts := v_counts \|\| jsonb_build_object\('hub_(?:flags|characters)', n\);\n/.exec(rest);
+      expect(tail, 'counts after ' + String(re)).toBeTruthy();
+      stripped = stripped.slice(0, m.index) + rest.slice(tail[0].length);
+    }
+    const norm = (t) => t.replace(/\n{2,}/g, '\n').trim();
+    expect(norm(stripped)).toBe(norm(OLD_DEL));
+  });
+
+  it('keeps the signature, security settings and grants', () => {
+    expect(NEW).toContain('create or replace function public.member_self_delete(p_discord_id text, p_user_id uuid)');
+    expect(NEW_DEL).toMatch(/security definer\s+set search_path = public, pg_temp/);
+    expect(NEW).toMatch(/revoke all on function public\.member_self_delete\(text, uuid\) from public, anon, authenticated;/);
+    expect(NEW).toMatch(/grant execute on function public\.member_self_delete\(text, uuid\) to service_role;/);
+    expect(NEW).not.toMatch(/grant[^;]*\bto (anon|authenticated|public)\b/);
+    expect(NEW).not.toMatch(/member_self_unlink_batch/);          // not redefined here
+  });
+
+  it('the export lists both as personal sections, matched by the person\'s hub player id, with explicit columns and a unique order', () => {
+    for (const [table, order] of [['hub_flags', ['earned_at', 'id']], ['hub_characters', ['name_lc', 'player_id']]]) {
+      const spec = SELF_TABLES.find(t => t.table === table);
+      expect(spec, table).toBeTruthy();
+      expect(spec.group).toBe('personal');
+      expect(spec.clauses).toEqual([{ col: 'player_id', kind: 'player' }]);
+      expect(spec.select).not.toContain('*');
+      expect(spec.order.map(o => o[0] ?? o.col)).toEqual(order);
+      expect(PERSONAL_TABLES).toContain(table);
+      expect(GUILD_RECORD_TABLES).not.toContain(table);
+      expect(findSection(table)).toBeTruthy();
+    }
+  });
+
+  it('exporting hub_flags reads the player id first, then the table by player_id', async () => {
+    const db = fakeDb({ tables: { hub_players: [{ player_id: '33333333-3333-4333-8333-333333333333' }] } });
+    await exportSection(db, findSection('hub_flags'), ME);
+    expect(db.log.map(q => q.table)).toEqual(['hub_players', 'hub_flags']);
+    expect(db.log[1].or).toBe('player_id.in.(33333333-3333-4333-8333-333333333333)');
   });
 });
