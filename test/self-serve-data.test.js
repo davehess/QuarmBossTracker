@@ -129,7 +129,7 @@ describe('the download: scoped to the session, secrets never read', () => {
   it('keys every query on the session\'s ids, their hub player, or their own character names, and nothing else', async () => {
     const { db } = await runExport();
     const allowedValues = new Set([ME.discordId, ME.userId, '33333333-3333-4333-8333-333333333333']);
-    const allowedNames = new Set(CHARS.map(c => c.name));
+    const allowedNames = new Set(CHARS.flatMap(c => [c.name, c.name.toLowerCase()]));
     const bootstrap = new Set(['characters', 'hub_players']);
     let checked = 0;
     for (const q of db.log) {
@@ -139,11 +139,12 @@ describe('the download: scoped to the session, secrets never read', () => {
         continue;
       }
       expect(q.or, `${q.table} has an .or() filter`).toBeTruthy();
-      for (const part of q.or.split(',')) {
-        const m = /^([a-z_]+)\.(eq|in|ilike)\.(.+)$/.exec(part);
+      for (const part of q.or.split(/,(?![^()]*\))/)) {         // commas inside in.(…) belong to the list
+        const m = /^([a-z_]+)\.(eq|in)\.(.+)$/.exec(part);
         expect(m, `${q.table}: ${part}`).toBeTruthy();
-        const val = m[3].replace(/^\(|\)$/g, '');
-        expect(allowedValues.has(val) || allowedNames.has(val), `${q.table}: ${part}`).toBe(true);
+        for (const val of m[3].replace(/^\(|\)$/g, '').split(',')) {
+          expect(allowedValues.has(val) || allowedNames.has(val), `${q.table}: ${part}`).toBe(true);
+        }
       }
       checked++;
     }
@@ -162,8 +163,8 @@ describe('the download: scoped to the session, secrets never read', () => {
     const { db } = await runExport();
     const inv = db.log.filter(q => q.table === 'character_inventory');
     expect(inv.map(q => q.eq.find(([c]) => c === 'guild_id')?.[1]).sort()).toEqual(['hubguild', 'wolfpack']);
-    expect(inv.find(q => q.eq.some(([, v]) => v === 'wolfpack')).or).toBe('character_name.ilike.Aldenmar,character_name.ilike.Brackwyn');
-    expect(inv.find(q => q.eq.some(([, v]) => v === 'hubguild')).or).toBe('character_name.ilike.Corvale');
+    expect(inv.find(q => q.eq.some(([, v]) => v === 'wolfpack')).or).toBe('character_name.in.(Aldenmar,aldenmar,Brackwyn,brackwyn)');
+    expect(inv.find(q => q.eq.some(([, v]) => v === 'hubguild')).or).toBe('character_name.in.(Corvale,corvale)');
     // a table keyed on the Discord id needs no guild filter
     expect(db.log.filter(q => q.table === 'tells').every(q => q.eq.length === 0)).toBe(true);
   });
@@ -171,14 +172,18 @@ describe('the download: scoped to the session, secrets never read', () => {
   it('cleans a character name to letters before it goes into a filter', () => {
     const spec = SELF_TABLES.find(t => t.table === 'character_inventory');
     // filterParts is handed already-cleaned names by loadOwnCharacters; the clean-up itself is exercised end to end:
-    expect(filterParts(spec, ME, [], ['Aldenmar'])).toEqual(['character_name.ilike.Aldenmar']);
+    expect(filterParts(spec, ME, [], ['Aldenmar'])).toEqual(['character_name.in.(Aldenmar,aldenmar)']);
+    // stored any case, read as written, Capitalised and lower case (the forms the tables hold); one exact `in`, no ilike
+    expect(filterParts(spec, ME, [], ['zARRIN'])).toEqual(['character_name.in.(zARRIN,zarrin,Zarrin)']);
+    expect(filterParts(spec, ME, [], [])).toEqual([]);
+    expect(js('web/lib/selfData.ts')).not.toMatch(/\.ilike\./);
   });
 
   it('strips punctuation out of a stored name (a filter value can never carry a comma or a parenthesis)', async () => {
     const db = fakeDb({ tables: { characters: [{ guild_id: 'wolfpack', name: 'Zar,rin).or(x' }] } });
     await buildExport(db);
     const inv = db.log.find(q => q.table === 'character_inventory');
-    expect(inv.or).toBe('character_name.ilike.Zarrinorx');
+    expect(inv.or).toBe('character_name.in.(Zarrinorx,zarrinorx)');
   });
 
   it('never selects a secret, never selects *', () => {
@@ -355,7 +360,7 @@ describe('the part route: an allow-listed section name picks a table and nothing
     await exportSection(db, spec, ME);
     const inv = db.log.filter(q => q.table === 'character_inventory');
     expect(inv.length).toBe(2);                                          // once per guild, as before
-    for (const q of inv) for (const part of q.or.split(',')) expect(part).toMatch(/^character_name\.ilike\.(Aldenmar|Brackwyn|Corvale)$/);
+    for (const q of inv) expect(q.or).toMatch(/^character_name\.in\.\((?:(?:Aldenmar|aldenmar|Brackwyn|brackwyn|Corvale|corvale),?)+\)$/);
   });
 
   it('reads only the lookups a section needs: a personal table asks for no characters, a hub table asks for the player id', async () => {

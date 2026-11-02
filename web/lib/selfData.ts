@@ -235,6 +235,14 @@ export async function loadOwnCharacters(db: Db, ids: Ids): Promise<Chars> {
   return [...by].map(([guild, s]) => ({ guild, names: [...s].sort() }));
 }
 
+// A name as the tables store it: as written, Capitalised (how the game prints it) or all lower case (measured
+// 2026-11-02 across chat, XP, inventory, per-fight players and rollups: no other casing). An exact `in` on these uses
+// the column's index. The old case-blind `ilike` per name could not: it tested every row of the guild's chat, XP and
+// fight tables newest first, and with ~50 characters the pages past the first ran into the database's 8 s limit, so
+// those five tables came back "could not be read" (the guild lead's export, 2026-11-02).
+export const nameVariants = (names: string[]): string[] =>
+  [...new Set(names.flatMap(n => [n, n.toLowerCase(), n.charAt(0).toUpperCase() + n.slice(1).toLowerCase()]))];
+
 /** The filter pieces for one query. Values are the session's own ids, a hub player id read from their own row, or cleaned names. */
 export function filterParts(spec: TableSpec, ids: Ids, playerIds: string[], names: string[]): string[] {
   const parts: string[] = [];
@@ -242,7 +250,7 @@ export function filterParts(spec: TableSpec, ids: Ids, playerIds: string[], name
     if (c.kind === 'discord') parts.push(`${c.col}.eq.${ids.discordId}`);
     else if (c.kind === 'user') parts.push(`${c.col}.eq.${ids.userId}`);
     else if (c.kind === 'player') { if (playerIds.length) parts.push(`${c.col}.in.(${playerIds.join(',')})`); }
-    else for (const n of names) parts.push(`${c.col}.ilike.${n}`);
+    else if (names.length) parts.push(`${c.col}.in.(${nameVariants(names).join(',')})`);
   }
   return parts;
 }
