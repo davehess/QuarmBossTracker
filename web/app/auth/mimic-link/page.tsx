@@ -30,17 +30,55 @@ export const metadata = {
 
 export const dynamic = 'force-dynamic';
 
+// The code in the address is never typed into the form for anyone: the person types what Mimic shows. When the address
+// does carry a code, the page shows when that request started and which Mimic made it, and the form carries it as
+// `expect_code`; a typed code that differs is refused, so a link built around someone else's code cannot be confirmed
+// by a person who is looking at their own Mimic's code.
+const CODE_SHAPE = /^[A-Z0-9]{4,12}$/;
+function cleanCode(v: unknown): string {
+  return String(v || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
+}
+
+// Link requests live 10 minutes (the bot sets expires_at = start + 10 min), so the start is derived from expires_at.
+const LINK_TTL_MS = 10 * 60 * 1000;
+async function requestContext(code: string): Promise<{ started: string; version: string | null } | null> {
+  if (!CODE_SHAPE.test(code)) return null;
+  const { data } = await supabaseAdmin()
+    .from('mimic_link_codes')
+    .select('expires_at,agent_version')
+    .eq('user_code', code)
+    .limit(1);
+  const row = Array.isArray(data) ? data[0] : null;
+  if (!row || !row.expires_at) return null;
+  const mins = Math.max(0, Math.round((Date.now() - (new Date(row.expires_at).getTime() - LINK_TTL_MS)) / 60000));
+  return {
+    started: mins < 1 ? 'less than a minute ago' : `${mins} minute${mins === 1 ? '' : 's'} ago`,
+    version: row.agent_version ? String(row.agent_version).slice(0, 32) : null,
+  };
+}
+
+function RequestContext({ ctx }: { ctx: { started: string; version: string | null } | null }) {
+  if (!ctx) return null;
+  return (
+    <p className="text-xs text-dim text-center">
+      This link request started {ctx.started}{ctx.version ? ` from Mimic ${ctx.version}` : ''}. Type the code Mimic is
+      showing; if you did not just start this, close the page.
+    </p>
+  );
+}
+
 async function authorizeCode(formData: FormData) {
   'use server';
   // This is Wolf Pack's gated claim. A raidmimic host has its own (authorizeHubCode): a signed-in player there has no
   // wolfpack_members row, and must not be able to post here to stamp a Wolf Pack code with a Discord id of their own.
   if (isRaidmimicHost(headers().get('host'))) redirect('/auth/mimic-link?error=wrong_site');
-  const codeRaw = String(formData.get('user_code') || '').trim().toUpperCase();
   // Normalize: strip spaces / dashes the user may have added.
-  const userCode = codeRaw.replace(/[\s\-_]/g, '');
+  const userCode = cleanCode(formData.get('user_code'));
   if (!userCode || userCode.length < 4) {
     redirect('/auth/mimic-link?error=invalid_code');
   }
+  const expect = cleanCode(formData.get('expect_code'));
+  if (expect && expect !== userCode) redirect('/auth/mimic-link?error=code_mismatch');
 
   // Caller must be signed in via Discord OAuth.
   const { data: { user } } = await supabaseServer().auth.getUser();
@@ -103,6 +141,7 @@ const ERROR_LABELS: Record<string, string> = {
   update_failed:  'Couldn\'t save the link (database error). Try again in a moment.',
   no_discord_id:  'Your Wolf Pack member record is missing a Discord ID — sign out and back in, then retry.',
   wrong_site:     'That form belongs to wolfpack.quest. Open the link Mimic gave you instead.',
+  code_mismatch:  'That is not the code this page was opened for. Type the code your Mimic is showing, or start again from Mimic.',
 };
 const OK_LABELS: Record<string, string> = {
   '1':       '✓ Linked. Return to Mimic — it\'ll pick up the link within a couple of seconds.',
@@ -115,7 +154,7 @@ export default async function MimicLinkPage({
   searchParams: { code?: string; error?: string; ok?: string };
 }) {
   const { data: { user } } = await supabaseServer().auth.getUser();
-  const prefilled = String(searchParams.code || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
+  const prefilled = cleanCode(searchParams.code);   // shown as context only, never put into the form
   if (isRaidmimicHost(headers().get('host'))) return <HubLinkPage user={user} searchParams={searchParams} />;
   if (!user) {
     const next = '/auth/mimic-link' + (searchParams.code ? `?code=${encodeURIComponent(searchParams.code)}` : '');
@@ -152,6 +191,7 @@ export default async function MimicLinkPage({
 
   const errorMsg  = searchParams.error ? (ERROR_LABELS[searchParams.error] || `Error: ${searchParams.error}`) : null;
   const okMsg     = searchParams.ok    ? (OK_LABELS[searchParams.ok]       || OK_LABELS['1'])              : null;
+  const ctx       = !okMsg ? await requestContext(prefilled) : null;
 
   return (
     <div className="max-w-lg mx-auto mt-10 space-y-6">
@@ -176,20 +216,21 @@ export default async function MimicLinkPage({
 
         {!okMsg && (
           <form action={authorizeCode} className="space-y-4">
+            {ctx && <input type="hidden" name="expect_code" value={prefilled} />}
             <label className="block">
               <span className="block text-xs uppercase tracking-widest text-dim mb-1">Code from Mimic</span>
               <input
                 type="text"
                 name="user_code"
-                defaultValue={prefilled}
                 placeholder="ABCD23"
                 maxLength={12}
                 autoComplete="off"
                 autoCapitalize="characters"
-                autoFocus={!prefilled}
+                autoFocus
                 className="w-full bg-bg border border-border rounded px-3 py-2 text-text font-mono text-2xl tracking-[0.3em] text-center uppercase focus:border-blue outline-none"
               />
             </label>
+            <RequestContext ctx={ctx} />
             <button
               type="submit"
               className="w-full bg-blue text-white border-0 rounded px-4 py-2 text-sm font-bold cursor-pointer hover:bg-blue/90"
@@ -209,7 +250,7 @@ export default async function MimicLinkPage({
 }
 
 // ── raidmimic hosts: finish a link for a guild on Raid Mimic (§499) ──────────────────────────────────────────────
-const HUB_ERROR_LABELS: Record<LinkRefusal | 'invalid_code' | 'no_discord_id' | 'update_failed' | 'wrong_site', string> = {
+const HUB_ERROR_LABELS: Record<LinkRefusal | 'invalid_code' | 'no_discord_id' | 'update_failed' | 'wrong_site' | 'code_mismatch', string> = {
   invalid_code:   'That code doesn\'t look right — paste the 6 characters Mimic is showing.',
   unknown_code:   'No matching code. Did it already expire (10 minute window) or get mistyped?',
   expired:        'That code expired. In Mimic, press Sign in again to get a fresh one.',
@@ -221,6 +262,7 @@ const HUB_ERROR_LABELS: Record<LinkRefusal | 'invalid_code' | 'no_discord_id' | 
   no_discord_id:  'Your account is missing a Discord ID — sign out and back in, then retry.',
   error:          'Couldn\'t check that code just now. Try again in a moment.',
   wrong_site:     'That form belongs to wolfpack.quest. Open the link Mimic gave you instead.',
+  code_mismatch:  'That is not the code this page was opened for. Type the code your Mimic is showing, or start again from Mimic.',
 };
 const HUB_OK_LABELS: Record<string, string> = {
   '1':       '✓ Linked. Return to Mimic — it\'ll pick up the link within a couple of seconds.',
@@ -236,6 +278,8 @@ async function authorizeHubCode(formData: FormData) {
   'use server';
   const userCode = cleanLinkCode(formData.get('user_code'));
   if (!LINK_CODE_RX.test(userCode)) redirect('/auth/mimic-link?error=invalid_code');
+  const expect = cleanLinkCode(formData.get('expect_code'));
+  if (expect && expect !== userCode) redirect('/auth/mimic-link?error=code_mismatch');
 
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=${encodeURIComponent('/auth/mimic-link?code=' + userCode)}`);
@@ -273,6 +317,7 @@ async function HubLinkPage({
   const ended = !!refusal && (refusal.reason === 'join_first' || refusal.reason === 'wolfpack_code' || refusal.reason === 'suspended' || refusal.reason === 'unknown_guild');
   const successMsg = okMsg || (check?.state === 'already' ? HUB_OK_LABELS['already'] : null);
   const name = profileOf(user).displayName || 'your Discord account';
+  const ctx = !successMsg && codeOk ? await requestContext(prefilled) : null;
 
   return (
     <div className="max-w-lg mx-auto mt-10 space-y-6">
@@ -329,20 +374,21 @@ async function HubLinkPage({
           )}
 
           <form action={authorizeHubCode} className="space-y-4">
+            {ctx && <input type="hidden" name="expect_code" value={prefilled} />}
             <label className="block">
               <span className="block text-xs uppercase tracking-widest text-dim mb-1">Code from Mimic</span>
               <input
                 type="text"
                 name="user_code"
-                defaultValue={prefilled}
                 placeholder="ABCD23"
                 maxLength={12}
                 autoComplete="off"
                 autoCapitalize="characters"
-                autoFocus={!prefilled}
+                autoFocus
                 className="w-full bg-bg border border-border rounded px-3 py-2 text-text font-mono text-2xl tracking-[0.3em] text-center uppercase focus:border-blue outline-none"
               />
             </label>
+            <RequestContext ctx={ctx} />
             <button
               type="submit"
               className="w-full bg-blue text-white border-0 rounded px-4 py-2 text-sm font-bold cursor-pointer hover:bg-blue/90"

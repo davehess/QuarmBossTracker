@@ -62,23 +62,10 @@ These must all PASS. A failure means a fix regressed.
 
 ---
 
-## B. Confirm the OPEN findings are still open (so you know the exposure, until round two ships)
+## B. Open findings
 
-These are expected to **FAIL** today — that is the point: the test documents the live exposure and becomes the
-regression test once each is fixed (private briefing, items 1–8). Run them from a **test** member account.
-
-| Test | What it proves | Expected today |
-|---|---|---|
-| B1 Bid as another character | `POST /api/agent/place-bid` with `character` set to a character you do NOT own → does the bid go through? | Goes through (open) |
-| B2 OpenDKP character at a rank | `POST /api/admin/opendkp-register` as a non-officer with `rank: "Raid Pack"` | Accepted (open) |
-| B3 Wishlist bid read | `/wishlist show <someone else>` as a plain member | Shows their sealed bid (open) |
-| B4 Callout relay content | Relay a crafted callout with an arbitrary `sound` URL containing the word "slow" | Plays on other Mimics (open) |
-| B5 Cross-character write | `POST /api/agent/quarmy` / `inventory` with another character's name | Overwrites theirs (open) |
-| B6 Discord mention | A fabricated `bosskill`/`pvp` payload with `@everyone` in a name | Pings everyone, if the bot has Mention Everyone (open) |
-
-Stop each B test at the moment it demonstrates the gap — do **not** actually spam the raid channel, corrupt a real
-character, or submit a real contested bid. Use a value that proves acceptance (e.g. a 1-DKP bid on a junk item in a
-test auction) and no further.
+Tracked in the private briefing only (moved there 2026-11-01): this repo is public, and a list of open gaps does
+not belong in it. Once a gap is fixed, its regression check is added to section A.
 
 ---
 
@@ -97,7 +84,7 @@ test auction) and no further.
 
 `node scripts/sec-check.mjs --target https://b.wolfpack.quest` runs the safe, non-destructive A-series network and
 RLS checks (A1, A2 small burst, A3 headers, A4 anon-read). It refuses to run without an explicit `--target` and a
-`--i-own-this-target` flag, defaults nothing to production, caps every burst, and makes no writes. B-series and the
+`--i-own-this-target` flag, defaults nothing to production, caps every burst, and makes no writes. The
 Mimic-local and XSS checks are manual (they need a signed-in session, a test Mimic, or a seeded fight) and are
 described above.
 

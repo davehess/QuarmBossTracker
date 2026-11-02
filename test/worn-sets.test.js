@@ -27,10 +27,11 @@ const REGION = INDEX.slice(START, END);
 
 function buildHandlers(fake) {
   const factory = new Function(
-    'mimicLink', 'require', '_trackUpload', '_dedupeRows', 'wornSets',
+    'mimicLink', 'require', '_trackUpload', '_dedupeRows', 'wornSets', '_callerMayActAs',
     `${REGION}\nreturn { _handleAgentQuarmy, _handleAgentInventory };`,
   );
-  return factory({ requireAgentAuth: async () => ({ discord_id: 'd1' }) }, () => fake, () => {}, (rows) => rows, wornSets);
+  // _callerMayActAs: the caller owns the character (the ownership rule itself: test/caller-owns-character.test.js).
+  return factory({ requireAgentAuth: async () => ({ discord_id: 'd1' }) }, () => fake, () => {}, (rows) => rows, wornSets, async () => true);
 }
 
 // In-memory supabase: serves one characters row, stored gear/inventory, and a real little worn-sets table that

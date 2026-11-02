@@ -37,6 +37,50 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-3-0-6-2026-11-01',
+    title: 'Mimic 3.0.6',
+    version: 'Mimic 3.0.6 · Web 2.1.90',
+    date: '2026-11-01',
+    headline: 'Your overlays follow each character, UI Studio restores only what you pick, and the Map knows slow mode and splitting mobs.',
+    features: [
+      { name: 'Overlays per character', blurb: 'Mimic remembers each character\'s overlays as you go: positions, sizes, which are on, the Canvas. Switch characters and theirs come back. No Save button.' },
+      { name: 'UI Studio: compare before you restore', blurb: 'Restoring a backup shows what each part would change (window layout, hotkeys, socials, spell sets, keybinds, Zeal options) and lets you keep yours or take the backup\'s, one by one. A layout from another screen size is fitted to yours.' },
+      { name: 'Keep in sync and This PC', blurb: 'Optional: back up each character when it camps, and get offered the newer UI from your other PC. This PC shows what EQ runs at and suggests an overlay size for your screen.' },
+      { name: 'The Map: slow mode and splitting mobs', blurb: 'In slow mode, Planes of Power respawn timers run 18 hours and show a turtle. Mobs that split when they die are marked, and the hover card says into what and how many.' },
+      { name: 'Alerts window: lock its size', blurb: 'Lock the alerts window so it stops growing as countdowns arrive, or split callouts and timers into their own boxes in one click.' },
+      { name: 'Relv / Falto mephit counter', blurb: 'During Relv\'s event in the Plane of Storms the Command Center counts the mephits (20/30 · 10 left) and says when Falto is up.' },
+      { name: 'Guild colours', blurb: 'Overlays wear your guild\'s colours when officers set a guild theme, with a Guild palette row in the colour picker.' },
+      { name: 'Smaller things', blurb: 'Officers get a Guests card with +1h / +3h; My parses can show every fight; a minimized overlay leaves a clear "click to restore" tab; Target Info re-fits when you resize it; the timer name picker suggests your spells.' },
+    ],
+    fixes: [
+      'Canvas alerts and timers panels no longer show a title plate you could not turn off.',
+      'The HUD no longer tags two-hand hits as off hand.',
+      'Map distance to your target now counts height.',
+      'Target Info shows what lands on your target when you play solo.',
+      'The "your spells" timer switch now says it covers spells you land on groupmates too (heal-over-time spells included); it always did.',
+      'PvP kills and assists are read again after the server reworded its Glory lines.',
+      'A UI Studio restore only ever writes your UI settings files.',
+    ],
+  },
+  {
+    key: 'raidmimic-home-2026-11-01',
+    title: 'Web 2.1.87',
+    version: 'Web 2.1.87',
+    date: '2026-11-01',
+    headline: 'A new Raid Mimic home page, a form to register your guild, and your data in your own hands.',
+    features: [
+      { name: 'The new Raid Mimic home page', blurb: 'raidmimic.com opens on the story of Raid Mimic as a video that fills the screen, with the logo and the overlays appearing as it plays. Below it: five feature pictures (now with Zeal and UI packs), what guild leaders get for raid management, and pricing.' },
+      { name: 'Register your guild [beta]', blurb: 'A short form on raidmimic.com: your guild, game and server, how many raiders, your raid nights and how you track DKP. No sign-in. Officers read the answers on a new Guild interest page.' },
+      { name: 'Privacy, terms and refunds', blurb: 'Raid Mimic now has its own privacy, terms and refunds pages. Signing in records the version of the terms you agreed to, AI-written parts are labelled, and there is a contact line.' },
+      { name: 'Download or delete your data', blurb: 'A new Your data section on your /me page (and on raidmimic.com/guilds): download everything the site holds about you as one file, or delete your account yourself. No more asking an officer.' },
+      { name: 'Officers see who left the Discord', blurb: 'A pop-up warns officers when someone has left the Discord but can still sign in, with a one-click lock-out for each person.' },
+      { name: 'A slimmer review queue', blurb: 'The officer review queue now counts guild members only, shows a one-line banner instead of a big box, and lists the top 10 in each section.' },
+    ],
+    fixes: [
+      'Locking out a member now also ends their open website sign-ins; before, a locked member who was already signed in stayed signed in.',
+    ],
+  },
+  {
     key: 'start-a-guild-2026-10-31',
     title: 'Web 2.1.82',
     version: 'Web 2.1.82',
