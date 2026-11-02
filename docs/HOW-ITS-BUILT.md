@@ -116,7 +116,8 @@ writes.
   host. **Header and footer** (web 2.1.96): the raidmimic host's root layout is a bare shell, so `/guilds`, `/guilds/new`,
   `/guilds/<slug>` and `/register` wrap themselves in `web/components/RaidmimicFrame.tsx` (Raid Mimic bar: home, Your guilds,
   Set up, For guild leaders; the landing page's `Footer` with privacy, terms, refunds, contact) and `/setup` takes the bar
-  (it has its own footer); on a Wolf Pack host the frame renders nothing. `test/raidmimic-frame.test.js`.
+  (it has its own footer); on a Wolf Pack host the frame renders nothing. The bar is sticky and one line (web 2.1.98), and
+  the landing page carries it under its stage on a raidmimic host. `test/raidmimic-frame.test.js`.
   `/guilds` (`web/app/guilds/`): the Wolf Pack card for members, one card per `hub_*` membership, join by invite code
   (rate-limited; uses, expiry and suspension honoured; `JoinForm.tsx`, `actions.ts`), "Find my guilds" (a second consent,
   `identify guilds`: matches the Discord server list against `hub_guilds.discord_guild_id`, joins `open_join` guilds, lists closed

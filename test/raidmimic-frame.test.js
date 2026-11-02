@@ -16,6 +16,13 @@ describe('the Raid Mimic frame', () => {
     expect(frame).toMatch(/<nav aria-label="Raid Mimic"/);
     expect(frame).toMatch(/href: '\/guilds'/);
     expect(frame).toMatch(/<Footer onHost \/>/);
+    // "top bar on the raidmimic.com site doesn't lock" (2026-11-02): pinned, opaque, one line (links scroll inside it)
+    expect(frame).toMatch(/<header className="sticky top-0 z-40 [^"]*\bbg-bg\b[^"]*">/);
+    expect(frame).toMatch(/<nav aria-label="Raid Mimic" className="[^"]*overflow-x-auto whitespace-nowrap"/);
+    // the landing page takes the same bar under its stage, on a raidmimic host only
+    const landing = code('web/app/raidmimic/page.tsx');
+    expect(landing).toMatch(/import \{ HostBar \} from '@\/components\/RaidmimicFrame';/);
+    expect(landing).toMatch(/\{onHost && <HostBar \/>\}\s*<FeatureBlocks \/>/);
     expect(frame).toMatch(/if \(!onHost\) return <>\{children\}<\/>;/);
     expect(frame).not.toMatch(/['"]use client['"]/);
   });

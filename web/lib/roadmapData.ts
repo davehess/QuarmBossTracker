@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-98-2026-11-02',
+    title: 'Web 2.1.98',
+    version: 'Web 2.1.98',
+    date: '2026-11-02',
+    headline: 'The raidmimic.com top bar stays put.',
+    features: [],
+    fixes: [
+      'The Raid Mimic bar now stays at the top while you scroll, on the home page too (under the opening scene), and fits on one line on a phone.',
+    ],
+  },
+  {
     key: 'web-2-1-97-2026-11-02',
     title: 'Web 2.1.97',
     version: 'Web 2.1.97',

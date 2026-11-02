@@ -17,12 +17,15 @@ const NAV_LINK = 'rounded px-2 py-1 text-sm text-dim hover:bg-panel hover:text-t
 
 export function HostBar() {
   return (
-    <header className="mb-6 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border pb-3">
-      <a href="/" className="flex items-center gap-2 text-[#f2ede1] hover:no-underline">
+    // Pinned to the top while the page scrolls (the guild lead, 2026-11-02: "top bar on the raidmimic.com site doesn't lock").
+    // The solid background keeps the page from showing through it; z-40 keeps it over the page's own cards.
+    // One line at every width: on a phone the name hides behind the logo and the links scroll sideways inside the bar.
+    <header className="sticky top-0 z-40 mb-6 flex items-center gap-3 border-b border-border bg-bg py-3">
+      <a href="/" aria-label="Raid Mimic home" className="flex shrink-0 items-center gap-2 text-[#f2ede1] hover:no-underline">
         <img src="/mimic-logo.png" alt="" width={36} height={36} className="block h-9 w-9 rounded-lg" />
-        <span className="text-base font-semibold">Raid Mimic</span>
+        <span className="hidden text-base font-semibold sm:inline">Raid Mimic</span>
       </a>
-      <nav aria-label="Raid Mimic" className="ml-auto flex flex-wrap items-center gap-1">
+      <nav aria-label="Raid Mimic" className="ml-auto flex min-w-0 items-center gap-1 overflow-x-auto whitespace-nowrap">
         {NAV.map(n => <a key={n.href} href={n.href} className={NAV_LINK}>{n.label}</a>)}
       </nav>
     </header>
