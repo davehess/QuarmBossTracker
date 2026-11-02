@@ -169,6 +169,11 @@ next touch one rather than assuming a missing row means a missing doc.
   `encounter_threat_graph` is not archived on Tower and stays in Supabase; its watermark was not read (the RPC timed out), so the first
   nights may clear less than the backlog. Copy method for Tower's file: `docs/HANDOFF-tower-archive-catchup.md`.
 
+- **✅ Raid-Helper "sync has never landed" was a false alarm (bot 4.0.48, 2026-11-02).** The mirror syncs every 30 minutes
+  (17k sign-ups, last sync minutes before); each post was one failed database read read as "never", and a single healthy
+  check cleared the latch so the next blip re-posted. `freshnessSnapshot` now answers no verdict on a failed read, and the
+  same warning is not repeated within 24 hours even after a recovery (`bot_kv` `rh_freshness_alarm` keeps `lastKey`/`lastAt`).
+  Test `test/raidhelper-freshness.test.js`.
 - **🧪 DPS History Raid list + the debuffer's landing wins (bot 4.0.47 `main`, agent on beta, 2026-11-02, §513 §514).** GET
   `/api/agent/raid-fights` (guild fights of the last 8 h, each once, merged; 20 s cache) feeds History's Mine / Raid switch; a
   Raid row's board is `/live-damage?boss=&fight_start=`. `buff_casts.self_cast` (migration 20261102090000, applied) marks a
