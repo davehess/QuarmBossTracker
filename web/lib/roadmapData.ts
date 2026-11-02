@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-96-2026-11-02',
+    title: 'Web 2.1.96',
+    version: 'Web 2.1.96',
+    date: '2026-11-02',
+    headline: 'raidmimic.com pages get their header and footer.',
+    features: [],
+    fixes: [
+      'Your guilds, Start a guild, a guild\'s page and the guild-leader form on raidmimic.com had no Raid Mimic header and no privacy, terms or contact links at the bottom. They have both now.',
+      'On Your guilds, Wolf Pack\'s card reads like any other guild\'s, and "Find my guilds" no longer says you are in no guild while one is listed.',
+    ],
+  },
+  {
     key: 'web-2-1-95-2026-11-02',
     title: 'Web 2.1.95',
     version: 'Web 2.1.95',

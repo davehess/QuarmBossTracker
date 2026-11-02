@@ -102,7 +102,11 @@ writes.
   `/api/auth/*` and `/guilds` from the landing rewrite (`web/lib/raidmimicHost.ts`; eqmimic.quest untouched). `web/app/auth/callback/route.ts`
   dispatches once at the top: on a raidmimic host the open path (`web/lib/openSignIn.ts`: exchange, lockout check, `hub_players`
   upsert, redirect to `/guilds`); on wolfpack.quest the gated path, byte for byte (proven by test). `SignInButton` picks scopes per
-  host. `/guilds` (`web/app/guilds/`): the Wolf Pack card for members, one card per `hub_*` membership, join by invite code
+  host. **Header and footer** (web 2.1.96): the raidmimic host's root layout is a bare shell, so `/guilds`, `/guilds/new`,
+  `/guilds/<slug>` and `/register` wrap themselves in `web/components/RaidmimicFrame.tsx` (Raid Mimic bar: home, Your guilds,
+  Set up, For guild leaders; the landing page's `Footer` with privacy, terms, refunds, contact) and `/setup` takes the bar
+  (it has its own footer); on a Wolf Pack host the frame renders nothing. `test/raidmimic-frame.test.js`.
+  `/guilds` (`web/app/guilds/`): the Wolf Pack card for members, one card per `hub_*` membership, join by invite code
   (rate-limited; uses, expiry and suspension honoured; `JoinForm.tsx`, `actions.ts`), "Find my guilds" (a second consent,
   `identify guilds`: matches the Discord server list against `hub_guilds.discord_guild_id`, joins `open_join` guilds, lists closed
   ones as "ask an officer for a code", writes only matched ids, keeps no token), "Start a guild" (a stub). Registry:

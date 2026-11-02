@@ -17,6 +17,7 @@ import {
 } from '@/lib/raidmimicSetup';
 import { REPO_URL } from '@/lib/eqmimicLanding';
 import { PRIMARY_BTN } from '../_landing/Parts';
+import { HostBar } from '@/components/RaidmimicFrame';
 
 const TITLE = '[beta] Set up Raid Mimic';
 const DESCRIPTION =
@@ -73,6 +74,8 @@ export default function RaidmimicSetupPage() {
 
   return (
     <div className="mx-auto max-w-3xl pb-12">
+      {/* The Raid Mimic bar only: this page already ends in its own footer (HostFrame.tsx). */}
+      {onHost && <HostBar />}
       <NewPageTag note={BETA_NOTE} href={onHost ? interest : '/feedback'} />
 
       <header className="mb-6">
