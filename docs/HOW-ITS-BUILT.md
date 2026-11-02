@@ -3354,6 +3354,15 @@ bugs were a missing item from that list.
 - **Not built:** the bot reading the hub slug (the next slice puts the chosen guild on the link code and the session so `mimic_sessions.guild_id`
   feeds the RLS scoping above, and completes `/auth/mimic-link` on that guild's site), several guilds at once. Tests:
   `test/mimic-guild-picker.test.js`, `test/hub-directory.test.js`.
+- **"No guild — just sync my PoP flags" (Mimic beta, agent 4.0.58, 2026-11-02; DECISIONS §526; bot 4.0.50 serves it).** A third choice in the
+  same picker (welcome and Settings). `hubs.PLAYER_HUB` (slug `~player`, the hosted bot's address, site raidmimic.com) is fixed in `hubs.js`
+  and can never be a directory row; `linkStartBody` sends `{player: true}` and no hub; the link opens the address the bot names
+  (raidmimic.com/auth/mimic-link); `identityFromPoll` keeps `scope: 'player'` and the status carries `mimicSession.player`, so the pages say
+  "Signed in to Raid Mimic (flag sync)" and leave the guild copy out. Moving to or from it is a switch (`sameHub` also compares player-ness).
+  Agent: `_playerScope()` (`packages/wolfpack-logsync/index.js`, next to `_localOnly`) makes `enqueueUpload` queue only `pop_flag` and
+  `_postLiveState` stand down, because the bot answers 403 to every other route for that session and the durable queue drops a 4xx. Not done:
+  the agent's other direct reads (guild triggers, spell catalog…) still try and get 403 on their own cadence; the agent dashboard's
+  "Mimic account linked" check counts a player session as linked. Tests: `test/mimic-guild-picker.test.js` (section 6), `test/agent-player-scope.test.js`.
 
 ### Sounds, voice packs, pronunciation, and the Willsapper proc (agent 3.7.162, beta, 2026-10-14)
 The guild lead: a "slap" when a Willsapper procs; then voice packs, names said right, members' own

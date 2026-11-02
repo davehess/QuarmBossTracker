@@ -254,12 +254,14 @@
   }
   function hubPicker(linking) {
     var cur = hubCurrent();
+    var isPlayer = cur.slug === '~player';
     var opts = S.hubs.slice();
-    if (!opts.some(function (x) { return x.slug === cur.slug; })) opts.push(cur);
+    if (!isPlayer && !opts.some(function (x) { return x.slug === cur.slug; })) opts.push(cur);
     var dis = (S.hubBusy || linking) ? ' disabled' : '';
     var h = '<div class="row" style="margin:0 0 8px"><label for="wHub" class="dim">Guild</label>'
       + '<select id="wHub" data-keep-typing' + dis + '>'
-      + opts.map(function (x) { return '<option value="' + esc(x.slug) + '"' + (x.slug === cur.slug ? ' selected' : '') + '>' + esc(x.display_name) + '</option>'; }).join('')
+      + opts.map(function (x) { return '<option value="' + esc(x.slug) + '"' + (!isPlayer && x.slug === cur.slug ? ' selected' : '') + '>' + esc(x.display_name) + '</option>'; }).join('')
+      + '<option value="__player"' + (isPlayer ? ' selected' : '') + '>No guild — just sync my PoP flags</option>'
       + '<option value="__paste">Paste a guild address…</option></select></div>';
     if (S.hubPaste) {
       h += '<div class="row" style="margin:0 0 8px"><input class="addr" id="wHubAddr" type="text" data-keep-typing placeholder="https://your-guild.example" aria-label="Guild address" />'
@@ -287,15 +289,23 @@
         + '<button data-a="copy">Copy</button><button data-a="cancel">Cancel</button></div></div>';
     } else if (S.signedIn) {
       h += '<div class="box" style="border-color:#1a7f37;background:#0f2a1a">✓ Signed in'
+        + (session && session.player ? ' to Raid Mimic (flag sync)' : '')
         + (session ? ' as <b class="ok">' + esc(session.display_name || session.discord_id) + '</b>' : '')
         + (session && session.guild ? ' — linked to <b>' + esc(session.guild.display_name) + '</b> (' + (session.guild.role === 'officer' ? 'officer' : 'member') + ')' : '')
         + ' <button data-a="signout" style="margin-left:10px">Sign out</button></div>';
     } else {
-      h += '<div class="row"><button class="discord" data-a="signin">Join a guild — sign in with Discord</button>'
+      h += '<div class="row">' + (hub.slug === '~player'
+          ? '<button class="discord" data-a="signin">Sync my PoP flags — sign in with Discord</button>'
+          : '<button class="discord" data-a="signin">Join a guild — sign in with Discord</button>')
         + '<button class="link" data-a="local">Just me — stays on this PC</button></div>'
         + (S.localOnly ? '<div class="note ok">✓ Local-only. Overlays and triggers work; nothing uploads. Sign in later from the tray.</div>' : '');
     }
-    h += turnsOn([
+    // The no-guild choice syncs flags and nothing else, so it does not promise the guild features.
+    h += turnsOn(hub.slug === '~player' ? [
+      '<b>Your PoP flags</b> sync to your Raid Mimic account, so you can see what each character still needs',
+      '<b>Overlays, your own triggers and the dashboard</b> work as they do on any install',
+      'No parses, raid reviews or guild callouts — those need a guild',
+    ] : [
       '<b>Your parses</b> on wolfpack.quest, and your part in every raid review',
       '<b>Officer raid callouts</b> arrive by themselves, within two minutes of being saved',
       '<b>Your /me page</b>: tells, buffs, inventory and UI backups from any device',
@@ -316,6 +326,7 @@
       var v = sel.value;
       sel.blur();   // the redraw is held while the list has the focus
       if (v === '__paste') { S.hubPaste = true; S.hubNote = ''; changed(); return; }
+      if (v === '__player') { if (hub.slug !== '~player') hubChoose({ player: true }); else changed(); return; }
       if (v !== hub.slug) hubChoose({ slug: v }); else changed();
     });
   }
