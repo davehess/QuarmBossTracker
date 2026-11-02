@@ -110,6 +110,14 @@ the page shows "3 of 5 guest places taken". A guild's own members never count ag
 **Guild links.** `hub_guilds` gains a Discord invite link and a website, set by the owner, shown on the guild's card and on each
 open event, so a guest can find the guild. Links are checked to be `discord.gg` / `discord.com/invite` or `https://`.
 
+**Guild suggestion** (the guild lead, 2026-11-02: "if we recognize a character name in our /who directory data we can suggest
+their guild to them"). When a player on raidmimic.com has proved a character is theirs (the claim rule above), and the /who
+directory has seen that name with a guild tag that is a guild on Raid Mimic, `/guilds` says "Aldenmar was last seen in
+<guild>: ask its officers for a code, or find it with Find my guilds". Never for a name the player typed but has not proved
+(that would let anyone look up anyone's guild), and never naming a guild that is not on Raid Mimic: the /who directory is read
+only by guilds that saw the name (`docs/DESIGN-raidmimic-hosted.md` §8c). In-game /who is public, but our copy of it is not a
+lookup service.
+
 **Trust gate.** A guild sees other guilds' players only once it is verified: a confirmed Discord server, a minimum size, and
 not suspended. A one-click guild sees nothing cross-guild.
 
@@ -142,6 +150,7 @@ not suspended. A one-click guild sees nothing cross-guild.
 6. How hosted players' flags get in: the agent route, the web paste, or both (proposed: both).
 7. How long a shared entry stays after the player stops uploading, leaves or deletes (proposed: withdrawn at once on leave or
    delete; hidden after 30 days without a fresh read).
-8. Event board: post-first (option A) or needs-first (option B); shown in `/demo`.
+8. ~~Event board: post-first (option A) or needs-first (option B)~~ **Picked A, 2026-11-02 (§522)**: being built for Wolf Pack
+   at `/pop/events`.
 9. Telling watchers: a Discord DM through the Raid Mimic bot (proposed, opt-in) or only a list on their page.
 10. Guest places: the leader accepts each guest (proposed) or first come, first served up to the limit.
