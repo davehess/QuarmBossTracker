@@ -18,7 +18,14 @@ The open choices go back to the guild lead as options with pictures (the `/demo`
 Earlier the same day (§516): capture flags for other players' characters, the owner signs in to confirm or correct; a posted
 event shows who still needs it, so leaders stop asking one by one.
 
-Seven parts:
+Added the same day:
+
+> "guild leaders should be able to integrate into their openDKP accounts to import their own guildies that are not shown.
+> People can request to be notified of open raids for flags they're missing (for mains or alts)
+> guilds can set a limit on how many guests could come through" … "add in links to their discords or servers"
+> (the guild lead, 2026-11-02)
+
+Eleven parts:
 
 | # | Part | Today |
 |---|---|---|
@@ -29,6 +36,10 @@ Seven parts:
 | 5 | A guild sees which of its players uploaded flags | Wolf Pack only, by reading `pop_flags` |
 | 6 | Owners and leadership grant officer rights | Roles exist (`hub_memberships.role`); nothing promotes, demotes or transfers |
 | 7 | Each guild adds the Raid Mimic Discord bot, with a wizard to pick which roles appear | Nothing for a hosted guild |
+| 8 | A guild connects its OpenDKP account to import its own members who are not shown yet | Wolf Pack's OpenDKP is read by the bot (`utils/opendkp.js`) with one guild's credentials; no per-guild connection |
+| 9 | A player asks to be told about open raids for flags they are missing, for a main or an alt | Nothing; Discord DMs exist only for feedback (`utils/feedbackRefs.js`) |
+| 10 | A guild caps how many guests (players from other guilds) an event takes | Nothing |
+| 11 | Each guild's card links to its Discord server or website | `hub_guilds` has a Discord server id, no invite link or website |
 
 ## 2. What exists (research, 2026-11-02)
 
@@ -83,13 +94,29 @@ Discord's Manage Server permission on the sign-in's server list), then the wizar
 bot, never by the website holding the token) and the owner ticks which map to member / officer / which show on the guild's
 pages. Stored in `hub_guild_roles (guild_id, discord_role_id, name, maps_to)`.
 
+**OpenDKP import.** A guild leader connects the guild's OpenDKP (its own client name and a read credential, stored sealed like
+the bid key: `utils/bidCrypto.js`-style, never readable back), and the roster read fills the guild's member list with characters
+not yet seen on Raid Mimic, marked "from OpenDKP, not signed in". Import only: nothing is written to OpenDKP. Needs the per-guild
+credential shape the OpenDKP ask already describes (`docs/DESIGN-opendkp-audit-cursor.md`).
+
+**Ask to be told.** `flag_exchange_watches (player_id, character, target_key, created_at)`: "tell me when a guild opens a raid
+for this", per character (main or alt), filled from the character's own "still needs". When an event opens with guest places,
+watchers who still need it get one Discord DM (opt-in, through the Raid Mimic bot) or a line on their raidmimic.com page. One
+message per event, never repeated; a watch ends once the flag is held.
+
+**Guest places.** `flag_events.guest_limit` (0 = guild only). Guests sign up as interest; the leader accepts up to the limit;
+the page shows "3 of 5 guest places taken". A guild's own members never count against it.
+
+**Guild links.** `hub_guilds` gains a Discord invite link and a website, set by the owner, shown on the guild's card and on each
+open event, so a guest can find the guild. Links are checked to be `discord.gg` / `discord.com/invite` or `https://`.
+
 **Trust gate.** A guild sees other guilds' players only once it is verified: a confirmed Discord server, a minimum size, and
 not suspended. A one-click guild sees nothing cross-guild.
 
 ## 4. Phases
 
 1. **Demo** (`raidmimic.com/demo`, static, invented guild): what a guild gets, the "record for someone else" flow and both
-   event-board options. No data. In progress 2026-11-02.
+   event-board options. No data. Live 2026-11-02 (web 2.1.97): https://raidmimic.com/demo.
 2. **Wolf Pack first, on raidmimic.com:** flag events and "who needs it" for one guild, on today's data.
 3. **Hosted guilds:** officer rights and audit, the bot add + role wizard, hosted players' flag uploads.
 4. **The exchange:** consent panel, the restricted tables, cross-guild "who needs it", view log, the privacy rewrite (section 5)
@@ -116,3 +143,5 @@ not suspended. A one-click guild sees nothing cross-guild.
 7. How long a shared entry stays after the player stops uploading, leaves or deletes (proposed: withdrawn at once on leave or
    delete; hidden after 30 days without a fresh read).
 8. Event board: post-first (option A) or needs-first (option B); shown in `/demo`.
+9. Telling watchers: a Discord DM through the Raid Mimic bot (proposed, opt-in) or only a list on their page.
+10. Guest places: the leader accepts each guest (proposed) or first come, first served up to the limit.
