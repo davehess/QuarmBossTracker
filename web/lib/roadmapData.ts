@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-97-2026-11-02',
+    title: 'Web 2.1.97',
+    version: 'Web 2.1.97',
+    date: '2026-11-02',
+    headline: 'raidmimic.com has a demo guild you can click through.',
+    features: [
+      { name: 'raidmimic.com/demo', blurb: 'An invented guild shows what Raid Mimic looks like for a guild: who is missing which Planes of Power flags, flags a raid leader records for someone else, two ways to plan flag events, and tonight\'s raid. Nothing in it is real and nothing is saved.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-2-1-96-2026-11-02',
     title: 'Web 2.1.96',
     version: 'Web 2.1.96',

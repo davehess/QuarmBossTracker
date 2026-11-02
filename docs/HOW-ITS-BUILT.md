@@ -97,6 +97,17 @@ writes.
 
 ## Identity & auth
 
+- **raidmimic.com/demo, a click-through guild (web 2.1.97 on `main`, `[beta]`, 2026-11-02; DECISIONS §516, §517).** The guild lead:
+  "a demo clickthrough site for raidmimic.com … so they can see what it looks like for the guild, but without killing the
+  resources". An invented guild ("Silverpine Vanguard", one fixture: `web/lib/demoGuild.ts`, run through the real
+  `gateReport` / `parseRecital`) on seven pages under `web/app/raidmimic/demo/`: guild home, flags (the real `GateTable`,
+  one page per gate, plus the "reported, waiting for the owner" table), record for others, events option A
+  (`/demo/events`, post first) and option B (`/demo/events/needs`, needs first), tonight. No database, no session, no
+  client JS; the one request read is the host (`DemoShell.tsx`: `/demo` links and the Raid Mimic frame on raidmimic.com,
+  `/raidmimic/demo` elsewhere). NOT `force-static`: a static page cannot see the host, so the root layout would bake the
+  Wolf Pack header in; on raidmimic.com the middleware rewrites `/demo/...` (`raidmimicLandingTarget`, path kept) before
+  any session work and the root layout's bare shell reads nothing, so a view is one render. `noindex`. Test
+  `test/raidmimic-demo.test.js`.
 - **raidmimic.com signs anyone in; `/guilds` is where they land (web 2.1.79 on `main`, `[beta]`, 2026-10-31; DECISIONS §485, §492).**
   On the raidmimic hosts sign-in is identify-only with no guild or role gate. `web/middleware.ts` exempts `/auth/*`,
   `/api/auth/*` and `/guilds` from the landing rewrite (`web/lib/raidmimicHost.ts`; eqmimic.quest untouched). `web/app/auth/callback/route.ts`

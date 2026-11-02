@@ -71,6 +71,14 @@ const STATIC_META: Record<string, PageMeta> = {
   '/raidmimic':    { title: 'Raid Mimic · free EverQuest raid overlays', description: 'Free, open-source overlays for your EverQuest raids, built from the log the game already writes: run it on your own, or add a guild hub for shared raid reviews, merged parses and a command center.' },
   '/raidmimic/register': { title: '[beta] Register your guild', description: 'Tell us about your raid guild: its game, size, raid nights and DKP tool. No sign-in and no account, just a way to count your guild in for Raid Mimic.' },
   '/raidmimic/setup': { title: '[beta] Set up Raid Mimic', description: 'A step-by-step guide to setting up Mimic on your own PC for EverQuest on Project Quarm, with no guild needed: what you need, what works on your own, and how to join a raid.' },
+  // The click-through demo of an invented guild (2026-11-02). Same words as each page's own metadata, and the gate pages
+  // (/raidmimic/demo/flags/<gate>) are matched in metaForPath below.
+  '/raidmimic/demo': { title: '[beta] Demo guild', description: 'A click-through demo of a Raid Mimic guild: the next raid night, flags progress, flag events and who needs what. Invented guild, nothing is real.' },
+  '/raidmimic/demo/flags': { title: '[beta] Demo guild · Flags', description: 'A demo guild’s Planes of Power progress, piece by piece, with flags a raid leader recorded for someone else shown as reported. Invented guild.' },
+  '/raidmimic/demo/capture': { title: '[beta] Demo guild · Record flags for someone else', description: 'How a raid leader records flags for a character that is not theirs, and how the owner signs in to confirm or correct them. Invented guild.' },
+  '/raidmimic/demo/events': { title: '[beta] Demo guild · Flag events', description: 'Option A for coordinating flag events: a leader posts an event and sees which raiders still need it and who signed. Invented guild.' },
+  '/raidmimic/demo/events/needs': { title: '[beta] Demo guild · Flag needs board', description: 'Option B for coordinating flag events: every flag target ranked by how many raiders still need it, with a schedule button. Invented guild.' },
+  '/raidmimic/demo/raid': { title: '[beta] Demo guild · Tonight’s raid', description: 'A demo raid night: who signed and which flags each raider still needs before the pull, so the leader can fix it first. Invented guild.' },
   // The pre-launch legal pages (2026-11-01). Their words live in lib/legal.ts so the tab and the card cannot disagree.
   '/raidmimic/privacy': { ...LEGAL_META.privacy },
   '/raidmimic/terms':   { ...LEGAL_META.terms },
@@ -314,6 +322,10 @@ export function metaForPath(rawPath: string): PageMeta {
   if (m) return characterMeta(m[1], m[2]);
   m = path.match(/^\/pvp\/([^/]+)$/);
   if (m) return pvpMeta(m[1]);
+  // One demo page per gate (the gate's own name is in the page's tab; the card stays generic and never reads a gate list).
+  if (/^\/raidmimic\/demo\/flags\/[^/]+$/.test(path)) {
+    return { title: '[beta] Demo guild · Gate flags', description: 'A demo guild’s progress toward one Planes of Power gate, piece by piece, with flags recorded for someone else shown as reported. Invented guild.' };
+  }
   m = path.match(/^\/zeal-icons\/([^/]+)$/);
   const guild = m ? guildByCode(safeDecode(m[1])) : undefined;
   if (guild) {

@@ -7,6 +7,7 @@
 import { Footer } from '@/app/raidmimic/_landing/Parts';
 
 const NAV = [
+  { label: 'Demo', href: '/demo' },
   { label: 'Your guilds', href: '/guilds' },
   { label: 'Set up', href: '/setup' },
   { label: 'For guild leaders', href: '/register' },
