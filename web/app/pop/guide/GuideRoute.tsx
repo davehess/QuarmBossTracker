@@ -30,7 +30,7 @@ import { setGuideTick } from './actions';
 import { CharOptions, ChainView, Place, SeqView, WithItems } from './GuideChecklist';
 import SeerPaste, { useFocusStep, type SeerResult } from './SeerPaste';
 import ZoneMap, { type ZoneOutline } from './ZoneMap';
-import { startsOfRuns, type GettingThere, type GuideGettingThere } from '@/lib/popGettingThereRuns';
+import { lineFor, startsOfRuns, type GettingThere, type GuideGettingThere } from '@/lib/popGettingThereRuns';
 
 // How a step got its tick. mimic = Mimic saw it happen; database = our records already show it;
 // who = a raider's /who showed the character inside a plane that needs it (web/lib/popGuideAuto.ts).
@@ -125,7 +125,7 @@ function MapPeek({ places, outlines, label, className, children }: {
 export default function GuideRoute({ chars, initial, cards, outlines, layout, noLevel, gettingThere }: {
   chars: RouteChar[]; initial: string | null; cards: Record<number, ItemCard>;
   outlines: Record<string, ZoneOutline>; layout: 'b' | 'c'; noLevel?: string[];
-  gettingThere?: GuideGettingThere;   // ?v=b only: the finished "Getting there" sentences (popGettingThere.ts)
+  gettingThere?: GuideGettingThere;   // the finished "Getting there" sentences (popGettingThere.ts), both layouts
 }) {
   const [charName, setCharName] = useState<string | null>(initial);
   const [manualBy, setManualBy] = useState<Record<string, Set<string>>>(
@@ -342,6 +342,7 @@ export default function GuideRoute({ chars, initial, cards, outlines, layout, no
               const mustN = must.filter(i => done.has(i.key)).length;
               const next = items.find(i => i.must && !done.has(i.key)) ?? items.find(i => !done.has(i.key));
               const isOpen = open.has(l.key);
+              const nextGt = gettingThere && next ? lineFor(next.key, gettingThere) : undefined;
               return (
                 <section key={l.key} id={`lvl-${l.key}`} className="bg-panel border border-border rounded-lg scroll-mt-4"
                          style={{ borderLeft: `3px solid ${l.color}` }}>
@@ -361,6 +362,9 @@ export default function GuideRoute({ chars, initial, cards, outlines, layout, no
                     </span>
                     {!isOpen && next && (
                       <span className="text-[11px] text-dim truncate">Next: <span className="text-text">{plain(next.title)}</span></span>
+                    )}
+                    {!isOpen && nextGt && (
+                      <span className="text-[11px] text-dim truncate">Getting there: <span className="text-text">{nextGt.main}</span></span>
                     )}
                   </button>
                   {isOpen && (

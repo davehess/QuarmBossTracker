@@ -142,11 +142,11 @@ export default async function PopGuidePage(
           {hiddenNote}
         </section>
         {nxPanel}
-        {/* Beta (the guild lead, 2026-10-29: "take the paths we know and build that into the plan"): ?v=b adds a
-            "Getting there" line at the start of each zone's run of steps. Only the finished sentences go to the
-            browser (popGettingThere.ts); ?v=c and the default view are as they were. */}
+        {/* The guild lead, 2026-10-29: "take the paths we know and build that into the plan"; kept 2026-11-02 (§515).
+            A "Getting there" line at the start of each zone's run of steps, and on each folded tier under "Next:".
+            Both layouts. Only the finished sentences go to the browser (popGettingThere.ts). */}
         <GuideRoute chars={routeChars} initial={first} cards={rc} outlines={outlines} layout={v}
-                    gettingThere={v === 'b' ? guideGettingThere() : undefined} noLevel={noLevel} />
+                    gettingThere={guideGettingThere()} noLevel={noLevel} />
       </div>
     );
   }

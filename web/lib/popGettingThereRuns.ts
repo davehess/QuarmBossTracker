@@ -11,6 +11,13 @@ export type GuideGettingThere = {
   lines: Record<string, GettingThere>;
 };
 
+/** The line for one step's zone: what a folded tier card shows under its "Next:" step (the guild lead, 2026-11-02:
+ *  "I'm not seeing the getting there pieces", with every tier folded). None for a step with no zone or in Knowledge. */
+export function lineFor(key: string, gt: GuideGettingThere): GettingThere | undefined {
+  const z = gt.steps[key];
+  return z ? gt.lines[z] : undefined;
+}
+
 /**
  * Which of the rows shown start a new zone, and so carry the line. Steps with no zone are skipped over, so a step
  * that needs no travel does not repeat the line; a Plane of Knowledge step (no line) ends the run before it.

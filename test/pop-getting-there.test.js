@@ -13,6 +13,7 @@ import { GUIDE_ITEMS } from '../web/lib/popGuide.ts';
 import {
   gettingThere, guideGettingThere, hasPhrase, routeHopIds, startsOfRuns, stepZone,
 } from '../web/lib/popGettingThere.ts';
+import { lineFor } from '../web/lib/popGettingThereRuns.ts';
 
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 
@@ -85,8 +86,10 @@ describe('what reaches the browser', () => {
     const route = stripJs(read('web/app/pop/guide/GuideRoute.tsx'));
     expect(route).toMatch(/from '@\/lib\/popGettingThereRuns'/);
     expect(route).not.toMatch(/popTravel|from '@\/lib\/popGettingThere'/);
+    // Only GuideRoute (the ?v=b / ?v=c layouts) is handed the line; the default GuideChecklist is not.
     const page = stripJs(read('web/app/pop/guide/page.tsx'));
-    expect(page).toMatch(/gettingThere=\{v === 'b' \? guideGettingThere\(\) : undefined\}/);
+    expect(page).toMatch(/gettingThere=\{guideGettingThere\(\)\}/);
+    expect(page).not.toMatch(/<GuideChecklist[^>]*gettingThere/);
     expect(stripJs(read('web/lib/popGettingThereRuns.ts'))).not.toMatch(/^import /m);
   });
 });
@@ -114,5 +117,23 @@ describe('startsOfRuns: one line at the start of a zone\'s steps', () => {
 
   it('only the rows shown count: a hidden first step hands the line to the next one', () => {
     expect([...startsOfRuns(rows('b'), gt).keys()]).toEqual(['b']);
+  });
+});
+
+// The guild lead, 2026-11-02: "I'm not seeing the getting there pieces" (every tier folded; and ?v=c had none).
+describe('a folded tier shows the line for its next step, on both layouts', () => {
+  const gt = { steps: { a: 'potranquility', d: 'poknowledge' }, lines: { potranquility: { main: 'T' } } };
+  it('lineFor: the step\'s zone line; nothing for Knowledge or a step with no zone', () => {
+    expect(lineFor('a', gt)).toEqual({ main: 'T' });
+    expect(lineFor('d', gt)).toBeUndefined();
+    expect(lineFor('zz', gt)).toBeUndefined();
+  });
+  it('the folded card renders it under "Next:", and the page hands the lines to both layouts', () => {
+    const route = stripJs(read('web/app/pop/guide/GuideRoute.tsx'));
+    expect(route).toMatch(/const nextGt = gettingThere && next \? lineFor\(next\.key, gettingThere\) : undefined;/);
+    expect(route).toMatch(/\{!isOpen && nextGt && \(/);
+    const page = stripJs(read('web/app/pop/guide/page.tsx'));
+    expect(page).toMatch(/gettingThere=\{guideGettingThere\(\)\}/);
+    expect(page).not.toMatch(/v === 'b' \? guideGettingThere/);
   });
 });
