@@ -36,10 +36,12 @@ export async function loadRoute(mine: Owned[]): Promise<{ chars: RouteChar[]; ou
 
   const [ticks, flags, loots, inv, chars, sights, lootSights, ...outlineList] = await Promise.all([
     names.length ? admin.from('pop_guide_ticks').select('character_name, item_key').eq('guild_id', GUILD_TAG).in('character_name', names) : none,
-    // Real flags only ('unmapped' and the witnessed 'hail' rows are not flags; page.tsx says why the 1,000-row
-    // read must not spend itself on them): the next-steps panel reads these as the flags a character holds.
-    names.length ? admin.from('pop_flags').select('character, flag_key, earned_at').not('flag_key', 'in', '(unmapped,hail)')
-      .or(names.map(n => `character.ilike.${n}`).join(',')).order('earned_at', { ascending: true }).limit(1000) : none,
+    // Each character's real flags once, with when each was first earned (pop_flags_distinct; page.tsx says why a
+    // capped row read no longer holds them): the next-steps panel reads these as the flags a character holds.
+    names.length
+      ? selectAll<{ character: string; flag_key: string; earned_at: string | null }>((from, to) =>
+        admin.rpc('pop_flags_distinct', { p_guild_id: GUILD_TAG, p_names: names }).range(from, to)).then(data => ({ data }))
+      : none,
     names.length ? admin.from('looted_items').select('looter_lower, item_name, looted_at').in('looter_lower', lower)
       .ilike('item_name', 'Mark of %').limit(200) : none,
     names.length ? admin.from('character_inventory').select('character_name, item_id, observed_at').in('character_name', names)
@@ -66,7 +68,8 @@ export async function loadRoute(mine: Owned[]): Promise<{ chars: RouteChar[]; ou
       .find(r => r.name.toLowerCase() === lc);
     const seen = (sights as SightRow[]).filter(r => r.character_key === lc);
     const looted = (lootSights as LootRow[]).filter(r => r.character_key === lc);
-    const mimicFlags = rows<{ character: string; flag_key: string; earned_at: string | null }>(flags).filter(r => r.character.toLowerCase() === lc);
+    const mimicFlags = rows<{ character: string; flag_key: string; earned_at: string | null }>(flags).filter(r => r.character.toLowerCase() === lc)
+      .sort((a, b) => String(a.earned_at ?? '').localeCompare(String(b.earned_at ?? '')));   // oldest first, as the row read was
     const auto = guideEvidence({
       flags: mimicFlags,
       loots: rows<{ looter_lower: string; item_name: string; looted_at: string | null }>(loots).filter(r => r.looter_lower === lc),

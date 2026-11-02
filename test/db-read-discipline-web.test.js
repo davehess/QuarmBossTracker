@@ -226,36 +226,20 @@ describe('/quartermaster: the inventory walk ends on the primary key (12 of 49,4
   });
 });
 
-describe('/pop/guide: a household\'s real flags are not crowded out by thousands of unmapped rows', () => {
-  // Three households hold more than 1,000 pop_flags rows (max 2,291) because 'unmapped' grants are
-  // stored per grant, ~1,700 a day; max real flags per household is 26. Heap order puts the older
-  // unmapped rows first, so a bare .limit(1000) returns nothing but unmapped, and a real flag earned
-  // later sits past it. (Those three have no real flag yet, which is why nobody saw it.)
-  const flags = () => {
-    const rows = [];
-    for (let i = 0; i < 2265; i++) rows.push({ character: 'Aaa', flag_key: 'unmapped', earned_at: `2026-09-${String(1 + (i % 28)).padStart(2, '0')}` });
-    for (let i = 0; i < 20; i++) rows.push({ character: 'Aaa', flag_key: 'hail', earned_at: '2026-10-02' });
-    for (let i = 0; i < 26; i++) rows.push({ character: 'Aaa', flag_key: `real_${i}`, earned_at: '2026-10-03' });
-    return rows;
-  };
-  const REL = 'web/app/pop/guide/page.tsx';
-
-  it('returns the 26 real flags and nothing else', async () => {
-    const q = lift(REL, 'from', 'pop_flags', { names: ['aaa'] }, { builder: false }).make(fakeDb({ pop_flags: flags() }));
-    const got = (await q).data;
-    expect(got).toHaveLength(26);
-    expect(got.every(r => r.flag_key.startsWith('real_'))).toBe(true);
-  });
-
-  it('without the not-in filter the same read returns 1,000 unmapped rows and no real flag', async () => {
-    const old = lift(REL, 'from', 'pop_flags', { names: ['aaa'] }, {
-      builder: false, mutate: (s) => s.replace(/\s*\.not\('flag_key', 'in', '\(unmapped,hail\)'\)/, ''),
+describe('/pop/guide: each character\'s flags once, however many #popflags reads are stored', () => {
+  // Every #popflags read Mimic captures stores ~35 rows per character; one household reached 5,710 rows for 334
+  // distinct flags (2026-11-02), and the old capped row read (oldest 1,000) left the newest progress out. The guide now
+  // reads pop_flags_distinct (one row per character and flag) a page at a time.
+  const distinct = Array.from({ length: 1334 }, (_, i) => ({ character: `C${i % 13}`, flag_key: `flag_${i}`, earned_at: '2026-11-02' }));
+  for (const [rel, vars] of [
+    ['web/app/pop/guide/page.tsx', { names: ['Aaa'], GUILD_TAG: 'wolfpack' }],
+    ['web/app/pop/guide/routeData.ts', { names: ['Aaa'], GUILD_TAG: 'wolfpack' }],
+  ]) {
+    it(`${rel}: every distinct flag, past the 1,000-row page`, async () => {
+      const client = fakeDb({}, { rpcs: { pop_flags_distinct: () => distinct } });
+      expect(await selectAll(lift(rel, 'rpc', 'pop_flags_distinct', vars).make(client))).toHaveLength(1334);
     });
-    expect(old.changed, 'the shipped read no longer carries .not(flag_key in (unmapped,hail)): update this test').toBe(true);
-    const got = (await old.make(fakeDb({ pop_flags: flags() }))).data;
-    expect(got).toHaveLength(1000);
-    expect(got.some(r => r.flag_key.startsWith('real_'))).toBe(false);
-  });
+  }
 });
 
 describe('/pop and /pop/guide: the RPCs are read a page at a time', () => {
