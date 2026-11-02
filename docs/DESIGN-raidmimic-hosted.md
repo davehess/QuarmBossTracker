@@ -486,3 +486,46 @@ combat log is documented and has `advanced combat logging`; EQ2 has ACT's plugin
 format is close to Quarm's, so it is the cheapest second target; WoW already has Warcraft Logs for parses, so the pitch there
 is the guild layer (raid record, loot, DKP, triggers, the Canvas), not the parse. The leadership's WoW Forever talk (Decision
 Desk, the faction and ruleset picks) is the first real test.
+
+## 10. Fun cards: a catalog officers pick from (2026-11-02)
+
+The guild lead, 2026-11-02: *"the fun section should also be generalized - make a list of the ones we've developed for
+officers to choose from"*. `/fun` (`web/app/fun/page.tsx`) is a fixed set of cards written for one guild. For a hosted guild it
+becomes a catalog: each card is an entry with a key, a description and its settings; officers tick the ones they want, fill
+in the settings (a raider, a word, a boss) and order them; `/fun` draws the guild's picks. Every count stays inside the guild
+(its own `fun_events` and fights), never across guilds.
+
+**Ready for any guild as built** (the data is the same for everyone; only the guild filter is new):
+
+| Card | What it counts | Data |
+|---|---|---|
+| Dragon punches landed | Monk dragon-punch knockbacks, a guild total with no names (the line names only the target) | `fun_events` `dragon_punch` |
+| Dirge damage | Bard area damage songs, fights where one song's damage would have wiped a guild | `fun_dirge_damage` RPC |
+| Longest charm | The longest single charm an enchanter held | `charm_sessions` |
+| Mana donated to casters | Necromancer mana twitches, given and received, per caster | `fun_events` `mana_twitch`, `mana_twitch_received` |
+| Mind Wracks | Mana burned off mobs, per caster | `fun_events` `mind_wrack_cast`, `mind_wrack_recourse` |
+| Food and water handed out | Summoned food and water given to raiders | `fun_events` `summon_food`, `summon_water` (today's card counts one summoner; see below) |
+| Pottymouth award | Chat-filter asterisks, per speaker | `fun_events` `pottymouth` |
+| Drunkard award | Drunk-slurred chat lines, per speaker | `fun_events` `drunkard` |
+| Hot Dice | The night's dice crown | `fun_events` `hot_dice_night` |
+| Deathrolls | Roll-down games, first to 0 loses | `fun_events` `deathroll` |
+
+**Built around one person, so they need a setting before another guild can use them** (each of these names one character or
+player in its code or its event type today; the generalized card takes the name as a setting, and the stored name lives in the
+guild's settings row, not in the source):
+
+| Card today | General card | Setting |
+|---|---|---|
+| Raids since one raider crashed | Raids since *a raider* went link-dead (and the damage their character dealt while they were gone) | the raider (the agent's link-dead detector must watch any chosen name, not one built-in name) |
+| A word one raider's family keeps saying | How often *a raider* says *a word* | the raider and the word |
+| Food and water one summoner handed out | Food and water *a summoner* handed out, or the whole guild's | a summoner, or none for the guild total |
+| Days since one raider died to enrage | Days since *anyone* (or a chosen raider) died to a boss's enrage | optional raider |
+| The execution card (one named player's PvP kills of one of ours) | Times *a named player* killed one of ours | the killer's name |
+| Lord of Ire vanquished, per main | *A boss* vanquished, per main (with the alt split page) | the boss |
+
+**Build shape (phase 3, with the other hosted-guild settings):** `web/lib/funCatalog.ts` lists the cards (key, title, what it
+counts, settings, the read it needs); a `hub_fun_cards (guild_id, card_key, settings jsonb, position, enabled)` table, service
+role only like the other `hub_*` tables; an officer page "Fun cards" with a tick, the settings and an order per card, and a
+preview; `/fun` reads the guild's rows and draws only those. A new guild starts with the ten ready cards on. Wolf Pack's own
+`/fun` keeps working unchanged until it is moved onto its own rows, at which point its five personal cards become settings
+and their names leave the source.
