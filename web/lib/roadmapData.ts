@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-100-2026-11-02',
+    title: 'Web 2.1.100',
+    version: 'Web 2.1.100',
+    date: '2026-11-02',
+    headline: 'Raid Mimic pricing: syncing your PoP flags and boss kills will be free.',
+    features: [
+      { name: 'Free flag and kill syncing', blurb: "On raidmimic.com's pricing, the free plan now includes syncing your PoP flags and boss kills, and a guild's feed of its members' flags and kills into its own site or bot. It works for Wolf Pack today; for everyone else it is marked coming." },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-2-1-99-2026-11-02',
     title: 'Web 2.1.99',
     version: 'Web 2.1.99',
