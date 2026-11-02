@@ -10,6 +10,7 @@ import { isRaidmimicHost } from '@/lib/raidmimicHost';
 import { EQMIMIC_ORIGIN } from '@/lib/raidmimicLanding';
 import NewPageTag from '@/components/NewPageTag';
 import NewGuildForm from './NewGuildForm';
+import HostFrame from '@/components/RaidmimicFrame';
 
 export const metadata: Metadata = {
   title: '[beta] Start a guild',
@@ -25,6 +26,7 @@ export default async function NewGuildPage() {
   const onHost = isRaidmimicHost(headers().get('host'));
 
   return (
+    <HostFrame onHost={onHost}>
     <div className="mx-auto max-w-xl px-1 py-2 pb-12">
       <NewPageTag note="New page: start a guild and invite your raiders." href={onHost ? `${EQMIMIC_ORIGIN}/feedback` : '/feedback'} />
       <h1 className="text-2xl text-gold">Start a guild</h1>
@@ -34,5 +36,6 @@ export default async function NewGuildPage() {
       <NewGuildForm />
       <p className="mt-6"><a href="/guilds" className="inline-flex min-h-11 items-center text-sm">&larr; Your guilds</a></p>
     </div>
+    </HostFrame>
   );
 }

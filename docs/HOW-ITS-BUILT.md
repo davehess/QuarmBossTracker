@@ -97,12 +97,45 @@ writes.
 
 ## Identity & auth
 
+- **Free flag syncing for players outside Wolf Pack (bot 4.0.50, 2026-11-02, §526/§527; slice 1).** `utils/mimicLink.js`:
+  `FREE_ROUTES` / `PAID_HUB_ROUTES` (`hubFreeRouteAllowed`, `hubPlanPaid`: paid = `hub_guilds.plan = 'managed'`), 403
+  `plan_required` before a body is read; a player link (`{player:true}`, hub `'~player'`, `_hubPlayerOf`) mints `scope:
+  'player'` sessions that resolve through `hub_players` only. `utils/hubSync.js` (`decideClaim`, `flagRowsFromEvents`,
+  `handleRequest`) writes `hub_flags` and `hub_characters` (migration `20261102210000_hub_sync.sql`, RLS on, no policies);
+  dispatched from `_handleAgentPopFlags` before any Wolf Pack write. `web/lib/mimicLinkHub.ts` lets any raidmimic.com player
+  claim a player code. `test/hub-sync.test.js`, `test/mimic-link-hub.test.js`.
+- **Flag events board, `/pop/flag-events` (web 2.1.99 on `main`, `[beta]`, 2026-11-02; DECISIONS §522 pick A).** Officers post
+  a target (catalog `web/lib/flagTargets.ts`, 12 targets, each a set of gate pieces from `popGatePieces.ts`; the demo shares it)
+  and an Eastern date/time, an optional note and an optional Raid-Helper event (`actions.ts`: session + `isOfficer` re-checked,
+  validated by `web/lib/flagEvents.ts`, the RH event must be the guild's). Each event card lists Still need it (no piece held
+  and a full read: `web/lib/flagEventNeeds.ts` through `gateReport`), Not recorded (no full read) and Signed
+  (`web/lib/flagEventSigned.ts`, the /pop/raid going rule). Characters: the guild's, level 46+, not traders, hidden or
+  `exclude_from_stats`; flags from `pop_flags_distinct` + `pop_guide_ticks` (not /who or loot yet), cached 5 minutes
+  (`load.ts`). Table `flag_events` (migration `20261102200000_flag_events.sql`): RLS on, no policies, service role only.
+  "Ping" is a disabled button until the bot can message. Linked from the /pop nav and from the Wolf Pack card on
+  raidmimic.com/guilds. `test/flag-events.test.js`.
+- **raidmimic.com/demo, a click-through guild (web 2.1.97 on `main`, `[beta]`, 2026-11-02; DECISIONS §516, §517).** The guild lead:
+  "a demo clickthrough site for raidmimic.com … so they can see what it looks like for the guild, but without killing the
+  resources". An invented guild ("Silverpine Vanguard", one fixture: `web/lib/demoGuild.ts`, run through the real
+  `gateReport` / `parseRecital`) on seven pages under `web/app/raidmimic/demo/`: guild home, flags (the real `GateTable`,
+  one page per gate, plus the "reported, waiting for the owner" table), record for others, events option A
+  (`/demo/events`, post first) and option B (`/demo/events/needs`, needs first), tonight. No database, no session, no
+  client JS; the one request read is the host (`DemoShell.tsx`: `/demo` links and the Raid Mimic frame on raidmimic.com,
+  `/raidmimic/demo` elsewhere). NOT `force-static`: a static page cannot see the host, so the root layout would bake the
+  Wolf Pack header in; on raidmimic.com the middleware rewrites `/demo/...` (`raidmimicLandingTarget`, path kept) before
+  any session work and the root layout's bare shell reads nothing, so a view is one render. `noindex`. Test
+  `test/raidmimic-demo.test.js`.
 - **raidmimic.com signs anyone in; `/guilds` is where they land (web 2.1.79 on `main`, `[beta]`, 2026-10-31; DECISIONS §485, §492).**
   On the raidmimic hosts sign-in is identify-only with no guild or role gate. `web/middleware.ts` exempts `/auth/*`,
   `/api/auth/*` and `/guilds` from the landing rewrite (`web/lib/raidmimicHost.ts`; eqmimic.quest untouched). `web/app/auth/callback/route.ts`
   dispatches once at the top: on a raidmimic host the open path (`web/lib/openSignIn.ts`: exchange, lockout check, `hub_players`
   upsert, redirect to `/guilds`); on wolfpack.quest the gated path, byte for byte (proven by test). `SignInButton` picks scopes per
-  host. `/guilds` (`web/app/guilds/`): the Wolf Pack card for members, one card per `hub_*` membership, join by invite code
+  host. **Header and footer** (web 2.1.96): the raidmimic host's root layout is a bare shell, so `/guilds`, `/guilds/new`,
+  `/guilds/<slug>` and `/register` wrap themselves in `web/components/RaidmimicFrame.tsx` (Raid Mimic bar: home, Your guilds,
+  Set up, For guild leaders; the landing page's `Footer` with privacy, terms, refunds, contact) and `/setup` takes the bar
+  (it has its own footer); on a Wolf Pack host the frame renders nothing. The bar is sticky and one line (web 2.1.98), and
+  the landing page carries it under its stage on a raidmimic host. `test/raidmimic-frame.test.js`.
+  `/guilds` (`web/app/guilds/`): the Wolf Pack card for members, one card per `hub_*` membership, join by invite code
   (rate-limited; uses, expiry and suspension honoured; `JoinForm.tsx`, `actions.ts`), "Find my guilds" (a second consent,
   `identify guilds`: matches the Discord server list against `hub_guilds.discord_guild_id`, joins `open_join` guilds, lists closed
   ones as "ask an officer for a code", writes only matched ids, keeps no token), "Start a guild" (a stub). Registry:

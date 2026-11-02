@@ -134,6 +134,10 @@ describe('the money', () => {
     expect(t.find(x => x.id === 'individual').coming).toMatch(/coming/i);
     expect(t.find(x => x.id === 'guild').coming).toMatch(/other guilds is coming/i);
     expect(S.featureById('sync').chip).toMatch(/coming/i);
+    // Free flag and kill syncing (pick A, 2026-11-02) is listed in Free, and chipped coming until it works outside Wolf Pack.
+    const free = t.find(x => x.id === 'free');
+    expect(free.points).toContain('Your PoP flags and boss kills, synced');
+    expect(free.coming).toMatch(/outside Wolf Pack is coming/);
   });
 });
 

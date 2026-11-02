@@ -10,6 +10,7 @@ import { isRaidmimicHost, RAIDMIMIC_SETUP_PATH, raidmimicSeo } from '@/lib/raidm
 import { EQMIMIC_ORIGIN } from '@/lib/raidmimicLanding';
 import { LANDING_PATH_ON_HOST, LANDING_PATH_ON_WOLFPACK, RELEASES_URL } from '@/lib/raidmimicSetup';
 import RegisterForm from './RegisterForm';
+import HostFrame from '@/components/RaidmimicFrame';
 
 const TITLE = '[beta] Register your guild';
 const DESCRIPTION =
@@ -33,6 +34,7 @@ export default function RaidmimicRegisterPage() {
   const setup = onHost ? '/setup' : RAIDMIMIC_SETUP_PATH;
 
   return (
+    <HostFrame onHost={onHost}>
     <div className="mx-auto max-w-xl pb-12">
       {/* On a raidmimic host /feedback is not a page, so the tag's link goes to the feedback form on eqmimic.quest. */}
       <NewPageTag note="New page: tell us about your guild." href={onHost ? `${EQMIMIC_ORIGIN}/feedback` : '/feedback'} />
@@ -54,5 +56,6 @@ export default function RaidmimicRegisterPage() {
         <a href={landing}>Back to Raid Mimic</a>
       </p>
     </div>
+    </HostFrame>
   );
 }

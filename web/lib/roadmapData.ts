@@ -37,6 +37,62 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-100-2026-11-02',
+    title: 'Web 2.1.100',
+    version: 'Web 2.1.100',
+    date: '2026-11-02',
+    headline: 'Raid Mimic pricing: syncing your PoP flags and boss kills will be free.',
+    features: [
+      { name: 'Free flag and kill syncing', blurb: "On raidmimic.com's pricing, the free plan now includes syncing your PoP flags and boss kills, and a guild's feed of its members' flags and kills into its own site or bot. It works for Wolf Pack today; for everyone else it is marked coming." },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'web-2-1-99-2026-11-02',
+    title: 'Web 2.1.99',
+    version: 'Web 2.1.99',
+    date: '2026-11-02',
+    headline: 'Flag events: officers post a flag raid, and everyone sees who still needs it.',
+    features: [
+      { name: 'Flag events (beta)', blurb: 'On the PoP pages, officers post what the guild is going for and when (Temple of Marr trials, Saryrn, Tallon and Vallon, and more). Each event lists the raiders who still need it, the ones we have no full flag read for yet, and who signed up when it is linked to a Raid-Helper event.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'web-2-1-98-2026-11-02',
+    title: 'Web 2.1.98',
+    version: 'Web 2.1.98',
+    date: '2026-11-02',
+    headline: 'The raidmimic.com top bar stays put.',
+    features: [],
+    fixes: [
+      'The Raid Mimic bar now stays at the top while you scroll, on the home page too (under the opening scene), and fits on one line on a phone.',
+    ],
+  },
+  {
+    key: 'web-2-1-97-2026-11-02',
+    title: 'Web 2.1.97',
+    version: 'Web 2.1.97',
+    date: '2026-11-02',
+    headline: 'raidmimic.com has a demo guild you can click through.',
+    features: [
+      { name: 'raidmimic.com/demo', blurb: 'An invented guild shows what Raid Mimic looks like for a guild: who is missing which Planes of Power flags, flags a raid leader records for someone else, two ways to plan flag events, and tonight\'s raid. Nothing in it is real and nothing is saved.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'web-2-1-96-2026-11-02',
+    title: 'Web 2.1.96',
+    version: 'Web 2.1.96',
+    date: '2026-11-02',
+    headline: 'raidmimic.com pages get their header and footer.',
+    features: [],
+    fixes: [
+      'Your guilds, Start a guild, a guild\'s page and the guild-leader form on raidmimic.com had no Raid Mimic header and no privacy, terms or contact links at the bottom. They have both now.',
+      'On Your guilds, Wolf Pack\'s card reads like any other guild\'s, and "Find my guilds" no longer says you are in no guild while one is listed.',
+    ],
+  },
+  {
     key: 'web-2-1-95-2026-11-02',
     title: 'Web 2.1.95',
     version: 'Web 2.1.95',

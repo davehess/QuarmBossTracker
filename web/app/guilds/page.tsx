@@ -25,6 +25,7 @@ import NewPageTag from '@/components/NewPageTag';
 import SignInButton from '@/components/SignInButton';
 import JoinForm from './JoinForm';
 import YourData from '@/app/me/data/YourData';
+import HostFrame from '@/components/RaidmimicFrame';
 
 export const metadata: Metadata = {
   title: '[beta] Your guilds',
@@ -40,13 +41,14 @@ type WolfCard = { name: string; characters: number };
 const ROLE_LABEL: Record<string, string> = { owner: 'Owner', officer: 'Officer', member: 'Member', guest: 'Guest' };
 
 // What "Find my guilds" reports back, by a closed vocabulary: nothing from the query string is echoed.
-function findNote(find: string | undefined, found: string | undefined, closedCount: number): { text: string; good: boolean } | null {
+// `listed`: a guild card is already on the page (Wolf Pack's, which this search does not cover), so "none" must say "no other".
+function findNote(find: string | undefined, found: string | undefined, closedCount: number, listed = false): { text: string; good: boolean } | null {
   if (find === 'ok') {
     const n = Math.max(0, Math.min(99, parseInt(found ?? '0', 10) || 0));
     if (n > 0) return { text: `Found ${n} guild${n === 1 ? '' : 's'} you are in. They are listed above.`, good: true };
     return closedCount > 0
       ? { text: 'None of your Discord servers is open to join without a code. The ones that are guilds here are listed above.', good: false }
-      : { text: 'None of your Discord servers is a guild on Raid Mimic yet. An invite code works without this.', good: false };
+      : { text: `${listed ? 'No other' : 'None'} of your Discord servers is a guild on Raid Mimic yet. An invite code works without this.`, good: false };
   }
   if (!find) return null;
   const why: Record<string, string> = {
@@ -112,9 +114,10 @@ export default async function GuildsPage({ searchParams }: { searchParams: { fin
 
   const [wolf, hub] = discordId ? await Promise.all([loadWolfPack(discordId), loadHubGuilds(discordId)]) : [null, [] as HubCard[]];
   const closed = searchParams.find === 'ok' ? await loadClosedMatches(searchParams.closed, hub) : [];
-  const note = findNote(searchParams.find, searchParams.found, closed.length);
+  const note = findNote(searchParams.find, searchParams.found, closed.length, !!wolf || hub.length > 0);
 
   return (
+    <HostFrame onHost={onHost}>
     <div className="mx-auto max-w-3xl px-1 py-2 pb-12">
       <NewPageTag note="New page: the guilds you are in, and how to join or start one." href={onHost ? `${EQMIMIC_ORIGIN}/feedback` : '/feedback'} />
       <h1 className="text-2xl text-gold">Your guilds</h1>
@@ -130,10 +133,15 @@ export default async function GuildsPage({ searchParams }: { searchParams: { fin
               <h2 className="text-lg text-[#f2ede1]">{wolf.name}</h2>
               <span className={PILL}>Member</span>
             </div>
-            <p className="mt-1 text-sm text-dim">{wolf.characters} character{wolf.characters === 1 ? '' : 's'} on file</p>
+            {/* Same shape as the other guild cards (the guild lead, 2026-11-02: "This looks like it's hard-tied to wolfpack
+                here"). It still opens on its own site: Wolf Pack is not a hub_guilds row yet, so there is no /guilds/<slug>. */}
+            <p className="mt-1 text-sm text-dim">
+              {wolf.characters} character{wolf.characters === 1 ? '' : 's'} on file · its own site, {PROD_SITE_URL.replace(/^https:\/\//, '')}
+            </p>
             <p className="mt-2 flex flex-wrap gap-x-5">
-              <a href={`${PROD_SITE_URL}/me`} className={LINK}>Open my page →</a>
-              <a href={`${PROD_SITE_URL}/auth/mimic-link`} className={LINK}>Link Mimic →</a>
+              <a href={`${PROD_SITE_URL}/me`} className={LINK}>Open the guild &rarr;</a>
+              <a href={`${PROD_SITE_URL}/pop/flag-events`} className={LINK}>Flag events &rarr;</a>
+              <a href={`${PROD_SITE_URL}/auth/mimic-link`} className={LINK}>Link Mimic &rarr;</a>
             </p>
           </article>
         )}
@@ -200,5 +208,6 @@ export default async function GuildsPage({ searchParams }: { searchParams: { fin
       {/* /me is not served on raidmimic hosts, so the section lives here, with its own download route under /guilds. */}
       {onHost && <div className="mt-6"><YourData exportHref="/guilds/data/export" /></div>}
     </div>
+    </HostFrame>
   );
 }

@@ -209,6 +209,62 @@ answers "why are you accepting donations".
   terms (`docs/TERMS-hosted.md`): it covers that deployment's infrastructure
   and time, it is not a donation, and it is not profit.
 
+## 8. Cost model for the hosted plans, per guild (2026-11-02, DECISIONS §527)
+
+The guild lead: *"break out the paid sections by cost … that way we can form a better cost model."* The rule (§527,
+`docs/DESIGN-raidmimic-hosted.md` §8e) is that what costs us money is what we charge for; this is what each paid piece
+costs. **A guild** = about 36 raiders uploading, 3 raid nights a week, ≈ 13 nights a month (the night measured in
+`DESIGN-raidmimic-hosted.md` §7a). Prices are list prices as known on 2026-11-02 and need checking against each provider's
+page before anyone quotes them; storage is billed only above Supabase Pro's included 8 GB, at $0.125/GB-month.
+
+### 8a. Fixed: what the platform costs before the first guild
+
+| Line | Monthly | Note |
+|---|---|---|
+| Supabase Pro | $25 | includes $10 of compute (the Micro instance) and 8 GB of database |
+| Vercel Pro | $20 | **needed the day we charge**: Hobby is non-commercial (§2). One seat |
+| Railway | $5 | Hobby floor; the bot uses about $1.20 of it (§2) |
+| Domains | ≈ $3 | raidmimic.com and its sister hosts, about $35 a year together |
+| **Total** | **≈ $53** | before development time (§7.1), which is the real cost and is not in this model |
+
+### 8b. Per guild, per month, by paid piece
+
+| Paid piece | What drives the cost | Basis (measured) | ≈ per guild-month |
+|---|---|---|---|
+| **Card fee on the $25** | Stripe: 2.9% + $0.30 per charge | fixed by the processor | **$1.03**, the largest per-guild line |
+| **The per-second fight feed** (replays, threat, raid review, spectator) | storage at 30-day retention; but mostly **database work**: ~43k rows a night per guild | 41 MB a night → ≈ 0.53 GB held → **$0.07 storage**. Load: today's one guild runs on the included Micro instance | **$0.07 storage + a share of compute** (8c) |
+| **Merged parses and fight detail** (rollups, contributions, per-player rows, the raid tracker) | storage that grows forever | ≈ 100 MB a month kept → 1.2 GB after a year | **$0.01 in month 1, $0.15 by month 12** |
+| **Chat relay and /who history** | storage that grows forever | ≈ 4 MB a night → 52 MB a month | **$0.08 by month 12** |
+| **Shared buff landings** | storage, kept 7 days | ≈ 13 MB held | **< $0.01** |
+| **A Raid Mimic bot in the guild's Discord** | bot memory and its connection | one shared bot: today $1.20 of resources for one guild with 99% headroom; a dedicated bot per guild: one more Railway service | **≈ $0.10 shared, ≈ $1 to $2 dedicated** |
+| **Pages and overlays reading from us** (reviews, replays, live boards) | egress, $0.09/GB beyond Pro's 250 GB | not measurable from here (dashboard only, §3); a fight replay is a few MB, read by ~30 raiders a night ≈ 2 GB a guild-month | **$0 inside the 250 GB, ≈ $0.18 beyond it** |
+| **Cloud UI backups** (Pro · Individual) | storage per player, autos pruned to 5 | 10 MB today for everyone | **< $0.01 a player** |
+
+### 8c. The one line that scales: database compute
+
+Storage is cents. What grows with guilds is the database's **work**: the fight feed is ~43k row writes a night per guild, plus
+the reads behind replays and live boards. One guild fits in the included Micro instance today (§334: the slow spots were
+indexes, not size). Supabase sells bigger instances by the month (list: Small $15, Medium $60, Large $110, XL $210). As a
+planning guess, not a measurement: Small around 5 guilds, Medium around 20, Large around 50, which is **about $2 to $3 per
+guild-month**. Moving the fight feed out of Postgres into compressed files (`DESIGN-raidmimic-hosted.md` §7a: ~40 KB per fight
+gzipped, $0.02/GB) takes most of that work away and is the cheapest lever we have.
+
+### 8d. What it adds up to
+
+| Guilds | Fixed | Per-guild costs (≈ $1.03 fee + ≈ $0.30 storage, bot, egress + ≈ $2.50 compute) | Total cost | Revenue at $25 | Margin |
+|---|---|---|---|---|---|
+| 1 | $53 | ≈ $4 | ≈ $57 | $25 | −$32 |
+| 3 | $53 | ≈ $12 | ≈ $65 | $75 | +$10 |
+| 10 | $53 | ≈ $38 | ≈ $91 | $250 | +$159 |
+| 50 | $53 | ≈ $190 | ≈ $243 | $1,250 | +$1,007 |
+
+**Break-even is three paying guilds.** Above that the per-guild cost is about $4 of a $25 plan, and the biggest single line is
+the card fee, not the servers. Free users (§527: flags, kills, the overlays) cost almost nothing per head and are not in
+these rows; a free player's sync is a few KB a night.
+
+Re-measure: table sizes with `pg_total_relation_size`, Railway with `get-service-metrics`, and egress from the Supabase
+dashboard (§5). The compute steps in 8c are the guess most worth replacing with a measurement once a second guild uploads.
+
 ## 7. The honest caveats
 
 1. **The largest real cost is not on this page.** 2,278 commits over 4.9 months

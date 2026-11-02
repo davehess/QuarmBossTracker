@@ -412,6 +412,29 @@ would be a lifetime liability unless the quota is small and fixed. Options, cost
 - **C — One-time $20 Personal (lifetime, fixed quota) + Guild flat $25/mo**: works only because the Personal quota is bounded;
   no recurring personal revenue, so the guild fee carries everything.
 
+### 8e. The rule: what costs us money is what we charge for (2026-11-02, DECISIONS §527)
+
+The guild lead: *"Any of the things that cost us money are the things that we charge for."* Free is everything that costs us
+nothing or next to nothing to run; a plan pays for everything that stores much, computes much, or is read often. Each line
+below is checked against what it costs, measured on 2026-11-02 (whole-history table sizes, indexes included):
+
+| What | What it costs us | Measured | Plan |
+|---|---|---|---|
+| Overlays, triggers, the DPS meter on your own PC | nothing: it runs on the player's machine | 0 | Free |
+| PoP flags and boss kills, synced | a few rows per player per night | flags 15 MB, fights 36 MB, all history | Free |
+| A guild's feed of its members' flags and kills into its own site or bot | a push of a few hundred bytes per event | negligible; a pull API is rate-limited so polling cannot become egress | Free |
+| The per-second fight feed: replays, threat, the raid review, spectator | the biggest store we have | threat snapshots 2.49 GB, fight events 183 MB, threat graph 40 MB; ~41 MB per guild raid night | Pro · Guild |
+| Fight detail beyond flags and kills: merged parses, per-ability rollups, every raider's row | storage that grows every night | rollups 193 MB, contributions 63 MB, per-player rows 62 MB | Pro · Guild |
+| Chat relay and /who history | storage | chat 292 MB, /who 182 MB | Pro · Guild |
+| Buff landings shared across the raid | storage, kept 7 days | 88 MB | Pro · Guild |
+| A Raid Mimic bot in the guild's own Discord (timers, raid cards, role wizard) | bot compute and its connection per server | today's one bot ≈ $2 a month; per-guild bots cost more | Pro · Guild |
+| Cloud backups of a player's UI and layouts | storage per player | 10 MB today, grows per player | Pro · Individual |
+| Anything a page or overlay reads from us every few seconds | egress (Supabase bills reads, not writes) | not measurable from here (dashboard only) | Pro |
+
+Consequences: free syncing must send flags and kills ONLY (the server enforces it, so a free player's agent cannot fill the
+fight-feed tables); the Free tile's "your own parses" means the meter on the player's PC, and a parse uploaded to us is a
+Pro feature; a pull feed gets a rate limit. A new feature takes a line in this table before it takes a tier.
+
 ## 9. Bots at scale: one per guild or one for all, subdomains, where guest data lives, and other games (2026-10-31)
 
 The guild lead: *"we're also going to need to account for the additional load on railway bots. each Guild will probably want
@@ -486,3 +509,46 @@ combat log is documented and has `advanced combat logging`; EQ2 has ACT's plugin
 format is close to Quarm's, so it is the cheapest second target; WoW already has Warcraft Logs for parses, so the pitch there
 is the guild layer (raid record, loot, DKP, triggers, the Canvas), not the parse. The leadership's WoW Forever talk (Decision
 Desk, the faction and ruleset picks) is the first real test.
+
+## 10. Fun cards: a catalog officers pick from (2026-11-02)
+
+The guild lead, 2026-11-02: *"the fun section should also be generalized - make a list of the ones we've developed for
+officers to choose from"*. `/fun` (`web/app/fun/page.tsx`) is a fixed set of cards written for one guild. For a hosted guild it
+becomes a catalog: each card is an entry with a key, a description and its settings; officers tick the ones they want, fill
+in the settings (a raider, a word, a boss) and order them; `/fun` draws the guild's picks. Every count stays inside the guild
+(its own `fun_events` and fights), never across guilds.
+
+**Ready for any guild as built** (the data is the same for everyone; only the guild filter is new):
+
+| Card | What it counts | Data |
+|---|---|---|
+| Dragon punches landed | Monk dragon-punch knockbacks, a guild total with no names (the line names only the target) | `fun_events` `dragon_punch` |
+| Dirge damage | Bard area damage songs, fights where one song's damage would have wiped a guild | `fun_dirge_damage` RPC |
+| Longest charm | The longest single charm an enchanter held | `charm_sessions` |
+| Mana donated to casters | Necromancer mana twitches, given and received, per caster | `fun_events` `mana_twitch`, `mana_twitch_received` |
+| Mind Wracks | Mana burned off mobs, per caster | `fun_events` `mind_wrack_cast`, `mind_wrack_recourse` |
+| Food and water handed out | Summoned food and water given to raiders | `fun_events` `summon_food`, `summon_water` (today's card counts one summoner; see below) |
+| Pottymouth award | Chat-filter asterisks, per speaker | `fun_events` `pottymouth` |
+| Drunkard award | Drunk-slurred chat lines, per speaker | `fun_events` `drunkard` |
+| Hot Dice | The night's dice crown | `fun_events` `hot_dice_night` |
+| Deathrolls | Roll-down games, first to 0 loses | `fun_events` `deathroll` |
+
+**Built around one person, so they need a setting before another guild can use them** (each of these names one character or
+player in its code or its event type today; the generalized card takes the name as a setting, and the stored name lives in the
+guild's settings row, not in the source):
+
+| Card today | General card | Setting |
+|---|---|---|
+| Raids since one raider crashed | Raids since *a raider* went link-dead (and the damage their character dealt while they were gone) | the raider (the agent's link-dead detector must watch any chosen name, not one built-in name) |
+| A word one raider's family keeps saying | How often *a raider* says *a word* | the raider and the word |
+| Food and water one summoner handed out | Food and water *a summoner* handed out, or the whole guild's | a summoner, or none for the guild total |
+| Days since one raider died to enrage | Days since *anyone* (or a chosen raider) died to a boss's enrage | optional raider |
+| The execution card (one named player's PvP kills of one of ours) | Times *a named player* killed one of ours | the killer's name |
+| Lord of Ire vanquished, per main | *A boss* vanquished, per main (with the alt split page) | the boss |
+
+**Build shape (phase 3, with the other hosted-guild settings):** `web/lib/funCatalog.ts` lists the cards (key, title, what it
+counts, settings, the read it needs); a `hub_fun_cards (guild_id, card_key, settings jsonb, position, enabled)` table, service
+role only like the other `hub_*` tables; an officer page "Fun cards" with a tick, the settings and an order per card, and a
+preview; `/fun` reads the guild's rows and draws only those. A new guild starts with the ten ready cards on. Wolf Pack's own
+`/fun` keeps working unchanged until it is moved onto its own rows, at which point its five personal cards become settings
+and their names leave the source.

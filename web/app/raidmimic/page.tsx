@@ -23,6 +23,7 @@ import { DOWNLOAD_URL } from '@/lib/raidmimicPlayer';
 import { CtaBand, Footer, type Ctx } from './_landing/Parts';
 import StoryStage from './_landing/StoryStage';
 import { FeatureBlocks, Pricing, RaidManagement } from './_landing/StoryParts';
+import { HostBar } from '@/components/RaidmimicFrame';
 
 const TITLE = 'Raid Mimic · free EverQuest raid overlays';
 const DESCRIPTION =
@@ -51,6 +52,9 @@ export default function RaidmimicPage() {
     <div id="raidmimic-home">
       <StoryStage downloadUrl={DOWNLOAD_URL} onHost={onHost} />
       <div className="mx-auto max-w-5xl pb-12">
+        {/* The bar the other raidmimic.com pages carry: it slides in under the stage and stays pinned (the guild lead,
+            2026-11-02: "top bar on the raidmimic.com site doesn't lock"). The stage keeps its own header. */}
+        {onHost && <HostBar />}
         <FeatureBlocks />
         <RaidManagement />
         <Pricing setup={ctx.setup} onHost={onHost} />

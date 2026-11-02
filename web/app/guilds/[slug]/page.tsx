@@ -18,6 +18,7 @@ import { pageMetadata } from '@/lib/pageMetaData';
 import { guildAccess, activeInvites, canManageInvites, ROLE_LABEL, type InviteListRow } from '@/lib/hubGuilds';
 import NewPageTag from '@/components/NewPageTag';
 import { NewInviteButton, RevokeButton } from './InviteControls';
+import HostFrame from '@/components/RaidmimicFrame';
 
 // The card and the tab say the same words: "Guild", never the guild's name (web/lib/pageMeta.ts).
 export async function generateMetadata({ params }: { params: { slug: string } }): Promise<Metadata> {
@@ -66,6 +67,7 @@ export default async function GuildPage({ params }: { params: { slug: string } }
 
   if (access.kind === 'visitor') {
     return (
+      <HostFrame onHost={onHost}>
       <div className="mx-auto max-w-3xl px-1 py-2 pb-12">
         <NewPageTag note="New page: a guild's own page." href={feedbackHref} />
         <h1 className="text-2xl text-gold">{guild.display_name}</h1>
@@ -74,6 +76,7 @@ export default async function GuildPage({ params }: { params: { slug: string } }
         </p>
         <p className="mt-4"><a href="/guilds" className="inline-flex min-h-11 items-center text-sm">&larr; Your guilds</a></p>
       </div>
+      </HostFrame>
     );
   }
 
@@ -88,6 +91,7 @@ export default async function GuildPage({ params }: { params: { slug: string } }
   }
 
   return (
+    <HostFrame onHost={onHost}>
     <div className="mx-auto max-w-3xl px-1 py-2 pb-12">
       <NewPageTag note="New page: a guild's own page." href={feedbackHref} />
       <div className="flex flex-wrap items-center gap-2">
@@ -136,5 +140,6 @@ export default async function GuildPage({ params }: { params: { slug: string } }
 
       <p className="mt-4"><a href="/guilds" className="inline-flex min-h-11 items-center text-sm">&larr; Your guilds</a></p>
     </div>
+    </HostFrame>
   );
 }

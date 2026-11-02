@@ -85,8 +85,12 @@ export function priceLabel(price: number | null, per = 'month'): string {
 
 export interface Tier { id: 'free' | 'guild' | 'individual'; name: string; price: string; note: string; tone: 'green' | 'blue' | 'gold'; points: string[]; coming?: string }
 export const TIERS = (individual: number | null = INDIVIDUAL_PRICE): Tier[] => [
-  { id: 'free', name: 'Free', price: '$0', note: 'No account needed.', tone: 'green',
-    points: ['The overlays', 'Triggers', 'Your own parses'] },
+  // Flag and kill syncing is free for everyone, and so is a guild's feed of its own members' flags and kills (the guild
+  // lead, 2026-11-02, pick A, DECISIONS §526: "it's gotta be cheap for users to be able to get their popflags and mob kills
+  // synced"). Free syncing sends flags and kills only, never the per-second fight feed, which is what costs storage.
+  { id: 'free', name: 'Free', price: '$0', note: 'No account needed for the overlays.', tone: 'green',
+    points: ['The overlays', 'Triggers', 'Your own parses', 'Your PoP flags and boss kills, synced', "Your guild's flags and kills, fed into its own site or bot"],
+    coming: 'Syncing for players outside Wolf Pack is coming.' },
   { id: 'guild', name: 'Pro · Guild', price: priceLabel(GUILD_PRICE), note: 'Monthly only. First month free.', tone: 'blue',
     points: ['Shared raid reviews', 'Merged parses', 'Replay & spectator', 'Command center', 'Guild Discord bot'],
     coming: 'Live for one guild today. Hosting other guilds is coming.' },
