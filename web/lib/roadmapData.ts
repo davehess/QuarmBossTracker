@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-94-2026-11-02',
+    title: 'Web 2.1.94',
+    version: 'Web 2.1.94',
+    date: '2026-11-02',
+    headline: 'The PoP guide shows exactly what each of your characters is missing for every plane.',
+    features: [
+      { name: 'What each character is missing', blurb: 'The PoP guide opens on a table: pick a plane, and every character gets a row with each piece it needs (done, held by the Seer, missing, or not recorded yet) and a plain "what\'s left". Click a name for that character\'s full list.' },
+      { name: 'A smaller Seer box', blurb: 'The paste box is always ready: paste and press Check my flags. The how-to opens when you want it, and #popflags lines read in the same box.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-2-1-93-2026-11-02',
     title: 'Web 2.1.93',
     version: 'Web 2.1.93',

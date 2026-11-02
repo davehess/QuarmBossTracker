@@ -1564,7 +1564,14 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   closed). The ⚙ keeps text settings + Group/Officer/Custom; Melee/Spells/Skills switches, the "shows" rows, Channels and the
   notes live in `<details id="moreset">`. Both open states are per window in localStorage (`wpChatMore:<win>`,
   `wpChatMoreSet:<win>`), failing closed.
-- **Seer paste on /pop/guide** (live, web 1.8.158; built 1.8.154, §304): `web/app/pop/guide/SeerPaste.tsx` (collapsed `<details>` atop all guide
+- **What each character is missing, per gate, on /pop/guide** (live, web 2.1.94, FB-115): the page opens on the family table
+  (`GateTable.tsx`, `?v=gate-b`, `?gate=<zone>` picks the gate); a name opens that character's piece-by-piece list in the next-up
+  card (`?v=gate-a`, `NextUp.tsx` + `GateMissing.tsx`). Built by `gatePanel.tsx`; pieces in `web/lib/popGatePieces.ts`, the
+  ✅ / ⏳ / ❌ / ❓ rules in `web/lib/popGateStatus.ts`; "has had a full read" (so absent = ❌) from `gateData.ts`. Flags come from
+  `pop_flags_distinct` (one row per character and flag). Test: `test/pop-gate-pieces.test.js`.
+- **Seer paste on /pop/guide** (live, web 1.8.158; built 1.8.154, §304; web 2.1.94: `<section id="seer-paste">` with a small text
+  box and Check always shown, the steps behind "How do I get these lines?", and #popflags lines read and saved too through
+  `parsePopFlags` / `savePopFlagsPaste`; Mimic's PoP Raids Capture links here) `web/app/pop/guide/SeerPaste.tsx` (atop all guide
   layouts); reader `web/lib/popRecital.ts` (`parseRecital`, `heldClosure`, `zoneViews`, `recitalRows`; table copied from
   `utils/popFlagStages.js`, parity-tested); guide join `web/lib/popGuideSeer.ts` (`STEP_GUIDE`, `guideStepsProven`); save
   `saveSeerRecital` (`web/app/pop/guide/actions.ts`) → `web/lib/popRecitalSave.ts` (ownership via `ownedCharacters`, skip existing
