@@ -198,6 +198,24 @@ next touch one rather than assuming a missing row means a missing doc.
   the slow badge and debuff list take the caster's landing over emote guesses, and hour-off landings are put back or dropped.
   Tests `test/raid-fights-route.test.js`, `test/buff-casts-self-cast.test.js` (main), `test/raid-fights-history.test.js`,
   `test/debuffer-precedence.test.js` (beta).
+- **📐 Guild loot systems and raid rules, catalogued (2026-11-02, DECISIONS §520).** `docs/DESIGN-loot-systems.md`: the
+  nineteen dimensions, eight systems (Wolf Pack and Guilds A to G: DKP sealed/open/site, EPGP, rolls, ranked picks), what we
+  have and lack per kind, and a per-guild rulebook shown to guests. Add each new guild as a letter. **⚠ Needs the guild lead:**
+  the Raid Mimic Discord welcome is option A (§522): set the three onboarding steps in Discord Server Settings.
+- **📐 The server-wide flag exchange on raidmimic.com (direction 2026-11-02, DECISIONS §516, §517; design open).** Raid leaders
+  of every guild post a schedule and fill gaps from players (any guild) whose uploaded flags say they need the target;
+  opt-in sharing into restricted tables; officer rights; the Raid Mimic bot with a role wizard. Research, proposed shape,
+  phases, the privacy sentences that must change with it, and the eight open choices: `docs/DESIGN-flag-exchange.md`. Phase
+  1 is live: https://raidmimic.com/demo (web 2.1.97, `[beta]`, invented guild, no data). Phase 2 started: option A was
+  picked (§522) and the real board is live for Wolf Pack at https://wolfpack.quest/pop/flag-events (web 2.1.99, `[beta]`;
+  officers post, everyone sees who still needs it; "Ping" waits on the bot). The Discord setup checklist is an artifact
+  (link in the private briefing).
+- **🧪 Free flag syncing outside Wolf Pack, slice 1 (bot 4.0.50 `main`, migration `20261102210000_hub_sync.sql` applied,
+  2026-11-02, §526, §527).** A player session (no guild) and the free/paid route gate; flags into `hub_flags` /
+  `hub_characters`; the fight upload only for `managed` guilds. Nobody can start a player link yet (Mimic's choice is the next
+  beta slice). **⚠ Launch blocker:** self-delete and the data export must cover `hub_flags` and `hub_characters` before
+  player links are offered. Then kills (`hub_kills`), the player page `/player`, the guild feed, the in-game proof code.
+  Plan: `docs/DESIGN-flag-exchange.md` §3 Supply.
 - **✅ PoP guide: what each character is missing, per gate, and the small paste box (web 2.1.94 `main`, 2026-11-02, FB-115).**
   On the guild lead's "looks right now, ship it": https://wolfpack.quest/pop/guide opens on the family table (every piece of the
   picked gate per character, and what is left); a character's name opens their piece-by-piece list (`?v=gate-a`). The paste box

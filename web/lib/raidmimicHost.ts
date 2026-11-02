@@ -63,6 +63,11 @@ export const RAIDMIMIC_SETUP_PATH = '/raidmimic/setup';
 // raidmimic.com/register. Served by the same rewrite as the set-up guide; the Register-interest links all point here.
 export const RAIDMIMIC_REGISTER_PATH = '/raidmimic/register';
 
+// The click-through demo of an invented guild (the guild lead, 2026-11-02): raidmimic.com/demo and /demo/<page>, pages with
+// no data of their own (web/app/raidmimic/demo), so the rewrite below keeps the rest of the path, unlike every other page
+// here. The long form /raidmimic/demo/... is served as itself too (it is what the wolfpack.quest hosts use).
+export const RAIDMIMIC_DEMO_PATH = '/raidmimic/demo';
+
 // The pre-launch legal pages (the guild lead's checklist, 2026-11-01): raidmimic.com/privacy, /terms and /refunds. /terms is
 // also a real route on wolfpack.quest (web/app/terms), where it serves the same page.
 export const RAIDMIMIC_PRIVACY_PATH = '/raidmimic/privacy';
@@ -104,7 +109,8 @@ export function isRaidmimicAsset(pathname: string): boolean {
  *   /setup               -> the set-up guide (a trailing slash and any capitals are fine)
  *   /register            -> the interest form
  *   /privacy, /terms, /refunds -> the legal pages
- *   /robots.txt          -> robots for these hosts (allow all, and the sitemap)
+ *   /demo, /demo/<page>, /demo/<a>/<b> (and the same under /raidmimic/demo) -> the demo page, path kept, lowercase a-z 0-9 -
+ *   /robots.txt         -> robots for these hosts (allow all, and the sitemap)
  *   /sitemap.xml         -> the pages
  *   / , anything else    -> the landing page
  * `pathname` is optional so the old no-argument call still means "the landing page".
@@ -116,6 +122,8 @@ export function raidmimicLandingTarget(pathname = '/'): { pathname: string; sear
   if (path === '/privacy') return { pathname: RAIDMIMIC_PRIVACY_PATH, search: '' };
   if (path === '/terms') return { pathname: RAIDMIMIC_TERMS_PATH, search: '' };
   if (path === '/refunds') return { pathname: RAIDMIMIC_REFUNDS_PATH, search: '' };
+  const demo = path.match(/^(?:\/raidmimic)?\/demo((?:\/[a-z0-9-]+){0,3})$/);
+  if (demo) return { pathname: `${RAIDMIMIC_DEMO_PATH}${demo[1]}`, search: '' };
   if (path === '/robots.txt') return { pathname: RAIDMIMIC_ROBOTS_PATH, search: '' };
   if (path === '/sitemap.xml') return { pathname: RAIDMIMIC_SITEMAP_PATH, search: '' };
   return { pathname: RAIDMIMIC_LANDING_PATH, search: '' };

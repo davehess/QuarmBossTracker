@@ -258,9 +258,10 @@ const HUB_ERROR_LABELS: Record<LinkRefusal | 'invalid_code' | 'no_discord_id' | 
   unknown_guild:  'That code names a guild that is not on Raid Mimic any more. Pick a guild in Mimic and try again.',
   suspended:      'That guild is not active right now, so Mimic cannot be linked to it.',
   join_first:     'Join the guild first, then come back to this page.',
+  no_account:     'Your Raid Mimic account was not found — sign out and back in, then retry.',
   update_failed:  'Couldn\'t save the link (database error). Try again in a moment.',
   no_discord_id:  'Your account is missing a Discord ID — sign out and back in, then retry.',
-  error:          'Couldn\'t check that code just now. Try again in a moment.',
+  error:         'Couldn\'t check that code just now. Try again in a moment.',
   wrong_site:     'That form belongs to wolfpack.quest. Open the link Mimic gave you instead.',
   code_mismatch:  'That is not the code this page was opened for. Type the code your Mimic is showing, or start again from Mimic.',
 };

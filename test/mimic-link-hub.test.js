@@ -282,7 +282,7 @@ describe('a hub session is a member of its guild and may use only the restricted
     failMembership = false;
     sessionRow = { user_id: 'u-1', discord_id: DISCORD, revoked_at: null, guild_id: HUB };
     tables = {
-      hub_guilds: [{ guild_id: HUB, suspended_at: null }],
+      hub_guilds: [{ guild_id: HUB, suspended_at: null, plan: 'managed' }],   // the paid plan: the parse upload is allowed
       hub_players: [{ discord_id: DISCORD, player_id: 'p-1', display_name: 'Aldenmar', deleted_at: null }],
       hub_memberships: [{ guild_id: HUB, player_id: 'p-1', role: 'officer', left_at: null }],
       wolfpack_members: [{ nickname: 'Brackwyn', role_names: ['Officer'] }],
@@ -309,9 +309,9 @@ describe('a hub session is a member of its guild and may use only the restricted
     });
   });
 
-  it('allows exactly the guest routes (parse upload, poll, version) and answers 403 hub_scope with a message everywhere else', async () => {
+  it('a paid (managed) guild\'s session is allowed the parse upload, the flag upload, poll and version, and gets 403 hub_scope with a message everywhere else', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    for (const [m, u] of [['POST', '/api/agent/encounter'], ['GET', '/api/agent/poll?streams=tuning'], ['GET', '/api/agent/latest-version?channel=beta']]) {
+    for (const [m, u] of [['POST', '/api/agent/encounter'], ['POST', '/api/agent/pop_flags'], ['GET', '/api/agent/poll?streams=tuning'], ['GET', '/api/agent/latest-version?channel=beta']]) {
       const r = await call(m, u);
       expect(r.identity, `${m} ${u}`).toBeTruthy();
       expect(r.res.status).toBeNull();
@@ -338,11 +338,18 @@ describe('a hub session is a member of its guild and may use only the restricted
     expect(r.res.status).toBe(403);
   });
 
-  it('the allowlist is the guest three plus the link routes, defined in one place', () => {
-    expect(mimicLink.HUB_ALLOWED_ROUTES.slice(0, mimicLink.GUEST_ALLOWED_ROUTES.length)).toEqual(mimicLink.GUEST_ALLOWED_ROUTES);
-    expect(mimicLink.HUB_ALLOWED_ROUTES.slice(mimicLink.GUEST_ALLOWED_ROUTES.length)).toEqual([
+  it('the allowlist is the free routes plus the parse upload, defined in one place; the free routes never include it', () => {
+    expect(mimicLink.FREE_ROUTES).toEqual([
+      ['GET', '/api/agent/poll'], ['GET', '/api/agent/latest-version'], ['POST', '/api/agent/pop_flags'],
       ['POST', '/api/mimic-link/start'], ['POST', '/api/mimic-link/poll'], ['POST', '/api/mimic-link/revoke'],
     ]);
+    expect(mimicLink.PAID_HUB_ROUTES.slice(0, mimicLink.FREE_ROUTES.length)).toEqual(mimicLink.FREE_ROUTES);
+    expect(mimicLink.PAID_HUB_ROUTES.slice(mimicLink.FREE_ROUTES.length)).toEqual([['POST', '/api/agent/encounter']]);
+    expect(mimicLink.hubFreeRouteAllowed('POST', '/api/agent/encounter')).toBe(false);
+    expect(mimicLink.hubFreeRouteAllowed('POST', '/api/agent/pop_flags')).toBe(true);
+    // kills are a later slice: they stay refused for every hub session, free or paid
+    expect(mimicLink.hubRouteAllowed('POST', '/api/agent/bosskill')).toBe(false);
+    expect(mimicLink.hubRouteAllowed('POST', '/api/agent/lockout')).toBe(false);
     expect(mimicLink.hubRouteAllowed('POST', '/api/agent/encounter')).toBe(true);
     expect(mimicLink.hubRouteAllowed('GET', '/api/agent/encounter')).toBe(false);
     expect(mimicLink.hubRouteAllowed('POST', '/api/agent/chat')).toBe(false);
@@ -365,7 +372,7 @@ describe('a hub session is a member of its guild and may use only the restricted
       () => { tables.hub_players[0].deleted_at = iso(Date.now() - 1000); },
       () => { tables.hub_players.length = 0; },
     ]) {
-      tables.hub_guilds = [{ guild_id: HUB, suspended_at: null }];
+      tables.hub_guilds = [{ guild_id: HUB, suspended_at: null, plan: 'managed' }];
       tables.hub_players = [{ discord_id: DISCORD, player_id: 'p-1', display_name: 'Aldenmar', deleted_at: null }];
       cut();
       const r = await call('POST', '/api/agent/encounter');
@@ -375,9 +382,14 @@ describe('a hub session is a member of its guild and may use only the restricted
 
   it('a failed roster read is a retry, never a verdict: a fresh token gets a non-officer identity, a known one keeps its last good one', async () => {
     failMembership = true;
-    const fresh = await call('POST', '/api/agent/encounter');
+    const fresh = await call('POST', '/api/agent/pop_flags');
     expect(fresh.identity).toMatchObject({ is_officer: false, hub_guild: HUB, scope: 'member' });
     expect(fresh.res.status).toBeNull();
+    // the plan was not read either: the parse upload is a retryable 503, never a 4xx the agent's queue would drop
+    const unknownPlan = await call('POST', '/api/agent/encounter');
+    expect(unknownPlan.identity).toBeNull();
+    expect(unknownPlan.res.status).toBe(503);
+    expect(JSON.parse(unknownPlan.res.body)).toMatchObject({ error: 'plan_unknown', retry: true });
 
     failMembership = false;
     const good = await call('POST', '/api/agent/encounter');               // caches an officer identity
@@ -666,9 +678,10 @@ describe('index.js treats a hub session like a guest where another guild\'s data
     const src = stripJs(readSource(path.join(ROOT, 'utils', 'mimicLink.js')));
     const body = src.slice(src.indexOf('async function requireAgentAuth('));
     const guest = body.indexOf("identity.scope === 'guest' && !guestRouteAllowed");
-    const hub = body.indexOf('identity.hub_guild && !hubRouteAllowed(req.method, req.url)');
+    const hub = body.indexOf('identity.hub_guild || identity.scope === \'player\'');
     expect(guest).toBeGreaterThan(-1);
     expect(hub).toBeGreaterThan(guest);
-    expect(body.slice(hub, hub + 900)).not.toMatch(/is_officer|hub_role/);
+    expect(body.indexOf('!hubRouteAllowed(req.method, req.url)', hub)).toBeGreaterThan(hub);
+    expect(body.slice(hub, hub + 2400)).not.toMatch(/is_officer|hub_role/);
   });
 });

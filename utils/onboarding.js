@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.50': [
+    'Groundwork for Raid Mimic: players outside Wolf Pack can sync their PoP flags for free (switched on in Mimic soon). Nothing changes for Wolf Pack.',
+  ],
   '4.0.49': [
     'No more parse cards for a mob named after half a combat line.',
   ],

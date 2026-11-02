@@ -265,6 +265,7 @@ export { RIGHTS_NOTICE, FAN_PROJECT_LINE } from './eqmimicLanding';
 // test fails if a status of 'coming' appears anywhere that this list does not name.
 export const COMING: string[] = [
   'Running it for guilds other than Wolf Pack (multi-guild hosting).',
+  "Free PoP flag and boss-kill syncing for players outside Wolf Pack, and a guild's feed into its own site or bot.",
   'Raid boards shared between guilds.',
   'Sharing between guilds under the same opt-in rule.',
   'The shared trial for a small group of guilds.',

@@ -67,16 +67,35 @@ function guestRouteAllowed(method, url) {
 // The /api/mimic-link/* routes are answered before requireAgentAuth runs (the device code is their credential), so they
 // are listed to keep the allowlist whole, not because this gate sees them. There is no /api/me route on the bot: the
 // signed-in reads live on the website, which reads the hub tables itself.
-const HUB_ALLOWED_ROUTES = [
-  ...GUEST_ALLOWED_ROUTES,
+//
+// FREE vs PAID (the guild lead, 2026-11-02, DECISIONS §526/§527, docs/DESIGN-raidmimic-hosted.md §8e): what costs us money
+// is what we charge for. FREE_ROUTES cost next to nothing (a few rows a night) and any hub session may call them, a
+// player with no guild included. The merged-parse upload is the costly path (rollups, per-player rows, the fight feed), so
+// it is PAID_HUB_ROUTES only, and a session is paid when its guild's plan is 'managed'. Kills (bosskill, lockout) are
+// the next slice and stay refused until then.
+const FREE_ROUTES = [
+  ['GET',  '/api/agent/poll'],            // the agent's one poll loop; answers the kill switch + version floor, no streams
+  ['GET',  '/api/agent/latest-version'],  // update prompts
+  ['POST', '/api/agent/pop_flags'],       // flag syncing: the free product (utils/hubSync.js)
   ['POST', '/api/mimic-link/start'],
   ['POST', '/api/mimic-link/poll'],
   ['POST', '/api/mimic-link/revoke'],
 ];
-function hubRouteAllowed(method, url) {
+const PAID_HUB_ROUTES = [
+  ...FREE_ROUTES,
+  ['POST', '/api/agent/encounter'],       // the parse upload: a Pro guild's
+];
+const _routeIn = (list, method, url) => {
   const path = String(url || '').split(/[?#]/)[0];
-  return HUB_ALLOWED_ROUTES.some(([m, p]) => m === method && p === path);
-}
+  return list.some(([m, p]) => m === method && p === path);
+};
+function hubRouteAllowed(method, url)     { return _routeIn(PAID_HUB_ROUTES, method, url); }   // any hub route at all
+function hubFreeRouteAllowed(method, url) { return _routeIn(FREE_ROUTES, method, url); }
+// Paid = the session's guild is on the managed plan. Everything else (commons, self_hosted, a player with no guild) is free.
+function hubPlanPaid(identity) { return !!identity && identity.hub_plan === 'managed'; }
+// A player with no guild (the free flag-sync link): the code's hub value and the session's guild_id. '~' cannot appear in
+// a real slug (HUB_SLUG_RE below), so it never collides with a guild.
+const PLAYER_HUB = '~player';
 // The registry's slug shape (supabase hub_guilds_slug_shape; web/lib/hubRegistry.ts GUILD_SLUG_RX).
 const HUB_SLUG_RE = /^[a-z0-9][a-z0-9-]{1,22}[a-z0-9]$/;
 const HUB_SITE_URL_DEFAULT = 'https://raidmimic.com';
@@ -176,7 +195,10 @@ async function handleStart(req, res) {
   if (payload === null) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'invalid json' })); }
   if (!supabase.isEnabled()) { res.writeHead(503, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'service unavailable' })); }
   // The guild the link is for (§499): none = this process's guild, as always. A value that is not a slug is refused.
-  const hub = _cleanHub(payload?.hub);
+  // {player:true} is the free flag-sync link for someone with no guild (2026-11-02): the code carries the '~player' marker
+  // instead of a slug, and it cannot be combined with a guild.
+  const isPlayer = payload?.player === true;
+  const hub = isPlayer ? (payload?.hub ? undefined : PLAYER_HUB) : _cleanHub(payload?.hub);
   if (hub === undefined) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'invalid hub' })); }
   if (_startRateLimited(req)) {
     res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
@@ -206,7 +228,7 @@ async function handleStart(req, res) {
         verification_url_complete: `${_verificationUrl(hub)}?code=${encodeURIComponent(userCode)}`,
         expires_in:        LINK_CODE_TTL_SECONDS,
         poll_interval:     POLL_INTERVAL_SECONDS,
-        ...(hub ? { hub } : {}),
+        ...(isPlayer ? { player: true } : (hub ? { hub } : {})),
       }));
     }
   }
@@ -268,9 +290,29 @@ async function handlePoll(req, res) {
   // A link made for a hub guild (§499). The web page only stamps the code; THIS is where the guild is enforced, because an
   // officer-assisted stamp or a stolen stamp must not mint a session in a guild the person is not in. A guest approval is
   // Wolf Pack's alone. The session carries the code's guild, and the answer is the hub member's, never wolfpack_members'.
-  const hub = _hubGuildOf(row.hub);
+  // A player link (no guild, the free flag-sync tier, 2026-11-02) needs a hub account but no membership: any signed-in
+  // raidmimic player may hold one. It is checked here for the same reason (a stamp is only a stamp).
+  const isPlayerLink = row.hub === PLAYER_HUB;
+  const hub = isPlayerLink ? null : _hubGuildOf(row.hub);
   let hubMember = null;
-  if (hub) {
+  let hubPlayer = null;
+  if (isPlayerLink) {
+    if (isGuest) {
+      await supabase.del('mimic_link_codes', `device_code=eq.${encodeURIComponent(deviceCode)}`).catch(() => null);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ status: 'expired' }));
+    }
+    hubPlayer = await _hubPlayerOf(row.authorized_discord_id);
+    if (hubPlayer === LOOKUP_ERROR) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ status: 'pending' }));
+    }
+    if (!hubPlayer) {
+      await supabase.del('mimic_link_codes', `device_code=eq.${encodeURIComponent(deviceCode)}`).catch(() => null);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ status: 'expired' }));
+    }
+  } else if (hub) {
     if (isGuest) {
       await supabase.del('mimic_link_codes', `device_code=eq.${encodeURIComponent(deviceCode)}`).catch(() => null);
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -310,6 +352,8 @@ async function handlePoll(req, res) {
     linked_via:           row.authorized_via || (row.authorized_user_id ? 'self' : null),
     linked_by_discord_id: row.authorized_by_discord_id || null,
     ...(hub ? { guild_id: hub } : {}),   // a Wolf Pack session leaves the column to its default, as before
+    // A player session names no guild; the '~' marker keeps it out of every guild's own session list.
+    ...(isPlayerLink ? { scope: 'player', guild_id: PLAYER_HUB } : {}),
   }]).catch(() => null);
   if (!Array.isArray(insertSession) || !insertSession[0]) {
     res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -331,6 +375,21 @@ async function handlePoll(req, res) {
       role_names:    [],
       scope:         'guest',
       expires_at:    row.guest_expires_at,
+    }));
+  }
+
+  if (isPlayerLink) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({
+      status:        'linked',
+      session_token: sessionToken,
+      user_id:       row.authorized_user_id || null,
+      discord_id:    row.authorized_discord_id,
+      display_name:  hubPlayer.display_name || row.authorized_discord_id,
+      is_officer:    false,
+      role_names:    [],
+      scope:         'player',
+      theme:         null,
     }));
   }
 
@@ -429,7 +488,7 @@ async function _hubMembership(guildId, discordId) {
   if (!guildId || !discordId) return null;
   const guild = await supabase.select(
     'hub_guilds',
-    `guild_id=eq.${encodeURIComponent(guildId)}&select=guild_id,suspended_at&limit=1`,
+    `guild_id=eq.${encodeURIComponent(guildId)}&select=guild_id,suspended_at,plan&limit=1`,
   ).catch(() => null);
   if (!Array.isArray(guild)) return LOOKUP_ERROR;
   if (!guild[0] || guild[0].suspended_at) return null;
@@ -447,7 +506,23 @@ async function _hubMembership(guildId, discordId) {
   if (!Array.isArray(members)) return LOOKUP_ERROR;
   if (!members[0]) return null;
   const role = String(members[0].role || 'member');
-  return { player_id: player.player_id, display_name: player.display_name || null, role, is_officer: role === 'owner' || role === 'officer' };
+  return {
+    player_id: player.player_id, display_name: player.display_name || null, role, is_officer: role === 'owner' || role === 'officer',
+    plan: String(guild[0].plan || 'commons'),   // 'managed' is the paid plan (hubPlanPaid); anything else is free
+  };
+}
+// A hub account by Discord id, with no guild: { player_id, display_name } for a live account, null for none or a deleted one,
+// LOOKUP_ERROR when the read failed. The player link (the free flag-sync tier) needs nothing more than this.
+async function _hubPlayerOf(discordId) {
+  if (!discordId) return null;
+  const players = await supabase.select(
+    'hub_players',
+    `discord_id=eq.${encodeURIComponent(String(discordId))}&select=player_id,display_name,deleted_at&limit=1`,
+  ).catch(() => null);
+  if (!Array.isArray(players)) return LOOKUP_ERROR;
+  const player = players[0];
+  if (!player || player.deleted_at) return null;
+  return { player_id: player.player_id, display_name: player.display_name || null };
 }
 // The guild a session row belongs to when it is not this process's own; null for Wolf Pack and for a row that predates
 // the guild_id column.
@@ -528,6 +603,39 @@ async function _lookupSessionToken(token, ip) {
     ).catch(() => null);
     return value;
   }
+  // A player session (the free flag-sync link, no guild; 2026-11-02) resolves through hub_players alone. It is checked
+  // BEFORE the hub-guild branch: its guild_id is the '~player' marker, which is not a guild and must never reach a
+  // roster read or Wolf Pack's wolfpack_members. A deleted account ends it like a revoke; a failed read keeps the last
+  // good identity and asks again in 15 s, as the hub branch does.
+  if (row.scope === 'player') {
+    const p = await _hubPlayerOf(row.discord_id);
+    if (p === LOOKUP_ERROR) {
+      const value = (cached && cached.value) || {
+        user_id: row.user_id || null, discord_id: row.discord_id, display_name: row.discord_id,
+        role_names: [], is_officer: false, scope: 'player', guild_id: PLAYER_HUB, hub_guild: null, hub_player: true,
+      };
+      _setBounded(_sessionCache, SESSION_CACHE_MAX, token, { resolvedAt: Date.now() - SESSION_CACHE_TTL_MS + SESSION_RETRY_MS, value });
+      return value;
+    }
+    if (!p) {
+      _sessionCache.delete(token);
+      _setBounded(_sessionMissCache, SESSION_MISS_MAX, token, Date.now());
+      return null;
+    }
+    const value = {
+      user_id: row.user_id || null, discord_id: row.discord_id, display_name: p.display_name || row.discord_id,
+      role_names: [], is_officer: false,
+      // guild_id is the marker, never null: a null would fall back to THIS process's guild in guildScoped.forIdentity.
+      scope: 'player', guild_id: PLAYER_HUB, hub_guild: null, hub_player: true, player_id: p.player_id,
+    };
+    _setBounded(_sessionCache, SESSION_CACHE_MAX, token, { resolvedAt: Date.now(), value });
+    supabase.update(
+      'mimic_sessions',
+      `session_token=eq.${encodeURIComponent(token)}`,
+      { last_used_at: new Date().toISOString() },
+    ).catch(() => null);
+    return value;
+  }
   // A session linked to a hub guild (§499) resolves through that guild's roster, never wolfpack_members. Leaving the
   // guild, deleting the account or the guild being suspended ends the session like a revoke does (within the 5-minute
   // cache window at most). A read that FAILS keeps the last good identity and tries again in 15 s, the same rule the
@@ -552,6 +660,7 @@ async function _lookupSessionToken(token, ip) {
       user_id: row.user_id || null, discord_id: row.discord_id, display_name: m.display_name || row.discord_id,
       role_names: [], is_officer: m.is_officer,   // the HUB role: it grants nothing on Wolf Pack data (requireAgentAuth's gate)
       scope: 'member', guild_id: hubGuild, hub_guild: hubGuild, hub_role: m.role,
+      hub_plan: m.plan, player_id: m.player_id,   // the plan decides the paid routes (requireAgentAuth); the player keys hub_flags
     };
     _setBounded(_sessionCache, SESSION_CACHE_MAX, token, { resolvedAt: Date.now(), value });
     supabase.update(
@@ -686,20 +795,46 @@ async function requireAgentAuth(req, res) {
 
   // Hub scope (2026-10-31, §499): a session linked to another guild gets the allowlist above and nothing else, whatever
   // role it holds there. Same one-place rule as the guest gate, logged once per guild and route.
-  if (identity.hub_guild && !hubRouteAllowed(req.method, req.url)) {
-    const path = String(req.url || '').split(/[?#]/)[0];
-    const key  = `hub:${identity.hub_guild}|${path}`;
-    if (!_guestRefusedLogged.has(key)) {
+  // A player session (no guild, the free flag-sync link) is held to the same list. Within it, the free/paid split
+  // (2026-11-02, §527): FREE_ROUTES for every hub session, the parse upload only for a guild on the managed plan. Both
+  // answers come before any handler reads a body, so a free session costs a refused request and nothing else.
+  if (identity.hub_guild || identity.scope === 'player') {
+    const path  = String(req.url || '').split(/[?#]/)[0];
+    const who   = identity.hub_guild ? `hub:${identity.hub_guild}` : 'player';
+    const label = identity.hub_guild ? `a "${identity.hub_guild}" session` : 'a player session';
+    const logOnce = (key, line) => {
+      if (_guestRefusedLogged.has(key)) return;
       if (_guestRefusedLogged.size >= 500) _guestRefusedLogged.clear();
       _guestRefusedLogged.add(key);
-      console.log(`[hub] a "${identity.hub_guild}" session refused ${req.method} ${path} (guild links upload parses only for now)`);
+      console.log(line);
+    };
+    if (!hubRouteAllowed(req.method, req.url)) {
+      logOnce(`${who}|${path}`, `[hub] ${label} refused ${req.method} ${path} (hub links sync flags only for now)`);
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        error:   'hub_scope',
+        message: identity.hub_guild
+          ? 'This Mimic is linked to another guild. For now that link can sync PoP flags, upload parses on a Pro guild, and check for updates; nothing else is served to it yet.'
+          : 'This Mimic is syncing your PoP flags with no guild. For now that link can sync flags and check for updates; nothing else is served to it.',
+      }));
+      return null;
     }
-    res.writeHead(403, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      error:   'hub_scope',
-      message: 'This Mimic is linked to another guild. For now that link can upload parses and check for updates; nothing else is served to it yet.',
-    }));
-    return null;
+    if (!hubFreeRouteAllowed(req.method, req.url) && !hubPlanPaid(identity)) {
+      // The plan is read with the roster. When that read failed the identity carries none (the last good one is kept
+      // otherwise), and a 4xx would make the agent's durable queue drop the upload: ask it to retry instead.
+      if (identity.hub_guild && identity.hub_plan === undefined) {
+        res.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '15' });
+        res.end(JSON.stringify({ error: 'plan_unknown', retry: true }));
+        return null;
+      }
+      logOnce(`${who}|${path}|plan`, `[hub] ${label} refused ${req.method} ${path} (needs the managed plan)`);
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        error:   'plan_required',
+        message: 'Uploading parses is part of a Pro guild plan. Flag syncing stays free.',
+      }));
+      return null;
+    }
   }
 
   return identity;
@@ -789,7 +924,9 @@ module.exports = {
   revokeSessionForUser,
   listSessionsForUser,
   guestRouteAllowed, GUEST_ALLOWED_ROUTES, GUEST_LABEL_MAX,   // the guest-link allowlist (test/guest-link.test.js)
-  hubRouteAllowed, HUB_ALLOWED_ROUTES,   // the hub-session allowlist (test/mimic-link-hub.test.js)
+  // the hub-session allowlists: everything a hub session may call, the free part of it, and the paid test
+  // (test/mimic-link-hub.test.js, test/hub-sync.test.js)
+  hubRouteAllowed, hubFreeRouteAllowed, hubPlanPaid, FREE_ROUTES, PAID_HUB_ROUTES, PLAYER_HUB,
   setFailAuthPerMin,   // index.js feeds the `ip_failauth_per_min` tuning knob in here
   // Exposed for test/bot-auth-flood.test.js — the bounded caches and the failed-auth throttle.
   _sessionCache, _sessionMissCache, _failAuth,

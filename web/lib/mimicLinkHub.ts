@@ -32,11 +32,20 @@ export interface LinkHubDb {
 }
 
 /** Why a code cannot be claimed here. `wolfpack_code`: a Wolf Pack code belongs on wolfpack.quest, behind its role gate. */
-export type LinkRefusal = 'unknown_code' | 'expired' | 'wolfpack_code' | 'unknown_guild' | 'suspended' | 'join_first' | 'error';
+export type LinkRefusal = 'unknown_code' | 'expired' | 'wolfpack_code' | 'unknown_guild' | 'suspended' | 'join_first' | 'no_account' | 'error';
+
+/**
+ * The hub value of a Mimic link for a player with no guild (the free flag-sync tier, 2026-11-02). The bot writes it
+ * (utils/mimicLink.js PLAYER_HUB); '~' cannot appear in a real slug (GUILD_SLUG_RX), so it never collides with one.
+ */
+export const PLAYER_HUB = '~player';
+
+// For a player code the "guild" is a stand-in the page can show; `player: true` lets it word the copy for no guild.
+const PLAYER_NAME = 'Raid Mimic (flag sync, no guild)';
 
 export type HubLinkCheck =
-  | { state: 'claimable'; guildId: string; guildName: string; role: string }
-  | { state: 'already'; guildId: string; guildName: string }
+  | { state: 'claimable'; guildId: string; guildName: string; role: string; player?: true }
+  | { state: 'already'; guildId: string; guildName: string; player?: true }
   | { state: 'refused'; reason: LinkRefusal; guildId?: string; guildName?: string };
 
 const NO = (reason: LinkRefusal, guild?: { guildId: string; guildName: string }): HubLinkCheck =>
@@ -58,6 +67,14 @@ export async function checkHubLink(
     const expires = Date.parse(code.expires_at);
     if (!Number.isFinite(expires) || expires < now.getTime()) return NO('expired');
     if (!code.hub) return NO('wolfpack_code');
+    if (code.hub === PLAYER_HUB) {
+      // A player link has no guild and needs no membership: any signed-in player with a Raid Mimic account may claim it.
+      const named = { guildId: PLAYER_HUB, guildName: PLAYER_NAME };
+      if (code.authorized_at) return { state: 'already', ...named, player: true };
+      const me = await db.getPlayer(args.discordId);
+      if (!me || me.deleted_at) return NO('no_account', named);
+      return { state: 'claimable', ...named, role: 'player', player: true };
+    }
     if (!GUILD_SLUG_RX.test(code.hub)) return NO('unknown_guild');
 
     const guild = await db.getGuild(code.hub);
