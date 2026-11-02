@@ -30,6 +30,16 @@ export async function postReply(formData: FormData): Promise<void> {
     .select('id', { count: 'exact', head: true }).eq('feedback_id', report.id);
   if ((count ?? 0) >= MAX_REPLIES_PER_REPORT) redirect(`${back}?err=full#reply`);
 
+  // The same reply sent again within two minutes is one reply (the guild lead, 2026-11-02: FB-110's reply reached
+  // Discord three times; the slow form had been submitted three times, 4 and 7 seconds apart). Same text later is fine.
+  const { data: last } = await admin.from('feedback_replies')
+    .select('body, created_at').eq('feedback_id', report.id).eq('author_discord_id', viewer.discordId)
+    .order('created_at', { ascending: false }).limit(1);
+  const prev = Array.isArray(last) ? last[0] : null;
+  if (prev && prev.body === clean.body && Date.now() - Date.parse(prev.created_at) < 2 * 60_000) {
+    redirect(`${back}?sent=1#replies`);
+  }
+
   const { error } = await admin.from('feedback_replies').insert([{
     feedback_id: report.id,
     author_discord_id: viewer.discordId,

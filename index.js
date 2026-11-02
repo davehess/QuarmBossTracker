@@ -23370,6 +23370,12 @@ async function _handleAgentUpload(req, res) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: true, skipped: 'noise encounter' }));
   }
+  // A boss "name" that is a fragment of a combat line ("mephit hits YOU", seen 2026-11-01 from a mangled log line)
+  // is not a mob: no card, no parse. NPC names never contain "YOU" or "<verb> you".
+  if (/\bYOU\b/.test(bossNameRaw) || /\s(?:hits?|slash(?:es)?|crush(?:es)?|bites?|kicks?|bash(?:es)?|pierces?|punch(?:es)?|claws?|mauls?|stings?|gores?|slices?|smash(?:es)?|backstabs?)\s+(?:you|him|her|it)\b/i.test(bossNameRaw)) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, skipped: 'fragment boss' }));
+  }
 
   console.log(`[agent] upload from ${character || '?'}: ${encounter.events.length} events, ` +
               `boss=${encounter.boss_name || '?'}, started=${encounter.started_at}`);
