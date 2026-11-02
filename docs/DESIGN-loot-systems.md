@@ -53,6 +53,11 @@ Per-guild notes beyond the table (the full extraction lives with the private lin
 - **A (EPGP).** GP 0 epic main / 100 high / 50 medium / 10 low / 0 epic alt / 10 alt. EP from attendance, bank donations,
   member events of 12+, level and epic bonuses. Cap 900 EP per 2-week cycle; 20% decay per cycle, none under 100 EP / 150 GP; a
   large decay each 6 months. Once-per-character-set list for named items. Spells claimed at level; ST keys rolled lowest wins.
+  *As their own site runs it (seen 2026-11-02 with a guest login):* priority is computed as (EP + 150) ÷ (GP + 100), base
+  values 150 / 100, though the rules page says EP ÷ (GP + 1); decay is configured at 10% compounding per cycle, not 20%; EP and
+  GP pool across every character on an account; a main swap costs 500 GP. Ledgers: about 42k EP rows, 6k GP rows, 1.4k bids
+  with the priority at bid time, and an audit trail of officer edits. **Lesson for the rulebook (section 4): render the rules
+  page from the same settings the maths uses, so the two cannot drift.**
 - **B (rolls).** Upgrade means you will use it; no upgrade to sell. Pet-kit upgrade once per item, then replacement priority
   behind upgrade. A "pick" system on declared raids (picks locked at the start, rolled among pickers; unpicked items roll as
   usual). All greed allowed for one zone and with an allied guild doing the same. Roll right limited to the tag when raiding

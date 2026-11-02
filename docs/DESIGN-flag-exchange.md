@@ -121,6 +121,27 @@ lookup service.
 **Trust gate.** A guild sees other guilds' players only once it is verified: a confirmed Discord server, a minimum size, and
 not suspended. A one-click guild sees nothing cross-guild.
 
+**Guilds that already run their own site** (first seen 2026-11-02: a guild's member site, viewed with a guest login, §523).
+Some guilds have built most of this themselves: a roster with characters pooled per account, EPGP ledgers with an audit
+trail, raid nights with attendance snapshots from parses, a bank synced from inventory exports, a live bid board fed by an
+officer desktop app, a 47-step PoP checklist and a flag matrix. For them Raid Mimic is a set of **layers that plug into their
+stack**, not a replacement, ranked by value against migration pain:
+
+1. **A Discord bot layer** for what officers do by hand today: EP claims for level and epic bonuses and bank donations
+   (screenshot, then an officer types the EP), member-run event submissions, bid-board notifications. Additive, no migration.
+2. **Flags derived from logs** (the agent's #popflags, Seer and grant reading) delivered INTO their matrix: an outbound feed
+   per guild (a signed webhook or a pull API returning character, flag step and time), only for players who opted in. Their
+   flags are manual check-offs today.
+3. **Rules rendered from configuration**: their rules page and their maths had drifted apart (section 2 of
+   `docs/DESIGN-loot-systems.md`, Guild A).
+4. **Checks at bid time**: once-per-account items, main/alt tier eligibility, the EP cap.
+5. **Hosting the whole ledger** only if they want out of maintaining it (tens of thousands of ledger rows and a custom decay
+   history to migrate).
+
+So two shapes are needed besides the hosted guild: an **outbound feed** (flags and fights to a guild's own system) and a
+**bot that works beside a guild's own site**. Whether the guild's own maintainers want to keep their site decides which
+to lead with.
+
 ## 4. Phases
 
 1. **Demo** (`raidmimic.com/demo`, static, invented guild): what a guild gets, the "record for someone else" flow and both
