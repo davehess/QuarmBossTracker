@@ -23,7 +23,9 @@
 //      would NOT fire the reset path then (user_id no longer wp_invited), and
 //      refuses loudly instead of silently making a second identity.
 
-import { redirect } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
+import { headers } from 'next/headers';
+import { isRaidmimicHost } from '@/lib/raidmimicHost';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isLockedOut } from '@/lib/lockout';
 
@@ -151,6 +153,9 @@ export default async function ClaimPage({
 }: {
   searchParams: { token?: string; error?: string };
 }) {
+  // A site-access invite is Wolf Pack's own (an officer issues it for a member of that guild's site). It is not a Raid Mimic
+  // page, and nothing on raidmimic.com may speak for the Wolf Pack site (the guild lead, 2026-11-02): a 404 there, first.
+  if (isRaidmimicHost(headers().get('host'))) notFound();
   const token = String(searchParams.token || '');
   const { invite, reason } = await loadInvite(token);
 

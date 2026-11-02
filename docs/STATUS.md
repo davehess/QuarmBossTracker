@@ -212,12 +212,15 @@ next touch one rather than assuming a missing row means a missing doc.
   (link in the private briefing).
 - **🧪 Free flag syncing outside Wolf Pack, slice 1 (bot 4.0.50 `main`, migration `20261102210000_hub_sync.sql` applied,
   2026-11-02, §526, §527).** A player session (no guild) and the free/paid route gate; flags into `hub_flags` /
-  `hub_characters`; the fight upload only for `managed` guilds. Nobody can start a player link yet (Mimic's choice is the next
-  beta slice). **Launch blocker, code done, migration not yet applied:** self-delete and the data export now cover
-  `hub_flags` and `hub_characters` (migration `20261102220000_self_delete_hub_sync.sql` redefines `member_self_delete` to delete
-  both before `hub_players` is anonymised, because the cascade never fires on an anonymise; `web/lib/selfData.ts` exports both
-  as personal sections; tests in `test/self-serve-data.test.js`). **Apply that migration before player links are offered.**
-  The "Removed" list in `web/app/me/data/DeleteAccount.tsx` does not name them yet. Then kills (`hub_kills`), the player page `/player`, the guild feed, the in-game proof code.
+  `hub_characters`; the fight upload only for `managed` guilds. **Launch blocker cleared 2026-11-02:** self-delete and the data
+  export cover `hub_flags` and `hub_characters` (migration `20261102220000_self_delete_hub_sync.sql` APPLIED — it redefines
+  `member_self_delete` to delete both before `hub_players` is anonymised, because the cascade never fires on an anonymise;
+  `web/lib/selfData.ts` exports both; the "Removed" list in `web/app/me/data/DeleteAccount.tsx` names them; tests in
+  `test/self-serve-data.test.js`). **Mimic's side is on `beta` (agent 4.0.58, 2026-11-02, first draft, not yet tried in
+  game):** the picker's third choice "No guild — just sync my PoP flags" starts `{player: true}`, finishes on
+  raidmimic.com/auth/mimic-link and shows "Signed in to Raid Mimic (flag sync)"; the agent queues only PoP flags for that session.
+  Open: the agent's other direct reads still draw a 403. Then kills (`hub_kills`), the player page `/player`, the guild feed, the
+  in-game proof code.
   Plan: `docs/DESIGN-flag-exchange.md` §3 Supply.
 - **✅ PoP guide: what each character is missing, per gate, and the small paste box (web 2.1.94 `main`, 2026-11-02, FB-115).**
   On the guild lead's "looks right now, ship it": https://wolfpack.quest/pop/guide opens on the family table (every piece of the
@@ -283,6 +286,11 @@ next touch one rather than assuming a missing row means a missing doc.
   applied).** `https://raidmimic.com/privacy`, `/terms`, `/refunds` (also under `wolfpack.quest/raidmimic/...`, and `https://wolfpack.quest/terms`). Both sign-in callbacks
   record the accepted terms version, fail-open. "Animated with AI tools" on the story video. Words in `web/lib/legal.ts`. ⏳ `CONTACT_EMAIL` hello@raidmimic.com must still
   be created. Test: `test/legal-pages.test.js`.
+- **🟡 raidmimic.com references no Wolf Pack address; a guild's own site and redirect by default (first draft 2026-11-02, not yet shipped; the guild lead).**
+  `hub_guilds.website_url` / `redirect_members` (migration `20261102230000_hub_guild_site.sql`, not yet applied: apply BEFORE the web change ships), Wolf Pack's site from
+  `GUILD_SITE_URL` / `GUILD_SITE_REDIRECT` (`web/lib/guildSites.ts`), `/guilds` redirects a one-guild player to it unless `?stay=1`, the privacy page is self-contained.
+  Open: the root layout's title template / `metadataBase` / site name and the `/auth/signin` card still say WolfPack.quest on a raidmimic host; `/api/hubs` still names the
+  Wolf Pack site. Tests: `test/raidmimic-no-wolfpack.test.js`.
 - **✅ Self-serve "Download my data" and "Delete my account" (web 2.1.87, `main`; migration `20261101140000_member_self_delete.sql` applied).** A "Your data" section on
   `https://wolfpack.quest/me#your-data` and on raidmimic.com/guilds: a streamed JSON file of the person's own rows (session identity only, explicit columns, guild-scoped,
   one download per 10 minutes) and a typed-DELETE removal (`member_self_delete` + `member_self_unlink_batch`; the guild's raid rows stay, unlinked; a sole guild owner is

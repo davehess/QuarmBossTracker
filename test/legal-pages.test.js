@@ -48,7 +48,9 @@ describe('web/lib/legal.ts', () => {
     expect(L.TERMS_VERSION).toBe('2026-11-01');
     expect(L.LEGAL_UPDATED).toBe('November 1, 2026');
     expect(L.MIN_AGE).toBe(13);
-    expect(L.YOUR_DATA_PATH).toBe('/guilds#your-data');
+    // stay=1 (2026-11-02, redirect by default): /guilds sends a one-guild player to their guild's site, and "Your data" is the
+    // page's own section, so the link must not be bounced.
+    expect(L.YOUR_DATA_PATH).toBe('/guilds?stay=1#your-data');
   });
   it('the header says the address still has to be created (so nobody ships it believing it exists)', () => {
     expect(read('web/lib/legal.ts')).toMatch(/still has to CREATE/);

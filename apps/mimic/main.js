@@ -2790,7 +2790,8 @@ async function getHubDirectory(force) {
 async function setHub(choice) {
   const c = choice || {};
   let next = null;
-  if (c.address) next = hubs.parseGuildAddress(c.address);
+  if (c.player === true) next = { ...hubs.PLAYER_HUB };   // "No guild — just sync my PoP flags": fixed here, not taken from the page
+  else if (c.address) next = hubs.parseGuildAddress(c.address);
   else if (c.slug) next = (await getHubDirectory(false)).find(h => h.slug === String(c.slug)) || null;
   if (!next) return { ok: false, error: c.address ? 'That is not a guild address Mimic can use. Paste the https address your officer gave you.' : 'That guild is not in the list.' };
   const cfg = loadConfig();
@@ -10782,7 +10783,9 @@ function currentStatus() {
       is_officer:   !!cfg.session.identity?.is_officer,
       // The guild a hub session belongs to ({ slug, display_name, role }); null for a Wolf Pack session.
       guild:        hubs.sessionGuild(cfg.session.identity, hubs.hubOf(cfg)),
-      linked_at:    cfg.session.linked_at || null,
+      // A flag-sync-only link (no guild): the pages say "Signed in to Raid Mimic (flag sync)" and leave the guild features out.
+      player:       hubs.isPlayerSession(cfg.session.identity),
+      linked_at:   cfg.session.linked_at || null,
     } : null,
     mimicLinking: _linkInFlight ? {
       user_code:        _linkInFlight._pub.user_code,

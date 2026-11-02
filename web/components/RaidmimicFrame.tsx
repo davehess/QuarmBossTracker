@@ -5,10 +5,12 @@
 // themselves in this. On a Wolf Pack host it renders the children alone, because the Wolf Pack layout already has both.
 // Server component, no client JS. Lives in components/ because web/app/raidmimic/_landing/ is pinned to the landing page's files.
 import { Footer } from '@/app/raidmimic/_landing/Parts';
+import { GUILDS_STAY_PATH } from '@/lib/guildSites';
 
 const NAV = [
   { label: 'Demo', href: '/demo' },
-  { label: 'Your guilds', href: '/guilds' },
+  // stay=1: "Your guilds" means "manage my Raid Mimic account", so it must not bounce a player to their guild's own site.
+  { label: 'Your guilds', href: GUILDS_STAY_PATH },
   { label: 'Set up', href: '/setup' },
   { label: 'For guild leaders', href: '/register' },
 ] as const;

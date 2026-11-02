@@ -357,3 +357,102 @@ describe('a hub session is stored with its guild and named in Settings and the w
     expect(src).toMatch(/session && session\.guild \? ' — linked to <b>' \+ esc\(session\.guild\.display_name\)/);
   });
 });
+
+// ── 6. "No guild — just sync my PoP flags" (DECISIONS §526): the free player link ─────────────────────────────────
+describe('the no-guild choice: a link for a player in no hosted guild', () => {
+  const PLAYER = hubs.PLAYER_HUB;
+  const alpha = { slug: 'alpha', display_name: 'Alpha', url: 'https://hosted.example', site: 'https://alpha.example' };
+
+  it('is a fixed entry on the hosted bot that finishes on raidmimic.com, and is not Wolf Pack', () => {
+    expect(PLAYER.slug).toBe('~player');
+    expect(PLAYER.url).toBe(WOLF.url);
+    expect(PLAYER.site).toBe('https://raidmimic.com');
+    expect(hubs.isPlayerHub(PLAYER)).toBe(true);
+    expect(hubs.isPlayerHub(WOLF)).toBe(false);
+    expect(hubs.isPlayerHub(null)).toBe(false);
+  });
+
+  it('linkStartBody sends { player: true } and no hub', () => {
+    expect(hubs.linkStartBody(PLAYER, 'mimic 1.0.0')).toEqual({ agent_version: 'mimic 1.0.0', player: true });
+    expect(hubs.linkStartBody(PLAYER, 'v')).not.toHaveProperty('hub');
+    // the other bodies are untouched
+    expect(JSON.stringify(hubs.linkStartBody(WOLF, 'v'))).toBe('{"agent_version":"v"}');
+    expect(hubs.linkStartBody(alpha, 'v')).toEqual({ agent_version: 'v', hub: 'alpha' });
+  });
+
+  it('is saved and read back as the same choice, and stays the choice only while the bot address matches', () => {
+    const cfg = hubs.applyHub({ session: { x: 1 } }, PLAYER);
+    expect(cfg.hub.slug).toBe('~player');
+    expect(cfg.botUrl).toBe(WOLF.url + '/api/agent/encounter');
+    expect(cfg.session).toBeUndefined();
+    expect(hubs.hubOf(cfg)).toEqual(PLAYER);
+    expect(hubs.hubOf({ ...cfg, botUrl: 'https://other.example/api/agent/encounter' }).slug).toBe('custom');
+  });
+
+  it('a saved copy cannot smuggle another address or name: it is read back as the fixed entry', () => {
+    const n = hubs.normalizeHub({ slug: '~player', display_name: '<b>x</b>', url: 'https://evil.example', site: 'https://evil.example' });
+    expect(n).toEqual({ ...PLAYER });
+  });
+
+  it('is never a directory row: a network row claiming the slug is dropped, and the list does not carry it', () => {
+    const out = hubs.sanitizeDirectory([{ slug: '~player', display_name: 'Impostor', url: 'https://evil.example' }, alpha]);
+    expect(out.map(h => h.slug)).toEqual(['wolfpack', 'alpha']);
+  });
+
+  it('moving to or from it signs the PC out, though Wolf Pack and it share the hosted address', () => {
+    expect(hubs.sameHub(PLAYER, WOLF)).toBe(false);
+    expect(hubs.sameHub(WOLF, PLAYER)).toBe(false);
+    expect(hubs.sameHub(PLAYER, { ...PLAYER })).toBe(true);
+    expect(hubs.sameHub(alpha, { ...alpha, display_name: 'Renamed' })).toBe(true);   // unchanged rule
+  });
+
+  it('opens the address the bot chose (it names player:true, no hub), https only', () => {
+    const resp = { player: true, verification_url: 'https://raidmimic.com/auth/mimic-link', verification_url_complete: 'https://raidmimic.com/auth/mimic-link?code=ABC123' };
+    expect(hubs.linkUrls(PLAYER, resp)).toEqual({ verification_url: resp.verification_url, verification_url_complete: resp.verification_url_complete });
+    expect(hubs.linkUrls(PLAYER, { player: true, verification_url: 'http://raidmimic.com/x', verification_url_complete: 'file:///x' })).toBe(null);
+  });
+
+  it('keeps scope "player" from the poll, and only that value; the guild identity and Wolf Pack identity are unchanged', () => {
+    const poll = { status: 'linked', session_token: 'wpms_x', user_id: 'u', discord_id: '222', display_name: 'Brackwyn', is_officer: false, role_names: [], scope: 'player', theme: null };
+    const id = hubs.identityFromPoll(poll);
+    expect(id).toEqual({ user_id: 'u', discord_id: '222', display_name: 'Brackwyn', is_officer: false, role_names: [], scope: 'player' });
+    expect(id.guild_id).toBeUndefined();
+    expect(hubs.isPlayerSession(id)).toBe(true);
+    expect(hubs.sessionGuild(id, PLAYER)).toBe(null);   // no guild line for it
+    expect(hubs.identityFromPoll({ ...poll, scope: 'member' }).scope).toBeUndefined();
+    expect(hubs.identityFromPoll({ ...poll, scope: '<b>' }).scope).toBeUndefined();
+    expect(hubs.isPlayerSession({ scope: 'member' })).toBe(false);
+    expect(hubs.isPlayerSession(null)).toBe(false);
+  });
+
+  it('setHub builds the choice itself (the page only says player:true) and the status tells the pages the session is flag-sync only', () => {
+    const src = stripJs(read('apps/mimic/main.js'));
+    const set = src.slice(src.indexOf('async function setHub'), src.indexOf('const CHAT_CACHE_GRACE_MS'));
+    expect(set).toMatch(/c\.player === true\) next = \{ \.\.\.hubs\.PLAYER_HUB \}/);
+    expect(set.indexOf('c.player === true')).toBeLessThan(set.indexOf('c.address'));
+    expect(src).toMatch(/player:\s+hubs\.isPlayerSession\(cfg\.session\.identity\)/);
+  });
+
+  it('startMimicLink sends the player body for the no-guild choice (the real function, stubbed network)', async () => {
+    const main = read('apps/mimic/main.js');
+    const fnText = sliceBlock(main, 'async function startMimicLink() {', 'const { verification_url, verification_url_complete } = links;') + '\n  return { verification_url, verification_url_complete };\n}';
+    const sent = [];
+    const real = { ...hubs, hubOf: () => PLAYER };
+    const make = new Function('hubs', 'loadConfig', '_botBaseUrl', '_httpsJsonPost', 'app', 'let _linkInFlight = null;\n' + fnText + '\nreturn startMimicLink;');
+    const reply = { status: 200, body: { device_code: 'd', user_code: 'ABC123', expires_in: 600, poll_interval: 2, player: true, verification_url: 'https://raidmimic.com/auth/mimic-link', verification_url_complete: 'https://raidmimic.com/auth/mimic-link?code=ABC123' } };
+    const out = await make(real, () => ({}), () => WOLF.url, async (base, p, body) => { sent.push({ base, p, body }); return reply; }, { getVersion: () => '9.9.9' })();
+    expect(sent[0]).toEqual({ base: WOLF.url, p: '/api/mimic-link/start', body: { agent_version: 'mimic 9.9.9', player: true } });
+    expect(out.verification_url_complete).toBe('https://raidmimic.com/auth/mimic-link?code=ABC123');
+  });
+
+  it('the welcome page and Settings offer it, drive the same IPC, and say "flag sync" once signed in', () => {
+    const w = stripJs(read('apps/mimic/welcome.html'));
+    expect(w).toMatch(/No guild — just sync my PoP flags/);
+    expect(w).toMatch(/hubChoose\(\{ player: true \}\)/);
+    expect(w).toMatch(/to Raid Mimic \(flag sync\)/);
+    const s = stripJs(read('apps/mimic/settings.html'));
+    expect(s).toMatch(/No guild — just sync my PoP flags/);
+    expect(s).toMatch(/_chooseHub\(\{ player: true \}\)/);
+    expect(s).toMatch(/Signed in to Raid Mimic \(flag sync\)/);
+  });
+});

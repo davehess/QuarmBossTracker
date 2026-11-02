@@ -13513,9 +13513,18 @@ function _primaryCharacter() {
 // machine). Null-safe before main() runs, so a test that never starts the agent is unaffected.
 function _localOnly() { return !!(_uploadOpts && !_uploadOpts.token); }
 
+// A flag-sync-only link (Mimic's "No guild — just sync my PoP flags", DECISIONS §526): the bot gives that session the poll,
+// the version check and the PoP flag upload, and answers 403 to every other route. The durable queue drops a 4xx as
+// permanent, so without this every stream would log a refusal per upload. The identity is the bot's reply (or Mimic's
+// push of it) and carries scope 'player'.
+const _PLAYER_SCOPE_KINDS = new Set(['pop_flag']);
+function _playerScope() { return !!(_mimicSessionToken && _mimicIdentity && _mimicIdentity.scope === 'player'); }
+
 function enqueueUpload(kind, payload) {
   // Local mode: nothing is queued, so nothing can be sent.
   if (_localOnly()) return null;
+  // A player session (no guild) sends PoP flags only; the rest of the streams would be refused.
+  if (_playerScope() && !_PLAYER_SCOPE_KINDS.has(kind)) return null;
   // A raid code is active (this PC is in someone else's raid): the record / DKP streams stay on this PC.
   if (_raidCodeHolds(kind, payload)) return null;
   // A payload that names a character on a server that is not the guild's never leaves (eqServerForLog).
@@ -58705,6 +58714,7 @@ function _liveTargetPosDue(prev, cur, now) {
 }
 function _postLiveState(targetUrl, token, payload) {
   if (!token) return;   // Local mode: no token, so the live state (zone, buffs, pet) never leaves the machine.
+  if (_playerScope()) return;   // A flag-sync-only session may not post live state (the bot answers 403).
   let url;
   try { url = new URL(targetUrl); } catch { return; }
   const mod = url.protocol === 'https:' ? https : http;

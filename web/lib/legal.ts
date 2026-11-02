@@ -8,6 +8,8 @@
 // ⚠ Changing TERMS_VERSION means the terms changed in a way people should agree to again: web/lib/termsAcceptance.ts
 // writes one row per (user, version), so a new version is a new row the next time someone signs in. Bump LEGAL_UPDATED with it.
 
+import { GUILDS_STAY_PATH } from './guildSites';
+
 export const CONTACT_EMAIL = 'hello@raidmimic.com';
 export const CONTACT_HREF = `mailto:${CONTACT_EMAIL}`;
 
@@ -19,7 +21,7 @@ export const MIN_AGE = 13;
 
 /** Where a signed-in person downloads or deletes their own data. /guilds works on raidmimic hosts (where /me is not
  *  served) and on wolfpack.quest, where its "Your data" link leads on to /me#your-data. */
-export const YOUR_DATA_PATH = '/guilds#your-data';
+export const YOUR_DATA_PATH = `${GUILDS_STAY_PATH}#your-data`;   // stay=1: /guilds redirects a one-guild player to their guild's site
 
 export const PRODUCT = 'Raid Mimic';
 

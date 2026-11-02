@@ -17,7 +17,8 @@ import type { Metadata } from 'next';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { discordIdOf } from '@/lib/lockout';
-import { GUILD_NAME, GUILD_TAG, PROD_SITE_URL } from '@/lib/guild';
+import { GUILD_NAME, GUILD_TAG } from '@/lib/guild';
+import { builtinGuildSite, cleanSiteUrl, redirectTarget, sitePage, siteLabel, wantsToStay, type GuildRef } from '@/lib/guildSites';
 import { isRaidmimicHost } from '@/lib/raidmimicHost';
 import { closedMatchesFor } from '@/lib/hubRegistry';
 import { EQMIMIC_ORIGIN } from '@/lib/raidmimicLanding';
@@ -35,7 +36,7 @@ export const metadata: Metadata = {
 
 export const dynamic = 'force-dynamic';
 
-type HubCard = { guild_id: string; name: string; role: string; joined_at: string | null };
+type HubCard = { guild_id: string; name: string; role: string; joined_at: string | null; site: string | null; redirect: boolean };
 type WolfCard = { name: string; characters: number };
 
 const ROLE_LABEL: Record<string, string> = { owner: 'Owner', officer: 'Officer', member: 'Member', guest: 'Guest' };
@@ -80,11 +81,16 @@ async function loadHubGuilds(discordId: string): Promise<HubCard[]> {
     if (!player) return [];
     const { data: mine, error } = await admin.from('hub_memberships').select('guild_id, role, joined_at').eq('player_id', player.player_id).is('left_at', null);
     if (error || !mine?.length) return [];
-    const { data: guilds } = await admin.from('hub_guilds').select('guild_id, display_name').in('guild_id', mine.map(m => m.guild_id)).is('suspended_at', null);
-    const names = new Map((guilds ?? []).map(g => [g.guild_id as string, g.display_name as string]));
+    const { data: guilds } = await admin.from('hub_guilds').select('guild_id, display_name, website_url, redirect_members').in('guild_id', mine.map(m => m.guild_id)).is('suspended_at', null);
+    const byId = new Map((guilds ?? []).map(g => [g.guild_id as string, g]));
     return mine
-      .filter(m => names.has(m.guild_id))
-      .map(m => ({ guild_id: m.guild_id, name: names.get(m.guild_id)!, role: m.role, joined_at: m.joined_at ?? null }))
+      .filter(m => byId.has(m.guild_id))
+      .map(m => {
+        const g = byId.get(m.guild_id)!;
+        // The site was validated on the way in; cleaning it again keeps a hand-edited row from becoming a redirect.
+        return { guild_id: m.guild_id, name: g.display_name as string, role: m.role, joined_at: m.joined_at ?? null,
+          site: cleanSiteUrl(g.website_url), redirect: g.redirect_members !== false };
+      })
       .sort((a, b) => a.name.localeCompare(b.name));
   } catch {
     return [];
@@ -106,13 +112,27 @@ const CARD = 'rounded-lg border border-border bg-panel p-4';
 const PILL = 'rounded border border-border px-2 py-0.5 text-xs text-dim';
 const LINK = 'inline-flex min-h-11 items-center text-sm';
 
-export default async function GuildsPage({ searchParams }: { searchParams: { find?: string; found?: string; closed?: string } }) {
+export default async function GuildsPage({ searchParams }: { searchParams: { find?: string; found?: string; closed?: string; stay?: string } }) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/guilds');
   const discordId = discordIdOf(user);
   const onHost = isRaidmimicHost(headers().get('host'));
 
   const [wolf, hub] = discordId ? await Promise.all([loadWolfPack(discordId), loadHubGuilds(discordId)]) : [null, [] as HubCard[]];
+
+  // The built-in guild's site comes from configuration (web/lib/guildSites.ts), a hosted guild's from its row.
+  const wolfSite = builtinGuildSite();
+  // Redirect by default (the guild lead, 2026-11-02): on raidmimic.com a player whose only guild has a website and the
+  // redirect on goes straight to it. `?stay=1` (the bar's "Your guilds", the "back" links) and the Find-my-guilds answer
+  // keep them here. On the Wolf Pack hosts the page is shown as it always was.
+  if (onHost) {
+    const mine: GuildRef[] = [
+      ...(wolf ? [{ guildId: GUILD_TAG, url: wolfSite.url, redirect: wolfSite.redirect }] : []),
+      ...hub.map(g => ({ guildId: g.guild_id, url: g.site, redirect: g.redirect })),
+    ];
+    const to = redirectTarget(mine, wantsToStay(searchParams));
+    if (to) redirect(to);
+  }
   const closed = searchParams.find === 'ok' ? await loadClosedMatches(searchParams.closed, hub) : [];
   const note = findNote(searchParams.find, searchParams.found, closed.length, !!wolf || hub.length > 0);
 
@@ -134,15 +154,12 @@ export default async function GuildsPage({ searchParams }: { searchParams: { fin
               <span className={PILL}>Member</span>
             </div>
             {/* Same shape as the other guild cards (the guild lead, 2026-11-02: "This looks like it's hard-tied to wolfpack
-                here"). It still opens on its own site: Wolf Pack is not a hub_guilds row yet, so there is no /guilds/<slug>. */}
+                here"). It opens on its own site, which is configuration (builtinGuildSite), never typed into this page:
+                Wolf Pack is not a hub_guilds row yet, so there is no /guilds/<slug>. */}
             <p className="mt-1 text-sm text-dim">
-              {wolf.characters} character{wolf.characters === 1 ? '' : 's'} on file · its own site, {PROD_SITE_URL.replace(/^https:\/\//, '')}
+              {wolf.characters} character{wolf.characters === 1 ? '' : 's'} on file{wolfSite.url ? ` · its own site, ${siteLabel(wolfSite.url)}` : ''}
             </p>
-            <p className="mt-2 flex flex-wrap gap-x-5">
-              <a href={`${PROD_SITE_URL}/me`} className={LINK}>Open the guild &rarr;</a>
-              <a href={`${PROD_SITE_URL}/pop/flag-events`} className={LINK}>Flag events &rarr;</a>
-              <a href={`${PROD_SITE_URL}/auth/mimic-link`} className={LINK}>Link Mimic &rarr;</a>
-            </p>
+            {wolfSite.url && <p className="mt-2"><a href={sitePage(wolfSite.url)!} className={LINK}>Open the guild&rsquo;s site &rarr;</a></p>}
           </article>
         )}
         {hub.map(g => (
@@ -152,7 +169,10 @@ export default async function GuildsPage({ searchParams }: { searchParams: { fin
               <span className={PILL}>{ROLE_LABEL[g.role] ?? 'Member'}</span>
             </div>
             {g.joined_at && <p className="mt-1 text-sm text-dim">Joined {g.joined_at.slice(0, 10)}</p>}
-            <p className="mt-2"><a href={`/guilds/${g.guild_id}`} className={LINK}>Open the guild &rarr;</a></p>
+            <p className="mt-2 flex flex-wrap gap-x-5">
+              <a href={`/guilds/${g.guild_id}`} className={LINK}>Open the guild &rarr;</a>
+              {g.site && <a href={g.site} className={LINK}>Open {g.name}&rsquo;s site &rarr;</a>}
+            </p>
           </article>
         ))}
         {closed.length > 0 && (

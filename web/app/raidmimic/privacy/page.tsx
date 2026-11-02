@@ -2,16 +2,18 @@
 // 2026-11-01). Served at raidmimic.com/privacy (the middleware rewrites /privacy here) and at wolfpack.quest/raidmimic/privacy.
 // A NEW page, so it ships with the [beta] tag (CLAUDE.md, DECISIONS §135).
 //
-// The facts come from wolfpack.quest/privacy (web/app/privacy/page.tsx), which was checked against the code on 2026-09-25 and
-// is the longer, per-feature statement for Wolf Pack itself. This page restates the parts a hosted guild and its members need
-// and points at that one for the rest. RULE for editing it, the same as there: say what the software does TODAY, and say
-// "coming" for what does not exist yet (hosting other guilds, payments, self-serve download and delete). A promise goes in
-// only once the code keeps it.
+// The facts come from the Wolf Pack site's privacy statement (web/app/privacy/page.tsx), which was checked against the code on
+// 2026-09-25 and is the longer, per-feature statement for Wolf Pack itself. This page restates everything a hosted guild and its
+// members need and SENDS THEM NOWHERE ELSE (the guild lead, 2026-11-02: nothing on raidmimic.com references wolfpack.quest): the
+// switches, what other raiders' Mimic records, the services a guild can connect and the whole retention table are written out
+// below. test/raidmimic-no-wolfpack.test.js keeps the address out. RULE for editing it, the same as there: say what the software
+// does TODAY, and say "coming" for what does not exist yet (hosting other guilds, payments). A promise goes in only once the
+// code keeps it.
 import { headers } from 'next/headers';
 import type { Metadata } from 'next';
 import { isRaidmimicHost, raidmimicSeo } from '@/lib/raidmimicHost';
 import { CONTACT_EMAIL, CONTACT_HREF, LEGAL_META, MIN_AGE, YOUR_DATA_PATH, legalPaths } from '@/lib/legal';
-import { PRIVACY_URL, REPO_URL } from '@/lib/raidmimicLanding';
+import { REPO_URL } from '@/lib/raidmimicLanding';
 import { B, Bullets, LEGAL_LINK, LegalShell, Rows, Section } from '../_legal/LegalParts';
 
 export function generateMetadata(): Metadata {
@@ -33,18 +35,40 @@ const PROCESSORS: [string, string, string][] = [
   ['Vercel', 'Hosts the website', 'The pages you view'],
   ['Discord', 'Sign-in, the guild bot, channels and DMs', 'Whatever a guild has the bot post'],
   ['GitHub', 'The code, Mimic downloads and updates, and a few automated jobs', 'Downloads, and whatever those jobs read'],
+  ['Public time servers', 'Keep Mimic’s clock right', 'Your IP address'],
   ['A server the Raid Mimic team runs', 'Backups and an archive', 'A copy of what the database holds, as below'],
   ['Anthropic (Claude AI coding assistants)', 'Building and fixing the platform', 'Those sessions can query the database, private data included, while they work'],
 ];
 
+// Only when a guild connects them (the Wolf Pack site's list, restated here so this page stands on its own).
+const IF_CONNECTED: [string, string, string][] = [
+  ['OpenDKP (on Amazon Web Services)', 'The guild’s DKP system', 'Character names, attendance, auctions and bids. We keep a copy of its auction and bid history, not encrypted'],
+  ['Raid-Helper', 'Raid sign-ups', 'Discord id, name, class, notes'],
+  ['Microsoft', 'Turns callout text into speech for the Discord voice channel', 'The callout text, which can name a player'],
+];
+
 const KEPT: [string, string][] = [
   ['Who targeted what', '1 day'],
+  ['Where your target stands (for your raid’s map)', 'Our server’s memory only, about 90 seconds'],
+  ['Escort NPC trails (no player named)', '12 hours'],
   ['Raid roster with positions', 'About a day'],
+  ['Raid positions kept for replay (one sample every few seconds)', 'Kept for now; the archive’s copy is permanent'],
+  ['How each raider’s character looks on a raid night (race, worn armor and weapons)', 'Kept for now; the archive’s copy is permanent'],
+  ['Raid voice recordings (only members who opted in)', 'Until the member opts out for tonight, or asks to be forgotten for everything'],
   ['Buffs and debuffs seen landing', '7 days'],
   ['Per-hit parse detail', '7 days (the parse totals are kept)'],
+  ['Threat snapshots', '30 days is the rule; the clean-up has fallen behind, so older ones exist today'],
+  ['Experience gained (with your group’s names)', '30 days'],
   ['/who sightings', '60 days, plus the latest sighting of each character'],
   ['Backups', '30 days'],
   ['Everything else', 'No deletion date today. Kept until you or your guild ask us to remove it.'],
+];
+
+// The switches a player has (the Wolf Pack site's list, restated here). Each says what it does and what it does not.
+const SWITCHES: { name: string; does: string; doesnt: string }[] = [
+  { name: 'Disconnect (in Mimic)', does: 'Stops everything going to our server.', doesnt: 'Delete what is stored.' },
+  { name: 'Unticking a character (Mimic’s setup screen)', does: 'Mimic never opens that character’s log.', doesnt: 'Stop that character’s live status, which comes from Zeal, not the log.' },
+  { name: 'Crash reports (Mimic’s tray)', does: 'Off by default.', doesnt: '' },
 ];
 
 export default function RaidmimicPrivacyPage() {
@@ -71,8 +95,7 @@ export default function RaidmimicPrivacyPage() {
           Questions go to <a href={CONTACT_HREF} className={LEGAL_LINK}>{CONTACT_EMAIL}</a>.
         </p>
         <p>
-          <B>What is live today.</B> One guild, Wolf Pack, runs on this platform, and its own{' '}
-          <a href={PRIVACY_URL} {...EXT} className={LEGAL_LINK}>privacy page</a> goes feature by feature. Running other guilds
+          <B>What is live today.</B> One guild, Wolf Pack, runs on this platform. Running other guilds
           is <B>coming</B>. This page is written for that hosted product so it is in place before the first other guild moves in.
           The free Mimic app on your own PC sends nothing to us until you sign it in.
         </p>
@@ -111,10 +134,30 @@ export default function RaidmimicPrivacyPage() {
         </Bullets>
         <p>
           Private chat never leaves your PC: officer chat, group chat, custom channels, <code>/say</code>, OOC, shouts, auctions
-          and tells are dropped on your machine first. Signing Mimic out (<em>Disconnect</em>) stops every upload. What other
-          raiders’ Mimic records about you, and the full list of switches, is on the{' '}
-          <a href={PRIVACY_URL} {...EXT} className={LEGAL_LINK}>Wolf Pack privacy page</a>; the same software does the same things.
+          and tells are dropped on your machine first. Signing Mimic out (<em>Disconnect</em>) stops every upload.
         </p>
+      </Section>
+
+      <Section title="What other raiders’ Mimic records about you">
+        <p>Even if you never install Mimic, raiders who run it record what their game shows them:</p>
+        <Bullets>
+          <li>your damage, heals and deaths in fights they are in;</li>
+          <li>your guild and raid chat;</li>
+          <li>your <code>/who</code> presence, <B>from any guild</B>, at level 50+ or anonymous;</li>
+          <li>your HP and position while you are in a raid with them;</li>
+          <li>buffs landing on you, your <code>/random</code> rolls, PvP kills, and hails.</li>
+        </Bullets>
+        <p>
+          Your own switches do not stop this. That was a deliberate choice, because the fight happened to everyone in it. If you
+          want something removed, ask.
+        </p>
+      </Section>
+
+      <Section title="What your switches actually do">
+        <Rows rows={SWITCHES.map(s => ({
+          head: <B>{s.name}</B>,
+          body: <><div><span className="text-green">Does:</span> {s.does}</div>{s.doesnt && <div className="mt-1"><span className="text-red">Doesn’t:</span> {s.doesnt}</div>}</>,
+        }))} />
       </Section>
 
       <Section title="Whose records they are">
@@ -135,10 +178,8 @@ export default function RaidmimicPrivacyPage() {
 
       <Section title="Who else handles it">
         <Rows rows={PROCESSORS.map(([who, why, gets]) => ({ head: <><B>{who}</B><div className="text-xs text-dim">{why}</div></>, body: gets }))} />
-        <p>
-          A guild that connects OpenDKP, Raid-Helper or the voice bot also sends those services what the connection needs; the{' '}
-          <a href={PRIVACY_URL} {...EXT} className={LEGAL_LINK}>Wolf Pack page</a> lists them.
-        </p>
+        <p>A guild that connects OpenDKP, Raid-Helper or the voice bot also sends those services what the connection needs:</p>
+        <Rows rows={IF_CONNECTED.map(([who, why, gets]) => ({ head: <><B>{who}</B><div className="text-xs text-dim">{why}</div></>, body: gets }))} />
         <p>
           <B>Payments are coming.</B> When Pro billing opens, a payment company will take your card. We will name it here
           first, and we will never see or store your card number.
@@ -148,9 +189,12 @@ export default function RaidmimicPrivacyPage() {
       <Section title="How long we keep it">
         <Rows rows={KEPT.map(([what, kept]) => ({ head: what, body: kept }))} />
         <p>
-          The full table is on the <a href={PRIVACY_URL} {...EXT} className={LEGAL_LINK}>Wolf Pack page</a>. Anything posted to
-          Discord stays there until someone deletes it in Discord.
+          Two copies live outside the hosted database, both on a server the Raid Mimic team runs (not a cloud provider):
+          <B> backups</B>, a full copy of the database every night, sign-in records and emails included, kept for 30 days; and
+          an <B>archive</B>, a permanent copy of what the hosted database deletes on the schedule above, plus chat, tells and
+          page views.
         </p>
+        <p>Anything posted to Discord stays there until someone deletes it in Discord.</p>
       </Section>
 
       <Section title="Cookies">

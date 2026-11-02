@@ -144,6 +144,16 @@ writes.
   `hub_guilds.discord_guild_id` and `hub_players.avatar_url`). Supabase Auth redirect entries for `raidmimic.com`,
   `www.raidmimic.com` and `*.raidmimic.com` were added by the guild lead the same day. Test: `test/raidmimic-signin.test.js`
   (115 tests). The sign-in-first `?v=b` landing variant was deleted when the story-stage home page graduated (web 2.1.87; the story stage ends on a Discord sign-up card).
+- **raidmimic.com/guilds: a guild's own site, and redirect by default (2026-11-02; `[beta]` page; the guild lead: *"nothing on raidmimic.com should reference
+  wolfpack.quest, but we should be able to redirect users to their guild's website at their configuration"*).** `hub_guilds.website_url` (https, 200 characters) and
+  `hub_guilds.redirect_members` (default true), migration `20261102230000_hub_guild_site.sql`; an owner or officer sets them on `/guilds/<slug>` (`SiteSettings.tsx`,
+  `saveGuildSite` in `[slug]/actions.ts`, which re-checks the role). Wolf Pack is not a `hub_guilds` row, so its site is CONFIGURATION: `web/lib/guildSites.ts`
+  `builtinGuildSite()` reads `GUILD_SITE_URL` (default `PROD_SITE_URL`) and `GUILD_SITE_REDIRECT` (`0` turns it off). On a raidmimic host `/guilds` redirects a player
+  whose ONLY guild has a site and the redirect on straight to it (`redirectTarget`); `?stay=1` (the bar's "Your guilds", every "back" link, `YOUR_DATA_PATH`) and the
+  Find-my-guilds answer keep them on the page, and two or more guilds never redirect (each card says "Open <guild>'s site"). A site on a Raid Mimic host is refused
+  (it would loop). No raidmimic page spells the Wolf Pack address: the privacy page is self-contained, the set-up guide and the sign-up line link Raid Mimic's own
+  privacy page, the Download button goes to the GitHub release, `/auth/claim` is a 404 on the host and `/auth/mimic-link` sends a Wolf Pack code to the configured site.
+  Tests: `test/raidmimic-no-wolfpack.test.js` (the ratchet and the redirect choice), `test/guilds-new.test.js`.
 - **Agent → bot**: per-user bearer tokens minted at Mimic sign-in
   (`mimicLink.requireAgentAuth` on every `/api/agent/*` route). `/token` in
   Discord lists/revokes sessions. Every upload is traceable to a Discord id.
@@ -3354,6 +3364,15 @@ bugs were a missing item from that list.
 - **Not built:** the bot reading the hub slug (the next slice puts the chosen guild on the link code and the session so `mimic_sessions.guild_id`
   feeds the RLS scoping above, and completes `/auth/mimic-link` on that guild's site), several guilds at once. Tests:
   `test/mimic-guild-picker.test.js`, `test/hub-directory.test.js`.
+- **"No guild — just sync my PoP flags" (Mimic beta, agent 4.0.58, 2026-11-02; DECISIONS §526; bot 4.0.50 serves it).** A third choice in the
+  same picker (welcome and Settings). `hubs.PLAYER_HUB` (slug `~player`, the hosted bot's address, site raidmimic.com) is fixed in `hubs.js`
+  and can never be a directory row; `linkStartBody` sends `{player: true}` and no hub; the link opens the address the bot names
+  (raidmimic.com/auth/mimic-link); `identityFromPoll` keeps `scope: 'player'` and the status carries `mimicSession.player`, so the pages say
+  "Signed in to Raid Mimic (flag sync)" and leave the guild copy out. Moving to or from it is a switch (`sameHub` also compares player-ness).
+  Agent: `_playerScope()` (`packages/wolfpack-logsync/index.js`, next to `_localOnly`) makes `enqueueUpload` queue only `pop_flag` and
+  `_postLiveState` stand down, because the bot answers 403 to every other route for that session and the durable queue drops a 4xx. Not done:
+  the agent's other direct reads (guild triggers, spell catalog…) still try and get 403 on their own cadence; the agent dashboard's
+  "Mimic account linked" check counts a player session as linked. Tests: `test/mimic-guild-picker.test.js` (section 6), `test/agent-player-scope.test.js`.
 
 ### Sounds, voice packs, pronunciation, and the Willsapper proc (agent 3.7.162, beta, 2026-10-14)
 The guild lead: a "slap" when a Willsapper procs; then voice packs, names said right, members' own

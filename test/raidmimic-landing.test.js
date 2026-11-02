@@ -300,7 +300,10 @@ describe('the shared pieces (Parts.tsx)', () => {
     expect([...urls]).toEqual([]);   // every address is a constant in a content module
     const mod = code('web/lib/raidmimicLanding.ts');
     const inModule = [...mod.matchAll(/https?:\/\/[^\s'"`)<>]+/g)].map(m => m[0]).filter(u => !/\$\{/.test(u));
-    expect(new Set(inModule)).toEqual(new Set(['https://eqmimic.quest', 'https://wolfpack.quest/privacy']));
+    // 2026-11-02: the privacy address is gone from here. Raid Mimic's privacy page is its own (legalPaths), and nothing on
+    // raidmimic.com references wolfpack.quest (test/raidmimic-no-wolfpack.test.js).
+    expect(new Set(inModule)).toEqual(new Set(['https://eqmimic.quest']));
+    expect(mod).not.toMatch(/PRIVACY_URL\s*=/);
   });
 });
 

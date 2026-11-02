@@ -23,14 +23,16 @@
 //
 // ⚠ This repo is PUBLIC. Nothing here names a member, a character, an id, a token or an address.
 
-import { DOWNLOAD_PATH, WOLFPACK_ORIGIN, docUrl } from './eqmimicLanding';
+import { docUrl } from './eqmimicLanding';
+import { RELEASES_URL } from './raidmimicSetup';
 
 export { docUrl };
 
 // ─── Where the buttons go ───────────────────────────────────────────────────────────────────────────
-// The installer is served by wolfpack.quest (the same direct link eqmimic.quest uses); on a Wolf Pack host it is a
-// plain path, but an absolute address works on every host, so one constant serves both.
-export const DOWNLOAD_URL = `${WOLFPACK_ORIGIN}${DOWNLOAD_PATH}`;
+// The latest stable release on GitHub, the same place the set-up guide's Download button goes (the guild lead, 2026-11-02:
+// nothing on raidmimic.com references the Wolf Pack site, which is where the one-click installer link used to point).
+// An absolute address works on every host, so one constant serves both.
+export const DOWNLOAD_URL = RELEASES_URL;
 export const SELFHOST_GUIDE_URL = docUrl('docs/SELFHOSTING.md');
 
 // ─── The hero ───────────────────────────────────────────────────────────────────────────────────────
