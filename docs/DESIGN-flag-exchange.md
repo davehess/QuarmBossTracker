@@ -142,6 +142,27 @@ So two shapes are needed besides the hosted guild: an **outbound feed** (flags a
 **bot that works beside a guild's own site**. Whether the guild's own maintainers want to keep their site decides which
 to lead with.
 
+**What that guild's raid leader asked for** (a long conversation, 2026-11-02; §524), strongest first, with what we have:
+
+| Need | Their words, in short | What Raid Mimic has | Gap |
+|---|---|---|---|
+| A spawn / time-of-death board | what is up, when it died, when it is due; automatic, with a manual "we just killed it"; inside THEIR site and bot | the bot's boss timers with kill buttons, kills from the agent (`/api/agent/bosskill`, lockouts), slow mode | a read feed for another guild's site; an honest coverage line per boss ("from a log" / "by hand"); kills reported from outside Wolf Pack |
+| Flags with no member effort | "we can't get half the guild to read Discord, let alone do a manual step" | the agent reads #popflags, the Seer and grants from the player's own log | it covers only players who run the agent; the feed into their site |
+| Raid-lead timers | slow timers, AE warnings, curse timers; "I just can't not have all the info" | guild triggers, timers, curse counters, the GINA-compatible import | a timer pack exported for their trigger tools |
+| Wipe review | the shared raid replay "could pinpoint the actual wipe causes" | raid replay and share links | none for viewing; uploads need the agent |
+| Alt-flag logistics | keys carried, ports, click timing for an alt push | the flag events board | step lists per event |
+
+Their limits, which shape any offer: **nobody is required to run anything** (so target the raid leader and a few officers
+running the agent, and say plainly what is missed when nobody in a fight runs it); **feed their site and bot** through an
+API or webhook their builder consumes, never a platform switch; **Raid Mimic must not become their single point of failure**
+(their data stays in their site; our feed is an addition); and they will test our sign-in, role gating and export as hard as
+they would their own. They did not ask about loot.
+
+**Cost.** Flags and kills are tiny (all 65k flag rows ever stored are 15 MB with their indexes, measured 2026-11-02; the last
+week held about 3,500 recorded fights, of which boss kills are a small share), and a feed is a push of a few hundred bytes per
+event, so syncing them costs us almost nothing to run. The guild lead,
+2026-11-02: *"it's gotta be cheap for users to be able to get their popflags and mob kills synced"*. Plan change in §525.
+
 ## 4. Phases
 
 1. **Demo** (`raidmimic.com/demo`, static, invented guild): what a guild gets, the "record for someone else" flow and both
