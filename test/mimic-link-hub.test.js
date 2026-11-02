@@ -610,12 +610,15 @@ describe('/auth/mimic-link on a raidmimic host', () => {
   it('tells a player who is not in the guild "Join <guild> first" and links to /guilds', () => {
     expect(hubPage).toMatch(/refusal\?\.reason === 'join_first'/);
     expect(hubPage).toMatch(/Join \{guildName\} first/);
-    expect(hubPage).toMatch(/<Link href="\/guilds"/);
+    // stay=1 (2026-11-02, redirect by default): the link must not bounce a one-guild player to their guild's site.
+    expect(hubPage).toMatch(/<Link href=\{GUILDS_STAY_PATH\}/);
   });
 
-  it('sends a Wolf Pack code to wolfpack.quest instead of claiming it', () => {
+  it('sends a Wolf Pack code to the built-in guild\'s configured site instead of claiming it', () => {
     expect(hubPage).toMatch(/refusal\?\.reason === 'wolfpack_code'/);
-    expect(hubPage).toContain('https://wolfpack.quest/auth/mimic-link?code=');
+    // 2026-11-02: nothing on raidmimic.com spells the Wolf Pack address; the site is configuration (web/lib/guildSites.ts).
+    expect(hubPage).toContain('sitePage(builtinGuildSite().url, `/auth/mimic-link?code=${prefilled}`)');
+    expect(hubPage).not.toContain('https://wolfpack.quest');
   });
 
   it('the Wolf Pack page never reads the hub tables', () => {

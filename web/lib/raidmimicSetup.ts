@@ -6,8 +6,8 @@
 // Written for a raider on a phone: plain words, one action per step. EverQuest terms are fine, code names are not.
 //
 // ⚠ The product name on this page is "Raid Mimic" (the page) and "Mimic" (the program). "Wolf Pack" appears ONCE,
-// in CREDIT below, because the guild lead is weighing dropping it from the product name. Do not add it elsewhere
-// (the web address wolfpack.quest/privacy is a link, not a name).
+// in CREDIT below, because the guild lead is weighing dropping it from the product name. Do not add it elsewhere.
+// No Wolf Pack web address anywhere on this page (the guild lead, 2026-11-02): test/raidmimic-no-wolfpack.test.js.
 // ⚠ This repo is PUBLIC: no member, no character, no address of anyone's PC.
 
 import { REPO_URL } from './eqmimicLanding';
@@ -15,9 +15,10 @@ import { REPO_URL } from './eqmimicLanding';
 // ─── Where things live ──────────────────────────────────────────────────────────────────────────────
 // The stable release itself: the plain releases list opens on a run of betas (the guild lead, 2026-10-30).
 export const RELEASES_URL = `${REPO_URL}/releases/latest`;
-export const PRIVACY_URL = 'https://wolfpack.quest/privacy';
+// The privacy page has no address here: it is the Raid Mimic page on every host, so the page fills the link from
+// web/lib/legal.ts legalPaths() (/privacy on a raidmimic host, /raidmimic/privacy on the Wolf Pack hosts).
 export const LANDING_PATH_ON_HOST = '/';                 // raidmimic.com/
-export const LANDING_PATH_ON_WOLFPACK = '/raidmimic';    // wolfpack.quest/raidmimic
+export const LANDING_PATH_ON_WOLFPACK = '/raidmimic';    // the same page, on the Wolf Pack hosts
 
 // ─── Header ─────────────────────────────────────────────────────────────────────────────────────────
 export const TITLE = '[beta] Set up Raid Mimic';
@@ -127,7 +128,7 @@ export const STEPS: Step[] = [
       'Mimic checks GitHub for new versions of itself. That check sends no game data.',
       'There is no account to delete, because local mode has none. Uninstall Mimic and delete its folder, and it is gone.',
     ],
-    link: { label: 'Read the full privacy page', href: PRIVACY_URL },
+    link: { label: 'Read the full privacy page', href: '' },   // filled by the page (legalPaths): the address differs by host
   },
 ];
 

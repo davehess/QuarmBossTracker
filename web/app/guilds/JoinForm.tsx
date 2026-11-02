@@ -4,6 +4,7 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { redeemInvite, type JoinResult } from './actions';
+import { GUILDS_STAY_PATH } from '@/lib/guildSites';
 
 export default function JoinForm() {
   const [code, setCode] = useState('');
@@ -16,7 +17,8 @@ export default function JoinForm() {
     start(async () => {
       const r = await redeemInvite(code);
       setResult(r);
-      if (r.ok) { setCode(''); router.refresh(); }
+      // stay=1: a player who has just joined their first guild sees its card here, not its website.
+      if (r.ok) { setCode(''); router.replace(GUILDS_STAY_PATH); router.refresh(); }
     });
   }
 

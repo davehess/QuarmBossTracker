@@ -479,6 +479,12 @@ non-commercial); storage and bandwidth are per deployment, not per domain, so 10
 domain (`raids.theirguild.com`) is a CNAME onto the same thing, like `b.wolfpack.quest` today. Each subdomain carries the
 guild's theme (`DESIGN-theming.md` §4) and its `pageMeta` unfurls.
 
+**A guild's own site, and redirect by default (the guild lead, 2026-11-02).** raidmimic.com never references a guild's website by
+name; each guild carries its own address in configuration (`hub_guilds.website_url`; Wolf Pack's comes from `GUILD_SITE_URL`) plus a
+`redirect_members` switch, on by default. A signed-in player whose only guild has a site lands on it instead of on `/guilds`
+(`?stay=1` keeps them on the Raid Mimic page). Until a guild has its own subdomain or domain above, this is how its members get
+from raidmimic.com to "their" place.
+
 ### 9d. Where guest data lives
 A guest's parse is written under the `guild_id` of the guild whose officer approved the key (§474): in shape A that is the
 guild's bot and the guild's rows; in B/C the same rows in the shared database. The guest's own account holds nothing but the

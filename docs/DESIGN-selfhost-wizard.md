@@ -688,6 +688,10 @@ and the same never-refetch guarantee.
   red/green/gold/orange are never themable and a 3:1 text-contrast floor is enforced on save. A row at today's values emits
   nothing, so a guild that never opens `/admin/theme` costs no bytes. For the wizard: seed one row per guild (the migration seeds today's
   values); the table holds a logo URL, not the image.
+- **2026-11-02 — a guild's own website is configuration, and raidmimic.com redirects to it by default** (the guild lead; web
+  `web/lib/guildSites.ts`): a hosted guild keeps `hub_guilds.website_url` and `redirect_members` (default on); the built-in guild's come
+  from the server-only `GUILD_SITE_URL` / `GUILD_SITE_REDIRECT` (default: the production site, redirect on). For the wizard: ask for the
+  guild's site once, store it on the guild row, and never write the address into a Raid Mimic page.
 
 ## 4. Open questions for whoever builds it
 

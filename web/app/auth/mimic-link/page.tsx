@@ -21,6 +21,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isRaidmimicHost } from '@/lib/raidmimicHost';
 import { profileOf } from '@/lib/hubRegistry';
+import { GUILDS_STAY_PATH, builtinGuildSite, sitePage } from '@/lib/guildSites';
 import { LINK_CODE_RX, checkHubLink, claimHubCode, cleanLinkCode, hubLinkDb, type LinkRefusal } from '@/lib/mimicLinkHub';
 
 export const metadata = {
@@ -262,7 +263,8 @@ const HUB_ERROR_LABELS: Record<LinkRefusal | 'invalid_code' | 'no_discord_id' | 
   update_failed:  'Couldn\'t save the link (database error). Try again in a moment.',
   no_discord_id:  'Your account is missing a Discord ID — sign out and back in, then retry.',
   error:         'Couldn\'t check that code just now. Try again in a moment.',
-  wrong_site:     'That form belongs to wolfpack.quest. Open the link Mimic gave you instead.',
+  // The Wolf Pack form's error redirect lands here on a raidmimic host. No address in the words: the guild's site is configuration.
+  wrong_site:     'That form belongs to your guild’s own site. Open the link Mimic gave you instead.',
   code_mismatch:  'That is not the code this page was opened for. Type the code your Mimic is showing, or start again from Mimic.',
 };
 const HUB_OK_LABELS: Record<string, string> = {
@@ -319,6 +321,8 @@ async function HubLinkPage({
   const successMsg = okMsg || (check?.state === 'already' ? HUB_OK_LABELS['already'] : null);
   const name = profileOf(user).displayName || 'your Discord account';
   const ctx = !successMsg && codeOk ? await requestContext(prefilled) : null;
+  // A Wolf Pack code finishes on the built-in guild's own site, which is configuration (web/lib/guildSites.ts).
+  const builtinLink = sitePage(builtinGuildSite().url, `/auth/mimic-link?code=${prefilled}`);
 
   return (
     <div className="max-w-lg mx-auto mt-10 space-y-6">
@@ -337,7 +341,7 @@ async function HubLinkPage({
             the guild, then come back: the code from Mimic lasts 10 minutes.
           </p>
           <div className="flex gap-3">
-            <Link href="/guilds" className="inline-block bg-blue text-white rounded px-4 py-2 text-sm font-bold hover:bg-blue/90">
+            <Link href={GUILDS_STAY_PATH} className="inline-block bg-blue text-white rounded px-4 py-2 text-sm font-bold hover:bg-blue/90">
               Go to my guilds
             </Link>
             <Link href={`/auth/mimic-link?code=${prefilled}`} className="inline-block border border-border text-text rounded px-4 py-2 text-sm hover:bg-bg">
@@ -350,10 +354,12 @@ async function HubLinkPage({
       {refusal?.reason === 'wolfpack_code' && (
         <section className="bg-panel border border-border rounded-lg p-6">
           <h2 className="text-xl text-gold mb-2">That code is for Wolf Pack</h2>
-          <p className="text-sm text-dim mb-4">Wolf Pack members link Mimic on their own site.</p>
-          <a href={`https://wolfpack.quest/auth/mimic-link?code=${prefilled}`} className="text-blue hover:underline text-sm">
-            Open it on wolfpack.quest
-          </a>
+          <p className="text-sm text-dim mb-4">Wolf Pack members link Mimic on their guild’s own site.</p>
+          {builtinLink && (
+            <a href={builtinLink} className="text-blue hover:underline text-sm">
+              Open it on your guild’s site
+            </a>
+          )}
         </section>
       )}
 

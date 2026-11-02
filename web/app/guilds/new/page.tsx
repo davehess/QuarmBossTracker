@@ -8,6 +8,7 @@ import type { Metadata } from 'next';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isRaidmimicHost } from '@/lib/raidmimicHost';
 import { EQMIMIC_ORIGIN } from '@/lib/raidmimicLanding';
+import { GUILDS_STAY_PATH } from '@/lib/guildSites';
 import NewPageTag from '@/components/NewPageTag';
 import NewGuildForm from './NewGuildForm';
 import HostFrame from '@/components/RaidmimicFrame';
@@ -34,7 +35,7 @@ export default async function NewGuildPage() {
         You become its owner. Once it exists you can make invite codes and hand them to your raiders. One guild a day per person.
       </p>
       <NewGuildForm />
-      <p className="mt-6"><a href="/guilds" className="inline-flex min-h-11 items-center text-sm">&larr; Your guilds</a></p>
+      <p className="mt-6"><a href={GUILDS_STAY_PATH} className="inline-flex min-h-11 items-center text-sm">&larr; Your guilds</a></p>
     </div>
     </HostFrame>
   );
