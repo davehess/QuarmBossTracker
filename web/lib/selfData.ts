@@ -134,6 +134,10 @@ export const SELF_TABLES: TableSpec[] = [
     select: 'guild_id, player_id, role, joined_at, left_at, anon_label' },
   { table: 'hub_player_activity', group: 'personal', clauses: [{ col: 'player_id', kind: 'player' }], order: [by('day', true), by('guild_id')],
     select: 'guild_id, player_id, day, streams' },
+  { table: 'hub_characters', group: 'personal', clauses: [{ col: 'player_id', kind: 'player' }], order: [by('name_lc'), by('player_id')],
+    select: 'player_id, name, proof, first_seen_at, last_seen_at' },
+  { table: 'hub_flags', group: 'personal', clauses: [{ col: 'player_id', kind: 'player' }], order: [by('earned_at', true), by('id')],
+    select: 'id, player_id, character, flag_key, stage, source, earned_at, created_at' },
 
   // ── private uploads reached through their characters ──
   { table: 'character_live_state', group: 'character', clauses: [nm('character')], order: [by('character')],

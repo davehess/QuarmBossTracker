@@ -196,8 +196,11 @@ next touch one rather than assuming a missing row means a missing doc.
 - **🧪 Free flag syncing outside Wolf Pack, slice 1 (bot 4.0.50 `main`, migration `20261102210000_hub_sync.sql` applied,
   2026-11-02, §526, §527).** A player session (no guild) and the free/paid route gate; flags into `hub_flags` /
   `hub_characters`; the fight upload only for `managed` guilds. Nobody can start a player link yet (Mimic's choice is the next
-  beta slice). **⚠ Launch blocker:** self-delete and the data export must cover `hub_flags` and `hub_characters` before
-  player links are offered. Then kills (`hub_kills`), the player page `/player`, the guild feed, the in-game proof code.
+  beta slice). **Launch blocker, code done, migration not yet applied:** self-delete and the data export now cover
+  `hub_flags` and `hub_characters` (migration `20261102220000_self_delete_hub_sync.sql` redefines `member_self_delete` to delete
+  both before `hub_players` is anonymised, because the cascade never fires on an anonymise; `web/lib/selfData.ts` exports both
+  as personal sections; tests in `test/self-serve-data.test.js`). **Apply that migration before player links are offered.**
+  The "Removed" list in `web/app/me/data/DeleteAccount.tsx` does not name them yet. Then kills (`hub_kills`), the player page `/player`, the guild feed, the in-game proof code.
   Plan: `docs/DESIGN-flag-exchange.md` §3 Supply.
 - **✅ PoP guide: what each character is missing, per gate, and the small paste box (web 2.1.94 `main`, 2026-11-02, FB-115).**
   On the guild lead's "looks right now, ship it": https://wolfpack.quest/pop/guide opens on the family table (every piece of the
