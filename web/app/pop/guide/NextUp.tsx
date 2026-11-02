@@ -11,14 +11,18 @@
 
 import { useSearchParams } from 'next/navigation';
 import type { NextCard, NextStep } from '@/lib/popNextSteps';
+import type { GateCardEntry } from '@/lib/popGateStatus';
+import GateMissing from './GateMissing';
 
 export type NextUpChar = { name: string; cls: string | null; isMain: boolean; card: NextCard };
 
 const WHO: Record<NextStep['who'], string> = { solo: '🧍 Solo', group: '👥 Group', raid: '⚔ Raid' };
 const chip = 'px-1.5 rounded border border-border text-dim';
 
-export default function NextUp({ chars, initial, anchorPrefix, compareHref }: {
+export default function NextUp({ chars, initial, anchorPrefix, compareHref, gates }: {
   chars: NextUpChar[]; initial: string | null; anchorPrefix: string; compareHref: string;
+  /** ?v=gate-a: per character (by name), every piece of each blocked gate; replaces the one-line "needs" list. */
+  gates?: Record<string, GateCardEntry[]>;
 }) {
   const wanted = useSearchParams()?.get('c')?.toLowerCase();
   const char = chars.find(c => c.name.toLowerCase() === wanted) ?? chars.find(c => c.name === initial) ?? chars[0] ?? null;
@@ -31,6 +35,7 @@ export default function NextUp({ chars, initial, anchorPrefix, compareHref }: {
     );
   }
   const { card } = char;
+  const gateEntries = gates?.[char.name] ?? [];
   return (
     <section aria-labelledby="nx-a-title" className="bg-panel border border-border rounded-lg p-4 flex flex-col gap-3">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -68,7 +73,9 @@ export default function NextUp({ chars, initial, anchorPrefix, compareHref }: {
         </p>
       )}
 
-      {card.blocked.length > 0 && (
+      {card.blocked.length > 0 && gateEntries.length > 0 ? (
+        <GateMissing entries={gateEntries} />
+      ) : card.blocked.length > 0 && (
         <details className="border-t border-border pt-2" open={card.top.length === 0}>
           <summary className="cursor-pointer text-[11px] text-dim uppercase tracking-wide">
             Waiting on something else · {card.blocked.length}
