@@ -181,6 +181,11 @@ next touch one rather than assuming a missing row means a missing doc.
   the slow badge and debuff list take the caster's landing over emote guesses, and hour-off landings are put back or dropped.
   Tests `test/raid-fights-route.test.js`, `test/buff-casts-self-cast.test.js` (main), `test/raid-fights-history.test.js`,
   `test/debuffer-precedence.test.js` (beta).
+- **📐 The server-wide flag exchange on raidmimic.com (direction 2026-11-02, DECISIONS §516, §517; design open).** Raid leaders
+  of every guild post a schedule and fill gaps from players (any guild) whose uploaded flags say they need the target;
+  opt-in sharing into restricted tables; officer rights; the Raid Mimic bot with a role wizard. Research, proposed shape,
+  phases, the privacy sentences that must change with it, and the eight open choices: `docs/DESIGN-flag-exchange.md`. Phase
+  1, the static `raidmimic.com/demo`, is being drafted.
 - **✅ PoP guide: what each character is missing, per gate, and the small paste box (web 2.1.94 `main`, 2026-11-02, FB-115).**
   On the guild lead's "looks right now, ship it": https://wolfpack.quest/pop/guide opens on the family table (every piece of the
   picked gate per character, and what is left); a character's name opens their piece-by-piece list (`?v=gate-a`). The paste box
