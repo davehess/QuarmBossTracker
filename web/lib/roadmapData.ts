@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-95-2026-11-02',
+    title: 'Web 2.1.95',
+    version: 'Web 2.1.95',
+    date: '2026-11-02',
+    headline: 'The PoP guide tells you how to get to each plane.',
+    features: [
+      { name: 'Getting there', blurb: 'In the PoP guide\'s sidebar layouts, each tier shows how to reach the plane its next step is in (PoK book → Tranquility → the portal, and what that portal needs), and the same line sits above each plane\'s steps when you open it.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-2-1-94-2026-11-02',
     title: 'Web 2.1.94',
     version: 'Web 2.1.94',
