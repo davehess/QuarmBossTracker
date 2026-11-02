@@ -30,7 +30,8 @@ const OTHER_SLOTS = ['radius', 'font-mono', 'font-ui'];
 // 1025 when the layer landed on beta (2026-10-31); 1040 after main merged in the /guilds page and the /admin/theme editor,
 // which were written on main before the token layer existed there. A merge may raise it with a note here; nothing else may.
 // 1044 after main's /guilds/new, /guilds/[slug] and the mimic-link hub page (web 2.1.82–2.1.84) synced in.
-const HEX_BASELINE = 1044;
+// 1052 after main's raidmimic.com demo pages (web 2.1.97, the landing's cream text) and /admin/queue synced in.
+const HEX_BASELINE = 1052;
 const HEX = /#[0-9a-fA-F]{3,8}\b/g;
 
 // ── checks (pure, so the mutation block below can feed them broken input) ──
