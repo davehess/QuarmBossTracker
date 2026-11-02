@@ -181,6 +181,10 @@ next touch one rather than assuming a missing row means a missing doc.
   the slow badge and debuff list take the caster's landing over emote guesses, and hour-off landings are put back or dropped.
   Tests `test/raid-fights-route.test.js`, `test/buff-casts-self-cast.test.js` (main), `test/raid-fights-history.test.js`,
   `test/debuffer-precedence.test.js` (beta).
+- **📐 Guild loot systems and raid rules, catalogued (2026-11-02, DECISIONS §520).** `docs/DESIGN-loot-systems.md`: the
+  dimensions, three systems side by side (DKP, EPGP, upgrade/greed rolls with picks), what we have and lack per kind, and a
+  per-guild rulebook shown to guests. Add each new guild's system as a column. **⚠ Needs the guild lead:** the Raid Mimic
+  Discord welcome (§521), option A (Discord onboarding, no code) or B (the bot greets each person; a portal switch first).
 - **📐 The server-wide flag exchange on raidmimic.com (direction 2026-11-02, DECISIONS §516, §517; design open).** Raid leaders
   of every guild post a schedule and fill gaps from players (any guild) whose uploaded flags say they need the target;
   opt-in sharing into restricted tables; officer rights; the Raid Mimic bot with a role wizard. Research, proposed shape,
