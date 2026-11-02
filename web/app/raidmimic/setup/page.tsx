@@ -21,6 +21,8 @@ import { legalPaths } from '@/lib/legal';
 import { PRIMARY_BTN } from '../_landing/Parts';
 import SetupSteps from './SetupSteps';
 import { HostBar } from '@/components/RaidmimicFrame';
+import StartFree from '@/components/StartFree';
+import { startFreeVariant } from '@/lib/raidmimicStartFree';
 
 const TITLE = '[beta] Set up Raid Mimic';
 const DESCRIPTION =
@@ -68,7 +70,8 @@ function StepCard({ n, step, guildHref, guildExternal, privacyHref }: { n: numbe
   );
 }
 
-export default function RaidmimicSetupPage() {
+export default function RaidmimicSetupPage({ searchParams }: { searchParams?: { v?: string } }) {
+  const startFree = startFreeVariant(searchParams?.v);   // beta preview of the "Free to start" block; none by default
   // On a raidmimic host the landing page is `/` and the form lives on eqmimic.quest; on the Wolf Pack hosts the
   // landing page is /raidmimic and its Register-interest button reaches the form by its real path.
   const onHost = isRaidmimicHost(headers().get('host'));
@@ -92,6 +95,8 @@ export default function RaidmimicSetupPage() {
           <a href={landing} className="inline-flex min-h-11 items-center text-sm">What is Raid Mimic? →</a>
         </p>
       </header>
+
+      {startFree && <StartFree variant={startFree} pricingHref={`${landing}#pricing`} />}
 
       <section aria-label={REQUIREMENTS.title} className="mb-6 rounded-md border border-border bg-bg p-4">
         <h2 className="text-base text-[#f2ede1]">{REQUIREMENTS.title}</h2>

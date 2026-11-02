@@ -12,6 +12,9 @@ import { GUILDS_STAY_PATH } from '@/lib/guildSites';
 import NewPageTag from '@/components/NewPageTag';
 import NewGuildForm from './NewGuildForm';
 import HostFrame from '@/components/RaidmimicFrame';
+import StartFree from '@/components/StartFree';
+import { startFreeVariant } from '@/lib/raidmimicStartFree';
+import { LANDING_PATH_ON_HOST, LANDING_PATH_ON_WOLFPACK } from '@/lib/raidmimicSetup';
 
 export const metadata: Metadata = {
   title: '[beta] Start a guild',
@@ -21,7 +24,8 @@ export const metadata: Metadata = {
 
 export const dynamic = 'force-dynamic';
 
-export default async function NewGuildPage() {
+export default async function NewGuildPage({ searchParams }: { searchParams?: { v?: string } }) {
+  const startFree = startFreeVariant(searchParams?.v);   // beta preview of the "Free to start" block; none by default
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/guilds/new');
   const onHost = isRaidmimicHost(headers().get('host'));
@@ -34,6 +38,11 @@ export default async function NewGuildPage() {
       <p className="mt-1 text-sm text-dim">
         You become its owner. Once it exists you can make invite codes and hand them to your raiders. One guild a day per person.
       </p>
+      {startFree && (
+        <div className="mt-4">
+          <StartFree variant={startFree} pricingHref={`${onHost ? LANDING_PATH_ON_HOST : LANDING_PATH_ON_WOLFPACK}#pricing`} />
+        </div>
+      )}
       <NewGuildForm />
       <p className="mt-6"><a href={GUILDS_STAY_PATH} className="inline-flex min-h-11 items-center text-sm">&larr; Your guilds</a></p>
     </div>
