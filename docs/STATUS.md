@@ -198,6 +198,11 @@ next touch one rather than assuming a missing row means a missing doc.
   the slow badge and debuff list take the caster's landing over emote guesses, and hour-off landings are put back or dropped.
   Tests `test/raid-fights-route.test.js`, `test/buff-casts-self-cast.test.js` (main), `test/raid-fights-history.test.js`,
   `test/debuffer-precedence.test.js` (beta).
+- **✅ PoP guide: what each character is missing, per gate, and the small paste box (web 2.1.94 `main`, 2026-11-02, FB-115).**
+  On the guild lead's "looks right now, ship it": https://wolfpack.quest/pop/guide opens on the family table (every piece of the
+  picked gate per character, and what is left); a character's name opens their piece-by-piece list (`?v=gate-a`). The paste box
+  shows a small text box and Check at once, the steps on a click, and reads #popflags lines too. The "Getting there" line
+  (`?v=b`) stays on beta awaiting a pick. Mimic's Capture changes (agent 4.0.56/4.0.57) stay on beta until tried in game.
 - **✅ Agent 4.0.53: a log a whole hour off the PC's clock is put back on the hour (beta + main, 2026-11-02, §512).** The first raid after
   the clocks went back dropped about a third of the projection hails (log times exactly 1 h early or late, measured in `pop_flags`).
   `_fixLogClock` in the live tail rewrites a log's timestamps once 5 live lines in a row sit on a 1–2 hour step. Test

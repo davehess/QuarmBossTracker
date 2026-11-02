@@ -103,12 +103,13 @@ export default async function PopGuidePage(
       : <NextTable rows={nxRows} hrefFor={(name, key) => nxHref(name, 'b', key)} singleHref={nxHref(nxFirst, 'a')} />)
     : null;
 
-  // Beta (the guild lead, 2026-11-01: "the side bar where it says specifically what you're missing, not just the
-  // last thing mentioned"): ?v=gate-a is the next-up card with every piece of each blocked gate checked off,
-  // ?v=gate-b is one gate across the whole family. Both ride on the default layout below (the layouts own ?v=b and
-  // ?v=c); any other ?v= is as it was. gatePanel.tsx builds them, popGatePieces.ts says what a gate is made of.
-  // Picked 2026-11-02 (the guild lead: "the family view is great, and the individual view is good if we click on one of
-  // the character names from that list"): the family table is what the page opens on; a name opens ?v=gate-a.
+  // What each character is missing, piece by piece (the guild lead, 2026-11-01: "the side bar where it says specifically
+  // what you're missing, not just the last thing mentioned"). ?v=gate-a is the next-up card with every piece of each
+  // blocked gate checked off, ?v=gate-b is one gate across the whole family. Picked 2026-11-02 (the guild lead: "the
+  // family view is great, and the individual view is good if we click on one of the character names from that list";
+  // shipped on "looks right now, ship it"): the family table is what the page opens on; a name opens ?v=gate-a. Both ride
+  // on the default layout below (the layouts own ?v=b and ?v=c). gatePanel.tsx builds them, popGatePieces.ts says what
+  // a gate is made of.
   const gm = gateMode(v) ?? (!v && !nx ? 'b' : null);
   const gateChars = gm ? (await (routeLoad ?? loadRoute(mine))).chars : [];
   const gates = gm ? await gatePanel({ mode: gm, chars: gateChars, c, all, gate }) : null;
