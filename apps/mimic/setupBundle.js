@@ -112,7 +112,7 @@ const PRIVATE_KEYS = new Set([
   'wpMeCardBounds', 'wpHudPreBuild',      // window positions
   'wp:settings:draft',                    // an unsaved Settings form
   'uiInspectorWidth',                     // a dialog's width
-  'wpTargetPgFilter', 'wp.damageHistView', // which history filter / view this person last looked at
+  'wpTargetPgFilter', 'wp.damageHistView', 'wp.histSource', // which history filter / view this person last looked at
 ]);
 const PRIVATE_PREFIXES = ['wp-map-', 'wpChatMore:', 'wpChatMoreSet:', 'wpChatHistH:', 'wpChatBrkOff:'];
 

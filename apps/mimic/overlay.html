@@ -137,7 +137,9 @@
   body.hist .histwrap:has(> .histlist:empty){display:block}   /* no fights yet: no empty column */
   body.hist .histlist:empty{display:none}
   .histlist > li{display:block;padding:0;margin:0 0 2px}
-  .hitem{display:block;width:100%;text-align:left;background:rgba(255,255,255,0.03);color:var(--wp-text);
+  /* Mine / Raid, first row of the list (the guild lead, 2026-11-01). Two .tab buttons; the list's hover handshake covers them. */
+  .histlist > li.histsw{display:flex;gap:2px;margin:0 0 3px}
+  .histsw .tab{flex:1;text-align:center;line-height:12px}  .hitem{display:block;width:100%;text-align:left;background:rgba(255,255,255,0.03);color:var(--wp-text);
     border:1px solid rgba(255,255,255,0.08);border-radius:3px;padding:2px 5px;cursor:pointer;font-family:inherit}
   .hitem:hover{border-color:var(--wp-purple)}
   .hitem.on{background:#2a1d3d;border-color:var(--wp-purple)}
@@ -495,6 +497,13 @@
   var HIST_VIEW = 'dps';
   try { if (localStorage.getItem(HIST_VIEW_KEY) === 'tank') HIST_VIEW = 'tank'; } catch (e) {}
   var LIVE_TAB = TAB_MODE === 'tank' ? 'tank' : 'dps';
+  // History's two lists (the guild lead, 2026-11-01: "B, and merged after each fight ends"): Mine = the fights this
+  // machine's own log saw (the ring, as ever); Raid = every fight the guild uploaded tonight, each once, with every
+  // client's numbers merged. The choice is kept across a restart; the Raid pick (by fight id) is not.
+  var HIST_SRC_KEY = 'wp.histSource';
+  var HIST_SRC = 'mine';
+  try { if (localStorage.getItem(HIST_SRC_KEY) === 'raid') HIST_SRC = 'raid'; } catch (e) {}
+  var RAID_SEL = null;     // the Raid fight picked (its id); null follows the newest
   // `idx` is a ring index (newest first): a Trend row opens History on the fight it drew.
   function _setTab(mode, idx) {
     if (TAB_MODE === 'dps' || TAB_MODE === 'tank') LIVE_TAB = TAB_MODE;    // before it changes: where History returns to
@@ -554,9 +563,18 @@
   if (tabHistBtn) tabHistBtn.addEventListener('click', function(){ _setTab(TAB_MODE === 'history' ? LIVE_TAB : 'history'); });
   if (tabTrendBtn) tabTrendBtn.addEventListener('click', function(){ _setTab('trend'); });
   // A row's index is its place in the ring, newest first (0 = the last kill).
+  function _setHistSrc(src) {
+    HIST_SRC = src === 'raid' ? 'raid' : 'mine';
+    RAID_SEL = null; HIST_IDX = 0;
+    try { localStorage.setItem(HIST_SRC_KEY, HIST_SRC); } catch (e) {}
+    tick().catch(function(){});
+  }
   if (histListEl) histListEl.addEventListener('click', function(e){
+    var sw = e.target && e.target.closest ? e.target.closest('.hsw') : null;
+    if (sw) { _setHistSrc(sw.getAttribute('data-src')); return; }
     var b = e.target && e.target.closest ? e.target.closest('.hitem') : null;
     if (!b) return;
+    if (b.getAttribute('data-rid') != null) { RAID_SEL = b.getAttribute('data-rid'); tick().catch(function(){}); return; }
     HIST_IDX = parseInt(b.getAttribute('data-i'), 10) || 0;
     tick().catch(function(){});
   });
@@ -606,6 +624,26 @@
       + ' title="' + esc(h.boss) + ' — ' + stTitle + '">'
       + '<span class="hb">' + esc(h.boss) + (st === 'sent' ? ' …' : '') + '</span>'
       + '<span class="hm">' + dur + agoTxt + ' · <span class="hs-' + st + '">' + st + '</span></span></button></li>';
+  }
+  // The Mine / Raid switch: the first row of the list, in both lists (an empty Mine still has to reach Raid).
+  function histSwitchHtml(src) {
+    return '<li class="histsw">'
+      + '<button type="button" class="tab hsw' + (src === 'mine' ? ' on' : '') + '" data-src="mine" title="Fights this machine saw">Mine</button>'
+      + '<button type="button" class="tab hsw' + (src === 'raid' ? ' on' : '') + '" data-src="raid" title="Every fight the guild uploaded tonight, whether you were in it or not">Raid</button></li>';
+  }
+  // One Raid row (a fight from GET /api/raid-fights): the mob, "m:ss · Nm ago", and how many clients reported it.
+  function raidItemHtml(f, on, nowMs) {
+    var d = Math.round(Number(f.duration_s) || 0);
+    var dur = d ? Math.floor(d / 60) + ':' + String(d % 60).padStart(2, '0') : '—';
+    var ended = Date.parse(f.ended_at);
+    var ago = ended ? Math.max(0, Math.round((nowMs - ended) / 60000)) : null;
+    var agoTxt = ago == null ? '' : (ago < 1 ? ' · now' : (ago < 60 ? ' · ' + ago + 'm ago' : ' · ' + Math.floor(ago / 60) + 'h ago'));
+    var n = Number(f.clients) || 0;
+    return '<li><button type="button" class="hitem' + (on ? ' on' : '') + '" data-rid="' + esc(String(f.id)) + '"'
+      + ' title="' + esc(f.name) + (f.wipe ? ' — wipe' : '') + ' — ' + n + ' client' + (n === 1 ? '' : 's') + ' reported this fight">'
+      + '<span class="hb">' + esc(f.name) + '</span>'
+      + '<span class="hm">' + dur + agoTxt + '</span>'
+      + '<span class="hm">' + n + ' client' + (n === 1 ? '' : 's') + '</span></button></li>';
   }
 
   // ▭ Mini — option B "Me and my neighbours" (the guild vote, 2026-09-17:
@@ -885,6 +923,52 @@
     return _foldPetsIntoOwners(rows);
   }
 
+  // ── History → Raid: the guild's fights of tonight ───────────────────────────
+  // The agent asks the bot (at most every 30 s) and serves the list at GET /api/raid-fights, and one fight's board at
+  // GET /api/raid-fights/board; both are read only while History is on screen with Raid picked. An older bot answers the
+  // list with state 'old_bot': the list says so quietly and the agent does not ask again for ten minutes.
+  var _raidList = { state: 'idle', fights: [] };
+  async function _raidFights(){
+    try {
+      var r = await fetch('http://127.0.0.1:'+PORT+'/api/raid-fights', {cache:'no-store'});
+      if (r.ok) {
+        var j = await r.json();
+        if (j && Array.isArray(j.fights)) _raidList = { state: j.state || 'ok', fights: j.fights };
+      } else if (r.status === 404) _raidList = { state: 'old_agent', fights: [] };
+    } catch (e) { /* keep what was last seen */ }
+    return _raidList;
+  }
+  // A fight's board is asked for once it is picked: kept 5 minutes when it has numbers, 20 seconds when it came back empty.
+  var _raidBoards = {};
+  async function _raidBoard(f){
+    var now = Date.now(), c = _raidBoards[f.id];
+    if (c && now - c.at < (c.board.players.length ? 300000 : 20000)) return c.board;
+    var board = c ? c.board : { players: [], uploaders: 0, total: 0 };
+    try {
+      var r = await fetch('http://127.0.0.1:'+PORT+'/api/raid-fights/board?boss=' + encodeURIComponent(f.name)
+        + '&fight_start=' + encodeURIComponent(f.started_at), {cache:'no-store'});
+      if (r.ok) {
+        var j = await r.json();
+        if (j && Array.isArray(j.players)) board = { players: j.players, uploaders: j.uploaders || 0, total: j.total || 0 };
+      }
+    } catch (e) { /* keep what was last seen */ }
+    if (Object.keys(_raidBoards).length > 80) _raidBoards = {};
+    _raidBoards[f.id] = { at: now, board: board };
+    return board;
+  }
+  // A Raid fight in the shape History's board reads. No local rows: this is the guild's merged view, never this machine's.
+  function _raidEntry(f, board){
+    return { boss: f.name, durationSec: Math.round(Number(f.duration_s) || 0), endedMs: Date.parse(f.ended_at) || 0, local: [],
+             players: board.players, uploaders: board.uploaders || Number(f.clients) || 0, settled: true, raid: true, wipe: !!f.wipe };
+  }
+  function _raidEmptyText(state){
+    return state === 'old_bot' ? 'Raid list needs the newer bot'
+      : state === 'old_agent' ? 'Raid list needs the newer Mimic'
+      : state === 'offline' ? 'Raid list needs this machine signed in'
+      : state === 'error' ? 'Raid list unavailable — trying again'
+      : 'no raid fights yet tonight';
+  }
+
   // ── Poll loop ───────────────────────────────────────────────────────────────
   // The History fights come from their own endpoint, asked for only while that tab is on screen: the
   // ring holds up to 100 and used to ride every /api/state poll (1–2 Hz, every overlay). `rev` is the
@@ -941,23 +1025,34 @@
       // The one place the ring is read. Trend draws from it too (it is the same fights), so it asks
       // here, with the same revision, and only while it is on screen: a mini keeps the scoreboard.
       var _trendShown = TAB_MODE === 'trend' && !document.body.classList.contains('wp-mini');
-      if (TAB_MODE === 'history' || _trendShown) {
+      // History's Raid list (not on a mini, which has no list to pick from) has its own read, and does not touch the ring.
+      var _raidShown = TAB_MODE === 'history' && HIST_SRC === 'raid' && !document.body.classList.contains('wp-mini');
+      var RAIDLIST = null;
+      if (_raidShown) {
+        RAIDLIST = await _raidFights();
+      } else if (TAB_MODE === 'history' || _trendShown) {
         HISTLIST = await _histFights(s);
       }
-      if (TAB_MODE === 'history') {
+      // 100 rows scroll (see .histlist): a rewrite must not throw you back to the top.
+      var _paintList = function(listHtml){
+        if (histListEl && histListEl.__wpHtml !== listHtml) {
+          var _hTop = histListEl.scrollTop;
+          histListEl.innerHTML = listHtml; histListEl.__wpHtml = listHtml;
+          histListEl.scrollTop = _hTop;
+        }
+      };
+      if (_raidShown) {
+        var rfs = RAIDLIST.fights;
+        var rSel = (RAID_SEL != null && rfs.filter(function(x){ return String(x.id) === RAID_SEL; })[0]) || rfs[0] || null;
+        if (rSel) { HIST = _raidEntry(rSel, await _raidBoard(rSel)); boss = HIST.boss; }
+        var _rNow = Date.now();
+        _paintList(histSwitchHtml('raid') + rfs.map(function(f){ return raidItemHtml(f, f === rSel, _rNow); }).join(''));
+      } else if (TAB_MODE === 'history') {
         if (HIST_IDX > HISTLIST.length - 1) HIST_IDX = Math.max(0, HISTLIST.length - 1);
         HIST = HISTLIST[HIST_IDX] || null;
         if (HIST) boss = HIST.boss;
-        if (histListEl) {
-          var _hNow = Date.now();
-          var listHtml = HISTLIST.map(function(h, i){ return histItemHtml(h, i, i === HIST_IDX, _hNow); }).join('');
-          // 100 rows scroll (see .histlist): a rewrite must not throw you back to the top.
-          if (histListEl.__wpHtml !== listHtml) {
-            var _hTop = histListEl.scrollTop;
-            histListEl.innerHTML = listHtml; histListEl.__wpHtml = listHtml;
-            histListEl.scrollTop = _hTop;
-          }
-        }
+        var _hNow = Date.now();
+        _paintList(histSwitchHtml('mine') + HISTLIST.map(function(h, i){ return histItemHtml(h, i, i === HIST_IDX, _hNow); }).join(''));
       }
       document.getElementById('boss-name').textContent = boss ? boss : 'Damage — this fight';
       // Tell the user when an OTHER character's fight is being hidden, so the
@@ -972,7 +1067,10 @@
       var emptyHint = document.getElementById('empty');
       if (emptyHint) {
         var focused = s.activeCharacter || null;
-        emptyHint.textContent = (TAB_MODE === 'history')
+        emptyHint.textContent = _raidShown
+          ? (!RAIDLIST.fights.length ? _raidEmptyText(RAIDLIST.state)
+            : (isTank ? 'damage taken is read from your own log: pick Mine' : 'no numbers for this fight yet'))
+          : (TAB_MODE === 'history')
           ? (HISTLIST.length ? (isTank ? 'no damage taken recorded for that fight' : 'no damage recorded for that fight') : 'no fights yet this session')
           : (_otherCharFight
             ? (focused ? 'waiting on ' + focused + '’s combat…' : 'waiting for combat…')
@@ -1151,7 +1249,7 @@
         // Tank History also names the damage shield this tank dealt back (index 13, kept in History only).
         if (isTank && row[13] > 0) maxHitHtml += ' <span class="dsret" title="damage shield dealt back to the mob">DS ' + fmt(row[13]) + '</span>';
         var cls = 'pbrow' + (isTank ? ' tkrow' : '') + (isMe ? ' me' : '') + (extra ? ' me-extra' : '');
-        var _obsDiffers = !!(GUILD && row[7] !== undefined && row[7] !== d);
+        var _obsDiffers = !!(GUILD && !(HIST && HIST.raid) && row[7] !== undefined && row[7] !== d);   // a Raid fight has no "what this machine saw"
         var barW = topDmg > 0 ? Math.min(100, (d / topDmg) * 100) : 0;
         var petW = (petSum > 0 && d > 0) ? barW * Math.min(1, petSum / d) : 0;
         // One line per pet under its owner once +pet is clicked. The spawn id is
@@ -1236,10 +1334,12 @@
       var hdrEl = document.getElementById('boss-name');
       if (hdrEl && TAB_MODE === 'history' && HIST) {
         hdrEl.textContent = HIST.boss + (isTank
-          ? ' · this machine'   // damage taken is read off this machine's own log: nothing to wait on or merge
+          ? ' · this machine'  // damage taken is read off this machine's own log: nothing to wait on or merge
           : HIST.settled
           ? (GUILD ? ' · ' + (HIST.uploaders || 0) + ' clients' : ' · this machine')   // settled with no guild rows: a restored fight the bot could no longer be asked about
           : ' · settling…');
+        // A Raid fight is the guild's merged view alone: nothing of this machine's is in it, so never "this machine".
+        if (HIST.raid) hdrEl.textContent = HIST.boss + (GUILD ? ' · ' + (HIST.uploaders || 0) + ' clients' : '');
       }
     }catch(e){
       const c=document.getElementById('conn'); c.className='conn bad'; c.textContent='○';

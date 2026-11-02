@@ -611,3 +611,52 @@ describe('Maelin: her flag grants are already caught; nothing else of hers leave
     expect(M._rescanWants("The words of Maelin echo in your mind, 'The Zeks and Solusek are working together.'")).toBe('recital');
   });
 });
+
+describe('the status says when the read is resting for a fight, and how far along it is', () => {
+  const lines = [[2, 'The evidence of Mavuin is the only thing that can save him now.']];
+
+  it('_rescanFile marks ctx.paused while it waits out a live fight, clears it once it reads, and tracks how far into the file it is', async () => {
+    const f = makeLog('eqlog_Progress_pq.proj.txt', lines, 14000);
+    const seen = [];
+    let ctx;
+    let n = 0;
+    // Asked before every chunk: the first answer is "fight on", then "clear" for the rest.
+    const { M } = load({ _liveFightActive: () => { seen.push({ paused: ctx.paused, frac: ctx.frac }); return n++ === 0; } });
+    ctx = { sinceMs: at(30).getTime(), bytes: M.RESCAN_MAX_BYTES, waited: 0, stop: false };
+    await M._rescanFile({ path: f, character: 'Aldenmar' }, ctx, sink());
+    expect(seen.length).toBeGreaterThanOrEqual(4);                          // a log of several chunks
+    expect(seen[0].paused).toBeUndefined();                                 // before the first wait
+    expect(seen[1].paused).toBe(true);                                      // asked again after one rest: still resting
+    expect(seen[1].frac).toBe(0);
+    expect(seen[2].paused).toBe(false);                                     // it has read since
+    expect(seen[2].frac).toBeGreaterThan(0);
+    expect(seen[2].frac).toBeLessThan(1);
+    const fracs = seen.slice(1).map(s => s.frac);
+    expect([...fracs].sort((a, b) => a - b)).toEqual(fracs);                // never goes backwards
+    expect(ctx.paused).toBe(false);
+    expect(ctx.frac).toBe(1);
+  });
+
+  it('GET status: run.paused is true while a fight holds the read, and the run finishes at progress 1 once it clears', async () => {
+    const f = makeLog('eqlog_Aldenmar_pq.proj.txt', lines, 200);
+    let fight = true;
+    const { M } = load({ _rebuildCandidates: () => [{ path: f, character: 'Aldenmar' }], _liveFightActive: () => fight });
+    expect(M._rescanLocalStart({}).status).toBe(202);
+    let st = null;
+    for (let i = 0; i < 300 && !(st && st.run && st.run.paused); i++) { await new Promise(r => setTimeout(r, 10)); st = M._rescanStatus(); }
+    expect(st.run).toMatchObject({ state: 'running', paused: true, progress: 0 });
+    fight = false;
+    await settle(M);
+    expect(M._rescanStatus().run).toMatchObject({ state: 'done', paused: false, progress: 1 });
+  });
+
+  it('a run that has not read a byte yet is at progress 0 and not paused (the overlay shows no percent until it moves)', async () => {
+    const f = makeLog('eqlog_Aldenmar_pq.proj.txt', lines, 200);
+    let release; const gate = new Promise(r => { release = r; });
+    const { M } = load({ fs: { promises: { open: async (p, m) => { await gate; return fs.promises.open(p, m); } } }, _rebuildCandidates: () => [{ path: f, character: 'Aldenmar' }] });
+    M._rescanLocalStart({});
+    expect(M._rescanStatus().run).toMatchObject({ state: 'running', paused: false, progress: 0 });
+    release();
+    await settle(M);
+  });
+});

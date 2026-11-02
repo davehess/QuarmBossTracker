@@ -36696,6 +36696,17 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(_fightHistoryPayload(have)));
       }
+      // History → Raid: the guild's fights of tonight ({state, fights}), and one fight's board (?boss=&fight_start=).
+      // Read only while History is on screen with Raid picked; the bot is asked at most every 30 s (_raidFightsList).
+      if (req.url && (req.url === '/api/raid-fights' || req.url.indexOf('/api/raid-fights?') === 0 || req.url.indexOf('/api/raid-fights/board?') === 0)) {
+        let pathname = '', q = null;
+        try { const u = new URL(req.url, 'http://x'); pathname = u.pathname; q = u.searchParams; } catch { /* */ }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        try {
+          if (pathname === '/api/raid-fights/board') return res.end(JSON.stringify(await _raidFightBoard(q.get('boss'), q.get('fight_start'))));
+          return res.end(JSON.stringify(await _raidFightsList()));
+        } catch { return res.end(JSON.stringify({ state: 'error', fights: [], players: [] })); }
+      }
       // The Guild triggers card's list, read only while the Triggers tab is on screen and only when the
       // `guildTriggersRev` on /api/state moved. Out of /api/state so the overlays do not parse it ~10x/s.
       if (req.url && (req.url === '/api/guild-triggers' || req.url.indexOf('/api/guild-triggers?') === 0)) {
@@ -45685,6 +45696,81 @@ function _startFightHistoryPersistence() {
   _loadFightHistory();
   _resettleRestoredFights();
   _fightsPersist = true;
+}
+
+// ── Raid fights: every fight the guild uploaded tonight (DPS meter → History → Raid) ──
+// The guild lead, 2026-11-01: "B, and merged after each fight ends". The bot's GET /api/agent/raid-fights lists them, each
+// once with every client's numbers merged; a Raid row's board is the same /live-damage call History's "synced" numbers use.
+// Served to the overlay at GET /api/raid-fights and GET /api/raid-fights/board, which the overlay reads only while History
+// is on screen with Raid picked. The bot is asked at most every 30 s; an older bot (404) is not asked again for ten minutes.
+const RAID_FIGHTS_EVERY_MS = 30_000;
+const RAID_FIGHTS_BACKOFF_MS = 10 * 60_000;
+const RAID_FIGHTS_SINCE_MS = 8 * 3600_000;
+const RAID_BOARD_FULL_MS = 5 * 60_000;       // a board that has numbers
+const RAID_BOARD_EMPTY_MS = 30_000;          // one that came back empty, or failed
+const RAID_BOARD_MAX = 60;
+let _raidFights = { nextAt: 0, state: 'idle', fights: [], inflight: null, boards: new Map() };
+function _resetRaidFightsForTest() { _raidFights = { nextAt: 0, state: 'idle', fights: [], inflight: null, boards: new Map() }; }
+// The fields the overlay reads, nothing else.
+function _raidFightRow(f) {
+  return {
+    id: f.id, name: String(f.name || '').slice(0, 80), npc_id: f.npc_id == null ? null : f.npc_id,
+    started_at: f.started_at, ended_at: f.ended_at, duration_s: Number(f.duration_s) || 0, wipe: !!f.wipe,
+    clients: Number(f.clients) || 0, players: Number(f.players) || 0, top_dps: Number(f.top_dps) || 0,
+  };
+}
+async function _raidFightsList(now = Date.now()) {
+  const R = _raidFights;
+  const view = () => ({ state: R.state, fights: R.fights });
+  if (!_canAskGuildForFights()) return { state: 'offline', fights: [] };
+  if (now < R.nextAt && R.state !== 'idle') return view();
+  if (!R.inflight) {
+    R.inflight = (async () => {
+      try {
+        const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+        const since = new Date(now - RAID_FIGHTS_SINCE_MS).toISOString();
+        const r = await fetch(`${base}/raid-fights?since=${encodeURIComponent(since)}`, {
+          headers: { Authorization: `Bearer ${_uploadOpts.token}` },
+        });
+        if (r.status === 404) { R.state = 'old_bot'; R.fights = []; R.nextAt = now + RAID_FIGHTS_BACKOFF_MS; return; }
+        if (!r.ok) { R.state = 'error'; R.nextAt = now + RAID_FIGHTS_EVERY_MS; return; }   // keep the list we had
+        const j = await r.json();
+        if (!j || !Array.isArray(j.fights)) { R.state = 'error'; R.nextAt = now + RAID_FIGHTS_EVERY_MS; return; }
+        R.fights = j.fights.filter(f => f && f.id != null && f.name && f.started_at).slice(0, 60).map(_raidFightRow);
+        R.state = 'ok'; R.nextAt = now + RAID_FIGHTS_EVERY_MS;
+      } catch { R.state = 'error'; R.nextAt = now + RAID_FIGHTS_EVERY_MS; }
+    })().finally(() => { R.inflight = null; });
+  }
+  await R.inflight;
+  return view();
+}
+// One fight's board: { state, boss, players, uploaders, total }. Empty `players` = no numbers for it yet.
+async function _raidFightBoard(boss, startIso, now = Date.now()) {
+  boss = String(boss || '').slice(0, 120);
+  const startMs = Date.parse(startIso);
+  if (!boss || !Number.isFinite(startMs)) return { state: 'bad', boss, players: [], uploaders: 0, total: 0 };
+  const empty = (state) => ({ state, boss, players: [], uploaders: 0, total: 0 });
+  if (!_canAskGuildForFights()) return empty('offline');
+  const key = boss.toLowerCase() + '|' + startMs;
+  const hit = _raidFights.boards.get(key);
+  if (hit && now - hit.at < (hit.board.players.length ? RAID_BOARD_FULL_MS : RAID_BOARD_EMPTY_MS)) return hit.board;
+  let board;
+  try {
+    const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+    const r = await fetch(`${base}/live-damage?boss=${encodeURIComponent(boss)}&fight_start=${encodeURIComponent(new Date(startMs).toISOString())}`, {
+      headers: { Authorization: `Bearer ${_uploadOpts.token}` },
+    });
+    if (!r.ok) board = empty(r.status === 404 ? 'old_bot' : 'error');
+    else {
+      const j = await r.json();
+      board = j && Array.isArray(j.players)
+        ? { state: 'ok', boss, players: j.players.slice(0, 60), uploaders: j.uploaders || 0, total: j.total || 0 }
+        : empty('error');
+    }
+  } catch { board = empty('error'); }
+  if (_raidFights.boards.size >= RAID_BOARD_MAX) _raidFights.boards.delete(_raidFights.boards.keys().next().value);
+  _raidFights.boards.set(key, { at: now, board });
+  return board;
 }
 
 // ── Target history (Target Info's pager and Recent tab) ─────────────────────
@@ -66546,12 +66632,16 @@ async function _rescanFile(file, ctx, sink) {
     let carry = null;
     let workStart = Date.now();
     sink.prev = null; sink.prevPassed = false;
+    const pos0 = pos;
+    ctx.frac = 0;                              // how far into THIS file (the status route's progress)
     while (pos < size && ctx.bytes > 0 && !ctx.stop) {
-      if (_liveFightActive() && ctx.waited < RESCAN_MAX_WAIT_MS) { ctx.waited += 1500; await _rescanSleep(1500); continue; }
+      if (_liveFightActive() && ctx.waited < RESCAN_MAX_WAIT_MS) { ctx.paused = true; ctx.waited += 1500; await _rescanSleep(1500); continue; }
+      ctx.paused = false;
       const want = Math.min(chunk.length, ctx.bytes, size - pos);
       const { bytesRead } = await fh.read(chunk, 0, want, pos);
       if (bytesRead <= 0) break;
       pos += bytesRead; ctx.bytes -= bytesRead;
+      ctx.frac = Math.min(1, (pos - pos0) / Math.max(1, size - pos0));
       const data = carry ? Buffer.concat([carry, chunk.subarray(0, bytesRead)]) : chunk.subarray(0, bytesRead);
       const nl = data.lastIndexOf(10);
       if (nl < 0) { carry = data.length > (1 << 20) ? null : Buffer.from(data); continue; }
@@ -66573,7 +66663,7 @@ async function _rescanFile(file, ctx, sink) {
     }
     if (carry && carry.length && !ctx.stop) { try { _rescanLine(carry.toString('utf8').replace(/\r$/, ''), file.character, ctx.sinceMs, sink); } catch { void 0; } }
     return true;
-  } catch { return false; } finally { try { await fh.close(); } catch { void 0; } }
+  } catch { return false; } finally { ctx.paused = false; try { await fh.close(); } catch { void 0; } }
 }
 // The per-character module state the readers keep (the line before, the last hail, the #popflags time state) is
 // the LIVE tail's: a re-read starts from nothing and puts every entry back, so it can neither borrow the live
@@ -66678,7 +66768,7 @@ async function _rescanRun(req, prog) {
       if (prog) prog.current = f.character;
       if (await _rescanFile(f, ctx, sink)) opened++;
       sink.flush();
-      if (prog) prog.filesDone++;
+      if (prog) { prog.filesDone++; ctx.frac = 0; }
     }
     exportsRead = _rescanPopFlagsExports(files, sink, mode);
     if (prog) prog.exports = exportsRead;
@@ -66793,6 +66883,10 @@ function _rescanStatus() {
       startedAt: p.startedAt, finishedAt: p.finishedAt || null, days: p.days || null,
       files: p.files || 0, filesDone: p.filesDone || 0, excluded: p.excluded || [],
       bytesRead: p.ctx ? RESCAN_MAX_BYTES - p.ctx.bytes : 0,
+      // Waiting out a live fight (the read resumes between pulls), and how far along: 0..1 across the files, or
+      // null before the first file has been sized.
+      paused: p.state === 'running' && !!(p.ctx && p.ctx.paused),
+      progress: p.state === 'done' ? 1 : (p.files && p.ctx ? Math.min(1, ((p.filesDone || 0) + (p.ctx.frac || 0)) / p.files) : null),
       found: p.result ? p.result.found : (p.sink ? p.sink.found : 0),
       logs: p.result ? p.result.logs : 0,
       exports: p.result ? p.result.exports : (p.exports || 0),
@@ -68039,6 +68133,7 @@ module.exports = {
   // Meter History on disk + its own endpoint (2026-10-04).
   FIGHT_HISTORY_MAX, FIGHT_HISTORY_KEEP_MS, _saveFightHistory, _loadFightHistory, _resettleRestoredFights,
   _fightHistoryPayload, _setUploadOptsForTest: (o) => { _uploadOpts = o; },
+  _raidFightsList, _raidFightBoard, _resetRaidFightsForTest,
   // Target Info history (2026-10-19): the last 50 targets, the frame hook, the slain-line hook, the past-mob shape and its endpoint.
   TGT_HIST_MAX, TGT_HIST_KEEP_MS, _tgtHistNoteFromState, _tgtHistNoteSlain, _targetHistoryPayload, _pastMobInfo,
   _saveTargetHistory, _loadTargetHistory, _trimTargetHistory,
