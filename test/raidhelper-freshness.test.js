@@ -151,3 +151,60 @@ describe('the alarm is wired up and latched', () => {
     expect(src).toMatch(/_checkRaidHelperFreshness\(\)\.catch\(/);
   });
 });
+
+// The guild lead, 2026-11-02: "Raid-Helper sync has never landed" had posted dozens of times since August while the
+// mirror was syncing every 30 minutes. Each post was ONE failed database read read as "never synced", and a single
+// healthy check cleared the latch, so the next blip posted again.
+describe('a failed read is no verdict, and a warning is not repeated within a day', () => {
+  it('freshnessSnapshot answers null when a read fails (never "never synced")', async () => {
+    const supabase = require(path.join(ROOT, 'utils', 'supabase.js'));
+    const { freshnessSnapshot } = require(path.join(ROOT, 'utils', 'raidhelperApi.js'));
+    const saved = { select: supabase.select, isEnabled: supabase.isEnabled };
+    try {
+      supabase.isEnabled = () => true;
+      supabase.select = async () => null;
+      expect(await freshnessSnapshot()).toBeNull();
+      supabase.select = async (t) => (t === 'rh_signups' ? [{ synced_at: new Date().toISOString() }] : null);
+      expect(await freshnessSnapshot()).toBeNull();
+    } finally { Object.assign(supabase, saved); }
+  });
+
+  const src = require('node:fs').readFileSync(path.join(ROOT, 'index.js'), 'utf8');
+  const start = src.indexOf("const _RH_FRESH_KEY = 'rh_freshness_alarm';");
+  const fnAt = src.indexOf('async function _checkRaidHelperFreshness() {', start);
+  const end = src.indexOf('\n}\n', fnAt) + 3;
+  function harness(kv, verdict) {
+    const posts = [];
+    const supabase = {
+      isEnabled: () => true,
+      select: async () => (kv.value ? [{ value: kv.value }] : []),
+      upsert: async (_t, rows) => { kv.value = rows[0].value; },
+    };
+    const rh = { isEnabled: () => true, freshnessSnapshot: async () => ({}), assessFreshness: () => verdict() };
+    const client = { channels: { fetch: async () => ({ send: async (m) => posts.push(m) }) } };
+    // eslint-disable-next-line no-new-func
+    const fn = new Function('require', 'client', 'process', 'console',
+      src.slice(start, end) + '\nreturn _checkRaidHelperFreshness;')(
+      (p) => (p.endsWith('raidhelperApi') ? rh : supabase), client,
+      { env: { OFFICER_ALERT_CHANNEL_ID: '1' } }, { log() {}, warn() {} });
+    return { fn, posts };
+  }
+  const stale = { level: 'stale', reason: 'never', ageHours: 0, event: null };
+  const ok = { level: 'ok', reason: null, ageHours: 0, event: null };
+
+  it('alarm, recovery, the same alarm again: posted once', async () => {
+    const kv = {};
+    let v = stale;
+    const { fn, posts } = harness(kv, () => v);
+    await fn(); v = ok; await fn(); v = stale; await fn();
+    expect(posts).toHaveLength(1);
+    expect(kv.value).toMatchObject({ lastKey: 'stale:never' });   // recovery kept what was said, and when
+  });
+
+  it('a day later the same problem is heard again', async () => {
+    const kv = { value: { lastKey: 'stale:never', lastAt: new Date(Date.now() - 25 * 3600_000).toISOString() } };
+    const { fn, posts } = harness(kv, () => stale);
+    await fn();
+    expect(posts).toHaveLength(1);
+  });
+});

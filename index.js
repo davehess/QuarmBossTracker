@@ -1086,6 +1086,7 @@ function startChatClockSkewFlush() {
 // deploy (there is no volume), so an in-process latch would re-alarm on every
 // redeploy — the same trap that posted eleven copies of one raid review.
 const _RH_FRESH_KEY = 'rh_freshness_alarm';
+const _RH_FRESH_REPEAT_MS = 24 * 3600_000;   // the same warning is not repeated within a day, recovery or not
 async function _checkRaidHelperFreshness() {
   const rh = require('./utils/raidhelperApi');
   const supabase = require('./utils/supabase');
@@ -1107,17 +1108,22 @@ async function _checkRaidHelperFreshness() {
   // but neither repeats every 30 minutes.
   const key = verdict.level === 'ok' ? null
             : verdict.level + ':' + (verdict.event?.id || verdict.reason);
+  // A recovery keeps what was last said and when (lastKey / lastAt), so a problem that flaps back within a day
+  // is not announced again: a single healthy check used to clear the latch and the next blip re-posted.
   if (verdict.level === 'ok') {
     if (prev.key) {
       console.log('[raidhelper-freshness] recovered');
       try {
-        await supabase.upsert('bot_kv', [{ guild_id: guildId, key: _RH_FRESH_KEY, value: {},
+        await supabase.upsert('bot_kv', [{ guild_id: guildId, key: _RH_FRESH_KEY,
+          value: { lastKey: prev.key, lastAt: prev.at || null },
           updated_at: new Date().toISOString() }], 'guild_id,key');
       } catch (e) { console.warn('[raidhelper-freshness] state clear failed:', e?.message); }
     }
     return;
   }
   if (prev.key === key) return;                       // already shouted about this one
+  const lastAtMs = Date.parse(prev.lastAt || prev.at || '');
+  if (prev.lastKey === key && Number.isFinite(lastAtMs) && Date.now() - lastAtMs < _RH_FRESH_REPEAT_MS) return;
 
   const msg = verdict.level === 'stale'
     ? (verdict.reason === 'never'

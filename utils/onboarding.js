@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.48': [
+    'Officers stop getting the false "Raid-Helper sync has never landed" warning; a real problem is still reported, once a day at most.',
+  ],
   '4.0.47': [
     'Mimic\'s DPS History can list every fight the guild fought tonight, even ones you were not in.',
     'Target Info trusts the raider who cast a debuff over everyone else\'s view of it, so a slow shows its spell and who cast it.',
