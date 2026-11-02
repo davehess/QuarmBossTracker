@@ -65,7 +65,7 @@ async function postAuditEntry(client, { action, userId, userName, bossId, bossNa
     const sourceText = source ? `\n📍 via ${source}` : '';
     const content    = `${_actionLabel(action)} — **${bossName}** by <@${userId}>${linkText}\n${ts}${sourceText}`;
 
-    const msg = await thread.send({ content, components: noUndo ? [] : [_undoRow(id)] });
+    const msg = await thread.send({ content, components: noUndo ? [] : [_undoRow(id)], allowedMentions: { parse: [] } });
     updateAuditEntryMsgId(id, msg.id);
 
     // Remove undo from the most recent opposing action for this boss

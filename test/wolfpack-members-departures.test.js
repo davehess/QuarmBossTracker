@@ -19,6 +19,7 @@ const idOf = (n) => String(100000000000000000n + BigInt(n));   // snowflakes exc
 function fakeTable(rows) {
   const table = rows.map(r => ({ roles: ['r1'], role_names: ['Raid Pack'], ...r }));
   const updates = [];
+  const revokes = [];
   const swapped = {};
   const patch = (k, fn) => { swapped[k] = supabase[k]; supabase[k] = fn; };
   patch('isEnabled', () => true);
@@ -38,6 +39,9 @@ function fakeTable(rows) {
       .map(r => ({ discord_id: r.discord_id }));
   });
   patch('update', async (t, query, body) => {
+    // A departed member's Mimic sessions are revoked beside the member flip; kept apart from `updates`, which pin
+    // the wolfpack_members writes (test/caller-owns-character.test.js asserts the revoke itself).
+    if (t === 'mimic_sessions') { revokes.push({ query, body }); return []; }
     updates.push({ t, query, body });
     const eq = /^discord_id=eq\.(\d+)$/.exec(query);
     const inn = /^discord_id=in\.\(([\d,]+)\)&is_member=eq\.true$/.exec(query);
@@ -47,7 +51,7 @@ function fakeTable(rows) {
     hit.forEach(r => Object.assign(r, body));
     return hit.map(r => ({ ...r }));
   });
-  return { table, updates, restore: () => { for (const k of Object.keys(swapped)) supabase[k] = swapped[k]; } };
+  return { table, updates, revokes, restore: () => { for (const k of Object.keys(swapped)) supabase[k] = swapped[k]; } };
 }
 
 // A guild whose full fetch returns the given ids (plus optional bot).

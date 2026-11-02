@@ -1694,7 +1694,13 @@
       var r = await fetch('http://127.0.0.1:' + PORT + '/api/local/pop-rescan/status', { cache: 'no-store' });
       var j = await r.json();
       var run = j && j.run;
-      if (j && j.running) { _capSay('reading ' + (run && run.character ? run.character + '\'s ' : '') + 'log…', true); return; }
+      if (j && j.running) {
+        // The agent rests the read while you fight (run.paused); progress is 0..1 once it has sized the first log.
+        if (run && run.paused) { _capSay('paused while you fight — picks up between pulls', true); return; }
+        var pct = run && typeof run.progress === 'number' && run.progress > 0 ? ' ' + Math.min(99, Math.floor(run.progress * 100)) + '%' : '';
+        _capSay('reading ' + (run && run.character ? run.character + '\'s ' : '') + 'log…' + pct, true);
+        return;
+      }
       if (run && run.state === 'error') { _capSay('failed: ' + (run.error || 'could not read the log'), false); return; }
       _capSay('done: ' + ((run && run.found) || 0) + ' flag line(s) read; new flags show here in a moment', false);
     } catch (e) { _capSay('agent offline', false); }

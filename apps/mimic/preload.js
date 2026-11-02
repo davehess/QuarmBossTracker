@@ -1756,6 +1756,14 @@ contextBridge.exposeInMainWorld('mimic', {
   uiStudioListSnapshots:  (character)=> ipcRenderer.invoke('ui-studio-list-snapshots', character),
   uiStudioGetSnapshot:    (params)  => ipcRenderer.invoke('ui-studio-get-snapshot', params),
   uiStudioRestore:        (params)  => ipcRenderer.invoke('ui-studio-restore', params),
+  // Compare-first restore, Keep in sync and This PC (main.js "compare-first restore" block).
+  uiRestorePlan:          (params)  => ipcRenderer.invoke('ui-restore-plan', params),
+  uiRestoreParts:         (params)  => ipcRenderer.invoke('ui-restore-parts', params),
+  uiSyncGet:              ()        => ipcRenderer.invoke('ui-sync-get'),
+  uiSyncSet:              (patch)   => ipcRenderer.invoke('ui-sync-set', patch),
+  uiSyncDismiss:          (character) => ipcRenderer.invoke('ui-sync-dismiss', character),
+  uiThisPc:               ()        => ipcRenderer.invoke('ui-this-pc'),
+  uiThisPcInches:         (value)   => ipcRenderer.invoke('ui-this-pc-inches', value),
   // Visual UI Studio editor — read/write per-character ini bundles for the
   // graphical resolution-rescaling editor. Read returns a raw filename →
   // text map; write takes the edited map and persists with .bak backups.

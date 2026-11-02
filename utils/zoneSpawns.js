@@ -31,6 +31,7 @@ const mobSpecials = require('./mobSpecials');
 const { kosClass } = require('./factionCon');
 const namedBosses = require('./namedBosses');
 const trapSpawns = require('./trapSpawns');
+const splitSpawns = require('./splitSpawns');
 
 const ZONE_RE = /^[a-z0-9_]{1,32}$/;
 const MAP_SELECT = 'bands,segs,bounds';
@@ -86,10 +87,13 @@ const num = (v) => (Number.isFinite(Number(v)) && v != null ? Number(v) : null);
 // table: it answers 503 and nothing is cached.
 async function build(supabase, zone, bosses) {
   const zrows = await supabase.select('eqemu_zone',
-    `short_name=eq.${encodeURIComponent(zone)}&select=short_name,long_name&limit=1`);
+    `short_name=eq.${encodeURIComponent(zone)}&select=short_name,long_name,expansion&limit=1`);
   if (!Array.isArray(zrows)) return { status: 503 };
   if (!zrows.length) return { status: 400 };
   const longName = zrows[0].long_name || zone;
+  // A Planes of Power zone (eqemu_zone.expansion 4): while our guild's thread is in slow mode its kills respawn in
+  // 18 hours (utils/slowMode.js; FB-114). The agent lengthens its own Map timers when the zone says so.
+  const slowZone = num(zrows[0].expansion) === 4;
 
   const spawn2 = await supabase.selectAllPaged('eqemu_spawn2',
     `zone_short=eq.${encodeURIComponent(zone)}&enabled=eq.true&select=id,spawngroup_id,x,y,z,respawntime,variance,pathgrid`, 'id');
@@ -161,6 +165,9 @@ async function build(supabase, zone, bosses) {
   // Trap spots and the server's trap table (utils/trapSpawns.js; the guild lead, 2026-10-23: "maps should show traps
   // as well"). Decoration like the routes: it never throws, and a failed read leaves the layer smaller.
   const { traps, trapOf } = await trapSpawns.build(supabase, zone, spawn2, entriesByGroup, npcs);
+  // Mobs that split on death (utils/splitSpawns.js; the guild lead, 2026-11-01: "some of these mobs split, we should
+  // denote it"). Read from the server's death scripts; decoration like the traps, so a failed read means no marks.
+  const splitMap = await splitSpawns.build(supabase, zone);
   const points = [];
   for (const sp of [...spawn2].sort((a, b) => a.id - b.id)) {
     const entries = (entriesByGroup.get(sp.spawngroup_id) || [])
@@ -171,7 +178,7 @@ async function build(supabase, zone, bosses) {
       if (!npc) continue;
       const name = cleanName(npc.name);
       const helper = HELPER_BODYTYPES.has(num(npc.bodytype));
-      list.push({
+      const row = {
         name,
         level: num(npc.level),
         chance: num(e.chance),
@@ -186,7 +193,17 @@ async function build(supabase, zone, bosses) {
         fac: !helper && num(npc.npc_faction_id) > 0 ? num(npc.npc_faction_id) : 0,
         assist: !helper && num(npc.assistradius) > 0 ? num(npc.assistradius) : null,
         pf: helper ? 0 : (pfOf.get(num(npc.npc_faction_id)) || 0),   // its primary faction: a key into the body's `factions`
-      });
+      };
+      // A mob that splits when it dies: what it breaks into and how many ({ into: [{ name, min, max }], at?, note? };
+      // max null = unknown). Only on the rows that split, so every other row keeps its shape; the badge lets an older
+      // Mimic that knows nothing of `splits` still spell it out in the hover card.
+      // A `unique` entry is a placeholder bringing up its named on death, not a split: it rides along without the badge.
+      const splits = splitSpawns.splitsFor(splitMap, npc);
+      if (splits) {
+        row.splits = splits;
+        if (splits.into.some(i => !i.unique)) row.badges.push('splits');
+      }
+      list.push(row);
     }
     if (!list.length) continue;   // a point nobody spawns at is not a point
     const mirrored = num(sp.respawntime);
@@ -246,7 +263,7 @@ async function build(supabase, zone, bosses) {
   const m = mrows[0];
   const map = m ? { bands: m.bands, segs: m.segs, bounds: m.bounds } : null;
 
-  return { status: 200, degraded, payload: { zone, long_name: longName, generated_at: new Date().toISOString(), points, map, grids, factions, spawngroups, ...(traps ? { traps } : {}) } };
+  return { status: 200, degraded, payload: { zone, long_name: longName, generated_at: new Date().toISOString(), points, map, grids, factions, spawngroups, ...(traps ? { traps } : {}), ...(slowZone ? { slow_zone: true } : {}) } };
 }
 
 // A weak validator over the CONTENT (generated_at left out) so a rebuild of unchanged data keeps its ETag

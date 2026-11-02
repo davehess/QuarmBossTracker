@@ -573,11 +573,12 @@
     return h + 'h' + String(m % 60).padStart(2, '0') + 'm';
   }
   // The right-hand list's words: "up in 3m-5m" while red, "up now-2m" inside the window, "UP" once it must be.
+  // 🐢 = a slow-mode kill: 18 hours from death (FB-114; the agent's _mapMakeTimer sets t.slow).
   function timerText(t, now) {
-    var st = timerState(t, now);
-    if (st === 'up') return 'UP';
-    if (st === 'wait') return 'up in ' + fmtDur(t.earliest - now) + '–' + fmtDur(t.latest - now);
-    return 'up now–' + fmtDur(t.latest - now);
+    var st = timerState(t, now), turtle = t.slow ? '🐢 ' : '';
+    if (st === 'up') return turtle + 'UP';
+    if (st === 'wait') return turtle + 'up in ' + fmtDur(t.earliest - now) + (t.latest > t.earliest ? '–' + fmtDur(t.latest - now) : '');
+    return turtle + 'up now–' + fmtDur(t.latest - now);
   }
   // "Up · seen": a pinned mob was seen alive on a point. Hover words: "seen alive 2m ago · spawn #812 · by Corvale".
   function seenText(s, now) {
@@ -703,9 +704,24 @@
     if (/enrage/.test(k)) return '💢';
     if (/flurry/.test(k)) return '≋';
     if (/reverse_slow/.test(k)) return '⇅';
+    if (k === 'splits') return '⑂';   // splits when it dies (the guild lead, 2026-11-01); the card says into what
     // Everything else (dual_wield, triple_attack, magical…) is spelled out in the hover card instead:
     // a first-letter glyph per ability turns every dot into alphabet soup.
     return '';
+  }
+  // What a mob turns into when it dies (the bot's `splits`, read from the server's death scripts): "⑂ splits into 3×
+  // A Phoenix Gustlet", "⑂ at 50% HP splits into …"; a placeholder that brings up its named reads "on death brings up X".
+  function splitText(s) {
+    if (!s || !Array.isArray(s.into) || !s.into.length) return '';
+    function n(e) {
+      var c = e.max == null ? (e.min > 1 ? e.min + '+' : '') : e.min === e.max ? String(e.min) : (e.min ? e.min + '–' : 'up to ') + e.max;
+      return (c && c !== '1' ? c + '× ' : '') + e.name;
+    }
+    var split = s.into.filter(function (e) { return !e.unique; }), named = s.into.filter(function (e) { return e.unique; });
+    var out = [];
+    if (split.length) out.push('⑂ ' + (s.at ? 'at ' + s.at + ' ' : '') + 'splits into ' + split.map(n).join(', '));
+    if (named.length) out.push('on death may bring up ' + named.map(function (e) { return e.name; }).join(', '));
+    return out.join(' · ');
   }
   function badgeWords(bs) {
     return (bs || []).filter(function (b) { return !badgeGlyph(b) && !/raid/.test(b); })
@@ -3433,6 +3449,8 @@
       card.appendChild(row);
       var words = badgeWords(n.badges);
       if (words) card.appendChild(el('div', 's', words));
+      var sp = splitText(n.splits);
+      if (sp) card.appendChild(el('div', 's', sp));
     });
     if ((p.npcs || []).length > 8) card.appendChild(el('div', 's', '+' + ((p.npcs || []).length - 8) + ' more'));
     var t = S.timerBy[pid], sn = S.seenBy[pid];

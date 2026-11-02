@@ -169,19 +169,76 @@ next touch one rather than assuming a missing row means a missing doc.
   `encounter_threat_graph` is not archived on Tower and stays in Supabase; its watermark was not read (the RPC timed out), so the first
   nights may clear less than the backlog. Copy method for Tower's file: `docs/HANDOFF-tower-archive-catchup.md`.
 
-- **🧪 raidmimic.com landing `?v=c` "Story stage" and `?v=d` "Chapters" (web beta `2b01c1be`, no version bump, 2026-11-01).** The guild
-  lead found the page "underwhelming": video first, menus appearing as it plays, the mimic icon when the chest turns, sign-up with Discord at
-  the end, "start for free, unlock pro with guild or individual plan", far fewer words, captions not cut off, no bard for casts-left, and the
-  Canvas, UI Studio, sync and replay/spectator shown. `?v=c` reveals icon, menu and end card on the video's timeline; `?v=d` is a chapter rail
-  that seeks the video and swaps a feature card, sign-up pinned. Pricing: Free / Pro Guild $25 a month / Pro Individual "price at launch"
-  (unset). Cue times measured on the 81.5 s video (`web/lib/raidmimicStory.ts`). New shots via `scripts/raidmimic-shots/shoot-canvas.mjs`,
-  `shoot-studio.mjs`, `shoot-replay.mjs`. Previews: https://b.wolfpack.quest/raidmimic?v=c and https://b.wolfpack.quest/raidmimic?v=d.
-  Awaiting the guild lead's pick, and the individual price. Test: `test/raidmimic-landing-variants.test.js`.
-- **🧪 raidmimic.com landing `?v=b`: sign in first (web beta `c10bf0eb`, no version bump, 2026-10-31; DECISIONS §492 pick A).** The front
-  door as picked: pitch and story video on the left, a sign-in card on the right (Discord, identify only, goes to `/guilds`, a guest-code
-  link), three doors under it (raider in a hosted guild, officer starting one, solo player), today's page below the fold. The default
-  render is untouched. Preview: https://b.wolfpack.quest/raidmimic?v=b (the raidmimic hosts drop the query). Sign-in completes on the
-  raidmimic hosts since web 2.1.79 (below). Awaiting the guild lead's yes to promote. Test: `test/raidmimic-landing.test.js`.
+- **🧪 DPS History Raid list + the debuffer's landing wins (bot 4.0.47 `main`, agent on beta, 2026-11-02, §513 §514).** GET
+  `/api/agent/raid-fights` (guild fights of the last 8 h, each once, merged; 20 s cache) feeds History's Mine / Raid switch; a
+  Raid row's board is `/live-damage?boss=&fight_start=`. `buff_casts.self_cast` (migration 20261102090000, applied) marks a
+  caster's own landing; target-buffs serves `by_caster` and lets it beat a bystander's row of the same cast. Agent half on beta:
+  the slow badge and debuff list take the caster's landing over emote guesses, and hour-off landings are put back or dropped.
+  Tests `test/raid-fights-route.test.js`, `test/buff-casts-self-cast.test.js` (main), `test/raid-fights-history.test.js`,
+  `test/debuffer-precedence.test.js` (beta).
+- **✅ Agent 4.0.53: a log a whole hour off the PC's clock is put back on the hour (beta + main, 2026-11-02, §512).** The first raid after
+  the clocks went back dropped about a third of the projection hails (log times exactly 1 h early or late, measured in `pop_flags`).
+  `_fixLogClock` in the live tail rewrites a log's timestamps once 5 live lines in a row sit on a 1–2 hour step. Test
+  `test/log-clock-shift.test.js`. Open: why some clocks were off (client left running across the change?); a bot-side fallback for
+  agents still on 4.0.52.
+- **✅ Mimic 3.0.6 stable (agent 4.0.52), 2026-11-01, on the guild lead's "let's push beta to main".** Graduated by file from beta:
+  `apps/mimic/**`, `packages/wolfpack-logsync/**`, their tests, `scripts/sync-piper-voices.js`, a PoP-flags fixture and two `.gitignore`
+  lines. Carries the per-character overlays, UI Studio compare-first restore / Keep in sync / This PC, slow-mode and split marks on the
+  Map, alerts-window lock, the Relv/Falto counter, guild colours, and FB-105/107/108/110/111/112/114. Beta-only website previews
+  (the /about `?v=b` / `?v=c` guild-first pages) stay on beta awaiting a pick. Beta re-parked at 3.0.7. Roadmap: web 2.1.90.
+- **✅ Map: slow mode 18 h in Planes of Power, and mobs that split (bot 4.0.46 `main`, Mimic 3.0.6 stable, 2026-11-01,
+  §511, FB-114).** Inside the bot's slow-mode window a kill on a Planes of Power spawn point gets an 18-hour Map timer (🐢), judged by
+  the kill's time; GET `/api/agent/slow-mode` serves the window, zone-spawns flags `slow_zone`. Mobs that split on death are read
+  from the server's death scripts (`utils/splitSpawns.js`, 97 of 144 sampled death scripts split) and carried as `splits` on the
+  NPC row with a `splits` badge; the Map shows them. Open: which mobs the guild lead saw split (none of Tactics, Tranquility or
+  Valor's scripts split on death); whether slow mode should spare raid targets (the server change it likely rides says so).
+  Tests: `test/split-spawns.test.js`, `test/slow-mode-map-route.test.js`, `test/spawn-map.test.js` (slow mode).
+- **✅ UI Studio: compare before restoring, Keep in sync, This PC (Mimic beta `d494250d` + bot 4.0.45, stable in Mimic 3.0.6, 2026-11-01, §510).**
+  Settings → UI Studio → 🔄 Backups → ↩ Restore now opens a comparison instead of writing everything: seven parts (window layout,
+  hotkeys, socials, spell sets, keybinds, Zeal options, other character settings), what differs in each, Keep mine / Backup, and a
+  before/after picture of the layout fitted to this screen. Only the chosen parts are written, merged section by section
+  (`apps/mimic/uiRestorePlan.js`); a write waits for the character to camp (keybinds: for every EverQuest to close) and survives a
+  restart (`kind:'restore'` in the after-logout queue). Keep in sync (`apps/mimic/uiSync.js`, off by default): back up on camp
+  (passwords left out, skipped when unchanged; the bot keeps the newest 5 automatic backups per character and computer), and a newer
+  backup from another PC is offered (notification → Settings), applied while signed out, or ignored. This PC: EQ's resolution, the
+  screens, an optional screen size, and a suggested overlay size with Apply; backups now record EQ's own resolution. Checked the
+  same day against a member's real files: keybinds are `eqclient.ini [KeyMaps]` (`KEYMAP_<ACTION>[_2]=<key>`); Zeal also keeps a
+  shared `[Zeal]` and per-character `[<Char>]` TellWindows sections in `eqclient.ini`, and `zeal.ini` holds a bare TellWindows-only
+  `[<Char>]` for every character the PC has seen; the Zeal part covers both (Mimic beta `9769e05d`, pushed under a stale web commit
+  message by mistake; the code is the Zeal change). Open: the guild lead to try it on beta before it goes stable.
+  Tests: `test/ui-restore-plan.test.js`, `test/ui-sync.test.js`, `test/ui-auto-backup-prune.test.js`.
+- **✅ raidmimic.com home page: the story stage is the page (C; web 2.1.87, `main`, 2026-11-01; "ship it" from the guild lead; was 🧪 `?v=c` "Story stage" /
+  `?v=d` "Chapters", web beta `2b01c1be`..`184f518e`).** The guild lead found the old page "underwhelming" and picked C: *"start truly as the only thing on
+  the page, fit is the video, fade it into the background color. Slowly add the logos as we go into the video. Skip/hide at the bottom."* First load is only
+  the 81.5 s story video, full viewport, its edges fading into the page colour; the icon and name arrive at 10.8 s, the menu and the Overlays mark at 23.0 s,
+  Calls / Loot / Hail marks at 29.3 / 49.4 / 61.0 s, the Discord sign-up card at 81.5 s (cue times in `web/lib/raidmimicStory.ts`). Below it: five feature
+  pictures (Canvas, UI Studio, sync, replay and Zeal and UI packs), a Raid management section for guild leaders, pricing (Free / Pro Guild $25 a month / Pro
+  Individual "price at launch", unset), the register band, footer. The `?v=b` "sign in first", `?v=c` and `?v=d` previews and the old "Pick your path"
+  page and parts (`PathsLayout`, `MotionStage`, `ClipTabs`, `MascotHero`...) are deleted. Promoted by file, not by merge: the beta colour-token layers and the
+  replay-capture harness (`scripts/raidmimic-shots/replay/`, it builds against beta-only `tokens.css`) were NOT brought; `globals.css` took only the
+  `.rm-stage` / `.rm-frame` classes. Test: `test/raidmimic-landing.test.js`, `test/raidmimic-landing-variants.test.js`.
+- **✅ Register your guild: `https://raidmimic.com/register` (web 2.1.87, `main`, `[beta]` page; migration `20261101070000_guild_interest.sql` applied).**
+  One card, no sign-in: guild, game / server chips, raider slider, raid-night toggles, DKP tool, how you heard, optional Discord name; "Count us in", then a
+  thank-you with Download Mimic and the setup guide. Table `guild_interest` (RLS on, no policies, service role only); the action reuses the anonymous-feedback
+  cleaners and the one-day salted ip hash, 3 an hour. Officers read `https://wolfpack.quest/admin/interest` (plain text; it is untrusted, AFB rule), a card on the
+  admin landing. Every "Register interest" link points at the form. `b.raidmimic.com` is a raidmimic host (noindex, robots Disallow all, canonical stays
+  `https://raidmimic.com`). Test: `test/guild-interest.test.js`, `test/raidmimic-beta-host.test.js`.
+- **✅ Departed-member pop-up and the lock-out-a-former-member fix (web 2.1.87, `main`; migration `20261101060000_end_member_web_sessions.sql` applied).** The guild
+  lead, after a member was banned from the Discord: *"i can't kick him from the guild or invalidate his session"*. `/admin/access` can lock a member who has left
+  (the dropdown gains "Left the Discord recently"), locking ends their website sign-ins (`end_member_web_sessions`, service role only), and officers get a
+  pop-up on the home page and `/admin` listing who is out of the Discord but still has a web login or live Mimic session, each with Lock out. Test:
+  `test/departed-members.test.js`.
+- **✅ Officer review queue: guild members only, one-line banner, top 10 (web 2.1.87, `main`; migration `20261101120000_admin_queue_guild_chat_only.sql` applied).**
+  Every list is scoped to the membership predicate (alts follow their main); chat speakers come from /gu only (`/rs` carries other guilds): 194 instead of 465 over
+  14 days. The banner is one line behind a fold; the page shows each section's top 10 with "Show all N". Test: `test/admin-queue-scope.test.js`.
+- **✅ Raid Mimic privacy, terms and refunds; terms acceptance; AI label; contact (web 2.1.87, `main`, `[beta]` pages; migration `20261101130000_terms_acceptances.sql`
+  applied).** `https://raidmimic.com/privacy`, `/terms`, `/refunds` (also under `wolfpack.quest/raidmimic/...`, and `https://wolfpack.quest/terms`). Both sign-in callbacks
+  record the accepted terms version, fail-open. "Animated with AI tools" on the story video. Words in `web/lib/legal.ts`. ⏳ `CONTACT_EMAIL` hello@raidmimic.com must still
+  be created. Test: `test/legal-pages.test.js`.
+- **✅ Self-serve "Download my data" and "Delete my account" (web 2.1.87, `main`; migration `20261101140000_member_self_delete.sql` applied).** A "Your data" section on
+  `https://wolfpack.quest/me#your-data` and on raidmimic.com/guilds: a streamed JSON file of the person's own rows (session identity only, explicit columns, guild-scoped,
+  one download per 10 minutes) and a typed-DELETE removal (`member_self_delete` + `member_self_unlink_batch`; the guild's raid rows stay, unlinked; a sole guild owner is
+  refused). The `/me` hub layout (`?v=b`) is beta-only and was not brought. Test: `test/self-serve-data.test.js`.
 - **🧪 Token layers: one colour set under the site, the overlays and the dashboard (web beta `99f5092c`, Mimic beta `aeaceec5`, agent 4.0.50 beta; 2026-10-31; DECISIONS §488 pick C; `docs/DESIGN-theming.md` §7 steps 1 to 3).**
   Nothing changes on screen, by proof: the site's built CSS diffs equal; 13 overlay stand-in screenshots are 0 px apart; 15 dashboard tabs
   render byte-identical PNGs. `web/app/tokens.css` + the Tailwind mapping, `apps/mimic/theme.css` (25 windows; `command.html` deliberately

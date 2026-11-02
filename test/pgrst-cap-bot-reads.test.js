@@ -409,6 +409,11 @@ function loadServerPanel(sb, extraInjected = {}) {
   ], {
     require: realRequireWith(sb),
     mimicLink: { requireAgentAuth: async () => ({ discord_id: 'u01' }) },
+    // These cases are about row paging: the caller owns every character and login asked for. The ownership rule
+    // itself is tested in test/caller-owns-character.test.js.
+    _callerOwnNames: async (_who, names) => names.map(n => String(n).trim()).filter(Boolean),
+    _callerMayActAs: async () => true,
+    _loginIsCallers: async () => true,
     ...extraInjected,
   }, lootCache + '\n');
 }

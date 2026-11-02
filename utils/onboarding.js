@@ -29,6 +29,19 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.47': [
+    'Mimic\'s DPS History can list every fight the guild fought tonight, even ones you were not in.',
+    'Target Info trusts the raider who cast a debuff over everyone else\'s view of it, so a slow shows its spell and who cast it.',
+  ],
+  '4.0.46': [
+    'Mimic\'s Map learns which mobs split when they die, and when slow mode is on, so Planes of Power respawns can show 18 hours.',
+  ],
+  '4.0.45': [
+    'Mimic beta can back up your UI each time you camp; the site keeps the newest five of those per character and computer.',
+  ],
+  '4.0.44': [
+    'Bids and uploads now only work for your own characters. Mimic stops working for people who leave the Discord.',
+  ],
   '4.0.43': [
     'Mimic can now pick up your guild\'s colours: once officers set a guild theme on the website, the bot hands it to Mimic at sign-in and keeps it current.',
   ],

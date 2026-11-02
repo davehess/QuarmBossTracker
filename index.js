@@ -5022,6 +5022,8 @@ async function _handleAgentChat(req, res) {
       }
       continue;
     }
+    // Guild chat is NOT roster-gated (2026-11-01): measured over 14 days, 29 of 194 real /gu speakers (7% of lines)
+    // were guildmates on characters the roster did not list yet, and the gate would have dropped them.
 
     // Dedup: same speaker + text = multiple parsers saw the same line.
     // CRITICAL: normalize the text in the key, because the same in-game line
@@ -5882,9 +5884,9 @@ async function _handleAgentPvp(req, res) {
         // content + Howl flag; the send runs off the agent's clock below.
         const _ch = ch, _content = content, _howl = isWpKill || isWpDeath;
         discordJobs.push(async () => {
-          const sent = await _ch.send({ content: _content });
+          const sent = await _ch.send({ content: _content, allowedMentions: { parse: [] } });
           // Attach Howl button only when Wolf Pack is involved (either side).
-          if (_howl) await sent.edit({ content: _content, components: [buildHowlRow(sent.id)] });
+          if (_howl) await sent.edit({ content: _content, components: [buildHowlRow(sent.id)], allowedMentions: { parse: [] } });
         });
         posted++;
       }
@@ -6500,10 +6502,11 @@ async function _handleAgentBossKill(req, res) {
         discordJobs.push(async () => {
           const ch = await _raidChatDestination(client, raidChId);   // the raid / event thread, or nothing
           if (ch) {
-            await ch.send(
-              `⚔️ **${character}** of <${guild}> killed **${boss.name}** in ${zone} — ` +
-              `next spawn ${discordRelativeTime(nextSpawn)} ✅`
-            );
+            await ch.send({
+              content: `⚔️ **${character}** of <${guild}> killed **${boss.name}** in ${zone} — ` +
+                `next spawn ${discordRelativeTime(nextSpawn)} ✅`,
+              allowedMentions: { parse: [] },
+            });
           }
         });
         // The one-time Vex Thal celebration rides the same kill, right after.
@@ -6524,11 +6527,12 @@ async function _handleAgentBossKill(req, res) {
         discordJobs.push(async () => {
           const ch = await _raidChatDestination(client, raidChId);   // the raid / event thread, or nothing
           if (ch) {
-            await ch.send(
-              `⚔️ **${character}** of <${guild}> killed **${bossName}** in ${zone} ` +
-              (offBoard ? `*(no lockout — not on the timer board)*`
-                        : `*(not in timer database — use \`/addboss\` to add it)*`)
-            );
+            await ch.send({
+              content: `⚔️ **${character}** of <${guild}> killed **${bossName}** in ${zone} ` +
+                (offBoard ? `*(no lockout — not on the timer board)*`
+                          : `*(not in timer database — use \`/addboss\` to add it)*`),
+              allowedMentions: { parse: [] },
+            });
           }
         });
       }
@@ -6937,6 +6941,93 @@ async function _householdRootDiscordId(discordId) {
       `discord_id=eq.${encodeURIComponent(id)}&select=discord_id,merged_into_discord_id&limit=1`);
     return String((Array.isArray(me) && me[0]?.merged_into_discord_id) || id);
   } catch { return id; }
+}
+
+// ── Acting as a character ───────────────────────────────────────────────────────────────────────────────────
+// Rule: a request that writes for, or reads the private data of, a named character is for the caller's OWN
+// characters only. The caller may act as a character when
+//   (a) the character's owner (characters.discord_id, else its main's owner via main_name) is in the caller's
+//       household (_householdDiscordIds), or
+//   (b) the character has NO owner linked yet and the caller's own Mimic has uploaded as it (agent_upload_stats,
+//       or an upload still waiting in the one-minute stat buffer) — an unlinked alt a raider really plays.
+// Fails closed: a name that is not letters only, or a lookup that fails, is "no". Officers get no bypass.
+const _CHAR_NAME_RX = /^[A-Za-z]{2,24}$/;
+const _charOwnerCache = new Map();    // lowercase name → { at, owner }   (owner: discord id string, or null = unlinked)
+const _uploadedAsCache = new Map();   // `${callerId}|${lowercase name}` → at   (positive answers only)
+const _ACT_AS_CACHE_MS = 60 * 1000;
+async function _characterOwnerDiscordId(name) {
+  const key = String(name || '').trim().toLowerCase();
+  if (!_CHAR_NAME_RX.test(key)) return undefined;
+  const hit = _charOwnerCache.get(key);
+  if (hit && Date.now() - hit.at < _ACT_AS_CACHE_MS) return hit.owner;
+  const supabase = require('./utils/supabase');
+  const guild = encodeURIComponent(supabase.guildId());
+  const rows = await supabase.select('characters',
+    `name=ilike.${key}&select=name,main_name,discord_id&guild_id=eq.${guild}&limit=1`).catch(() => null);
+  if (!Array.isArray(rows)) return undefined;   // the read failed: not cached, not "unlinked"
+  let owner = rows[0]?.discord_id || null;
+  if (!owner && rows[0]?.main_name && _CHAR_NAME_RX.test(String(rows[0].main_name))) {
+    const root = await supabase.select('characters',
+      `name=ilike.${String(rows[0].main_name).toLowerCase()}&select=discord_id&guild_id=eq.${guild}&limit=1`).catch(() => null);
+    if (!Array.isArray(root)) return undefined;
+    owner = root[0]?.discord_id || null;
+  }
+  const value = owner ? String(owner) : null;
+  if (_charOwnerCache.size > 5000) _charOwnerCache.clear();
+  _charOwnerCache.set(key, { at: Date.now(), owner: value });
+  return value;
+}
+async function _householdUploadedAs(household, name) {
+  const lc = String(name).toLowerCase();
+  for (const r of _uploadStatBuf.values()) {
+    if (r.uploaded_by && household.has(String(r.uploaded_by)) && String(r.character || '').toLowerCase() === lc) return true;
+  }
+  const supabase = require('./utils/supabase');
+  const guild = encodeURIComponent(supabase.guildId());
+  const ids = [...household].map(encodeURIComponent).join(',');
+  const rows = await supabase.select('agent_upload_stats',
+    `guild_id=eq.${guild}&character=ilike.${lc}&uploaded_by_discord_id=in.(${ids})&select=character&limit=1`).catch(() => null);
+  return Array.isArray(rows) && rows.length > 0;
+}
+async function _callerMayActAs(identity, characterName) {
+  const callerId = identity && identity.discord_id ? String(identity.discord_id) : '';
+  const name = String(characterName || '').trim();
+  if (!callerId || !_CHAR_NAME_RX.test(name)) return false;
+  const memoKey = callerId + '|' + name.toLowerCase();
+  const seen = _uploadedAsCache.get(memoKey);
+  const owner = await _characterOwnerDiscordId(name);
+  if (owner === undefined) return false;
+  const household = await _householdDiscordIds(callerId);
+  if (owner) return household.has(owner);
+  if (seen && Date.now() - seen < _ACT_AS_CACHE_MS) return true;
+  if (!(await _householdUploadedAs(household, name))) return false;
+  if (_uploadedAsCache.size > 5000) _uploadedAsCache.clear();
+  _uploadedAsCache.set(memoKey, Date.now());
+  return true;
+}
+// The names in `names` the caller may act as (case-preserving, de-duplicated, order kept).
+async function _callerOwnNames(identity, names) {
+  const out = []; const seen = new Set();
+  for (const n of names) {
+    const k = String(n || '').trim().toLowerCase();
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    if (await _callerMayActAs(identity, n)) out.push(String(n).trim());
+  }
+  return out;
+}
+// An OpenDKP login is the caller's own when a bid under it was placed as one of the caller's characters. The bot
+// stores no login per member, so the mirror's bid rows (user_login + character_name) are the only link; no match
+// means the login is ignored and only the caller's characters scope the answer.
+async function _loginIsCallers(login, ownNames) {
+  if (!/^[A-Za-z0-9._@+-]{1,64}$/.test(login) || !ownNames.length) return false;
+  const supabase = require('./utils/supabase');
+  const names = ownNames.filter(n => _CHAR_NAME_RX.test(n)).slice(0, 26)
+    .map(n => `character_name.ilike.${n.toLowerCase()}`).join(',');
+  if (!names) return false;
+  const rows = await supabase.select('opendkp_auction_bids',
+    `user_login=ilike.${encodeURIComponent(login)}&or=(${names})&select=auction_id&limit=1`).catch(() => null);
+  return Array.isArray(rows) && rows.length > 0;
 }
 
 // Assemble pending web-staged UI (socials/hotbutton) edits for a character list.
@@ -8005,8 +8096,10 @@ async function _handleAgentServerPanel(req, res) {
       // panel already knows how to render (it falls back to the mirror "est."
       // number). A stale figure is returned WITH its age so the panel can say
       // how old it is rather than quietly present it as live.
-      const main  = (url.searchParams.get('main') || character || '').trim();
-      const chars = (url.searchParams.get('characters') || '').split(',').map(x => x.trim()).filter(Boolean);
+      // Only the caller's own characters scope the answer; any other name is dropped without a word.
+      const main  = (await _callerOwnNames(identity, [(url.searchParams.get('main') || character || '').trim()]))[0] || '';
+      const chars = await _callerOwnNames(identity,
+        (url.searchParams.get('characters') || '').split(',').map(x => x.trim()).filter(Boolean).slice(0, 40));
       const family = chars.length ? chars : (main ? [main] : []);
       let out = { ok: false, reason: 'unavailable' };
       try {
@@ -8051,6 +8144,11 @@ async function _handleAgentServerPanel(req, res) {
       // the caller's characters (roster cached 1h). ZERO extra upstream calls
       // beyond the shared _panelAuctions cache.
       if (!character) { res.writeHead(400); return res.end(JSON.stringify({ error: 'character required' })); }
+      // Bids shown are the caller's own: another character's name answers with an empty list.
+      if (!(await _callerMayActAs(identity, character))) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ key, character, scope: 'currently-open auctions', updated_at: new Date().toISOString(), bids: [] }));
+      }
       try {
         const chars = await _panelCharacters().catch(() => []);
         const myCharIds = new Set(
@@ -8175,8 +8273,14 @@ async function _handleAgentServerPanel(req, res) {
       // their own rows, and the family csv is what scopes it, the same way
       // bid-history below is scoped.
       const famRaw = (url.searchParams.get('characters') || character || '').trim();
-      const fam = famRaw.split(',').map(s => s.trim()).filter(Boolean).slice(0, 40);
-      if (fam.length === 0) { res.writeHead(400); return res.end(JSON.stringify({ error: 'characters required' })); }
+      const famAsked = famRaw.split(',').map(s => s.trim()).filter(Boolean).slice(0, 40);
+      if (famAsked.length === 0) { res.writeHead(400); return res.end(JSON.stringify({ error: 'characters required' })); }
+      // Only the caller's own characters; the rest are dropped without a word.
+      const fam = await _callerOwnNames(identity, famAsked);
+      if (fam.length === 0) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ key, characters: [], prefs: [], updated_at: new Date().toISOString() }));
+      }
       const inList = fam.map(n => `"${n.replace(/"/g, '')}"`).join(',');
       const rows = await supabase.select('character_bid_prefs',
         `guild_id=eq.${encodeURIComponent(guildId)}&character=in.(${encodeURIComponent(inList)})`
@@ -8191,10 +8295,18 @@ async function _handleAgentServerPanel(req, res) {
       // ?login=<opendkp username> additionally scopes bid-history items (that
       // mirror records the account that placed each bid).
       const famRaw = (url.searchParams.get('characters') || character || '').trim();
-      const login  = (url.searchParams.get('login') || '').trim();
-      const family = famRaw.split(',').map(s => s.trim()).filter(Boolean);
-      if (!family.length && !login) { res.writeHead(400); return res.end(JSON.stringify({ error: 'characters or login required' })); }
-      const ck = 'bid-history:' + login.toLowerCase() + '|' + family.map(s => s.toLowerCase()).sort().join(',');
+      const loginAsked  = (url.searchParams.get('login') || '').trim();
+      const familyAsked = famRaw.split(',').map(s => s.trim()).filter(Boolean).slice(0, 40);
+      if (!familyAsked.length && !loginAsked) { res.writeHead(400); return res.end(JSON.stringify({ error: 'characters or login required' })); }
+      // Scoped to the caller: their own characters, and a login only when it is theirs (_loginIsCallers).
+      const family = await _callerOwnNames(identity, familyAsked);
+      const login  = loginAsked && await _loginIsCallers(loginAsked, family) ? loginAsked : '';
+      if (!family.length && !login) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ key, characters: [], login: null, scope: 'your loot history', updated_at: new Date().toISOString(),
+          wins: [], wishlist: [], misses: [], dkp: null, suggested_family: [] }));
+      }
+      const ck = 'bid-history:' + String(identity.discord_id) + '|' + login.toLowerCase() + '|' + family.map(s => s.toLowerCase()).sort().join(',');
       const cached = _lootCacheGet(ck);
       if (cached) { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(cached); }
       const famClause = _ilikeAnyClause('character_name', family);
@@ -8866,7 +8978,7 @@ async function _handleAgentLootPost(req, res) {
           return `• **${m.name}**${m.quantity > 1 ? ` ×${m.quantity}` : ''}${srLine ? `\n   ${srLine}` : ''}`;
         }).join('\n');
         const foot = unmatched.length ? `\n\n⚠ Not found in the item catalog (not auctioned): ${unmatched.map(u => u.name).join(', ')}` : '';
-        await ch.send({ content: `💰 **Bidding open (closed bids · ${duration}m)** — posted by ${identity.display_name || 'an officer'}\n${lines}\nBid on OpenDKP → ${opendkpAuctionsUrl()}${foot}` });
+        await ch.send({ content: `💰 **Bidding open (closed bids · ${duration}m)** — posted by ${identity.display_name || 'an officer'}\n${lines}\nBid on OpenDKP → ${opendkpAuctionsUrl()}${foot}`, allowedMentions: { parse: [] } });
       }
     } catch (e) { console.warn('[loot-post] thread announce failed:', e?.message); }
 
@@ -8956,6 +9068,12 @@ async function _handleAgentUiLayoutUpload(req, res) {
     ownerDiscord = Array.isArray(rootRows) && rootRows[0]?.discord_id || null;
   }
 
+  // A linked character's snapshot is stored only by that character's own household (same rule as list/download).
+  if (ownerDiscord && !(await _householdDiscordIds(identity.discord_id)).has(String(ownerDiscord))) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'you can only back up your own characters' }));
+  }
+
   // Unlinked toon: instead of rejecting (which loses the backup), attribute it
   // to the UPLOADER (we know who they are from their per-user session token),
   // hold the snapshot as pending_link, and file an officer approval request to
@@ -9025,8 +9143,26 @@ async function _handleAgentUiLayoutUpload(req, res) {
   // plaintext (the stored payload is encrypted — the web can't read it).
   _indexSnapshotSocials({ character, ownerDiscord, snapshotId: written[0].id, files })
     .catch(err => console.warn('[ui_layout] socials index failed:', err?.message));
+  // Mimic's "Keep in sync" backs up after every camp (label 'Auto: after camp', apps/mimic/uiSync.js). Keep the
+  // newest few of those per character and computer, so they never push the hand-made backups out of the 50 the
+  // list shows. Hand-made backups are never pruned here.
+  if (label === _UI_AUTO_LABEL) {
+    _pruneAutoUiSnapshots(ownerDiscord, character, machineName)
+      .catch(err => console.warn('[ui_layout] auto-backup prune failed:', err?.message));
+  }
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(JSON.stringify({ ok: true, id: written[0].id, pending_link: pendingLink }));
+}
+
+const _UI_AUTO_LABEL = 'Auto: after camp';
+const _UI_AUTO_KEEP = 5;
+async function _pruneAutoUiSnapshots(ownerDiscord, character, machineName) {
+  const supabase = require('./utils/supabase');
+  const base = `owner_discord_id=eq.${encodeURIComponent(ownerDiscord)}&character_name=ilike.${encodeURIComponent(character)}` +
+    `&label=eq.${encodeURIComponent(_UI_AUTO_LABEL)}&machine_name=${machineName ? 'eq.' + encodeURIComponent(machineName) : 'is.null'}`;
+  const rows = await supabase.select('ui_snapshots', `${base}&select=id&order=created_at.desc&limit=50`);
+  const old = (Array.isArray(rows) ? rows : []).slice(_UI_AUTO_KEEP).map(r => r.id).filter(id => /^[0-9a-f-]{36}$/i.test(id));
+  if (old.length) await supabase.del('ui_snapshots', `${base}&id=in.(${old.join(',')})`);
 }
 
 async function _handleAgentUiLayoutList(req, res) {
@@ -9398,15 +9534,17 @@ async function _handleAgentBidPrefs(req, res) {
     item_name:   r.item_name ? String(r.item_name).slice(0, 200) : null,
     updated_at:  r.updated_at || new Date().toISOString(),
   })).filter(r => r.character && Number.isInteger(r.item_id) && r.item_id > 0);
-
-  if (clean.length === 0) {
+  // Only rows for the caller's own characters are kept; the rest are skipped one by one.
+  const ownNames = new Set((await _callerOwnNames(identity, clean.map(r => r.character))).map(n => n.toLowerCase()));
+  const allowed = clean.filter(r => ownNames.has(r.character.trim().toLowerCase()));
+  if (allowed.length === 0) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, written: 0 }));
+    return res.end(JSON.stringify({ ok: true, written: 0, skipped: clean.length }));
   }
   const supabase = require('./utils/supabase');
-  await supabase.upsert('character_bid_prefs', clean, 'guild_id,character,item_id');
+  await supabase.upsert('character_bid_prefs', allowed, 'guild_id,character,item_id');
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  return res.end(JSON.stringify({ ok: true, written: clean.length }));
+  return res.end(JSON.stringify({ ok: true, written: allowed.length, skipped: clean.length - allowed.length }));
 }
 
 async function _handleAgentPlaceBid(req, res) {
@@ -9429,6 +9567,11 @@ async function _handleAgentPlaceBid(req, res) {
   if (!character || !auctionId || !Number.isFinite(value) || value <= 0) {
     res.writeHead(400);
     return res.end(JSON.stringify({ error: 'character, auction_id, and positive value are required' }));
+  }
+  // Bids are placed only for the caller's own characters.
+  if (!(await _callerMayActAs(identity, character))) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'you can only bid with your own characters' }));
   }
 
   const opendkp = require('./utils/opendkp');
@@ -9936,8 +10079,14 @@ async function _handleAgentPopFlags(req, res) {
       ...extra,
     });
   };
+  // Flag grants are stored only for the caller's own characters; a witnessed hail is evidence about someone else
+  // by design and is exempt.
+  const ownFlagNames = new Set((await _callerOwnNames(identity,
+    [...new Set(events.filter(e => e && e.character && e.source !== 'hail_witnessed').map(e => String(e.character)))].slice(0, 40)
+  )).map(n => n.toLowerCase()));
   for (const e of events) {
     if (!e || !e.character || !e.ts) continue;
+    if (e.source !== 'hail_witnessed' && !ownFlagNames.has(String(e.character).trim().toLowerCase())) continue;
     const ts = new Date(e.ts);
     if (isNaN(ts.getTime())) continue;
     const iso = ts.toISOString();
@@ -10138,6 +10287,11 @@ async function _handleAgentQuarmy(req, res) {
   }
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
 
+  // Gear and AA rows are stored only for the caller's own characters.
+  if (!(await _callerMayActAs(identity, character))) {
+    res.writeHead(403); return res.end(JSON.stringify({ error: 'not your character' }));
+  }
+
   // Owner opt-out is enforced server-side too — a stale agent that missed the
   // prefs poll cannot write an excluded character's gear.
   const charRows = await supabase
@@ -10276,6 +10430,11 @@ async function _handleAgentInventory(req, res) {
   }
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
 
+  // Inventory rows are stored only for the caller's own characters.
+  if (!(await _callerMayActAs(identity, character))) {
+    res.writeHead(403); return res.end(JSON.stringify({ error: 'not your character' }));
+  }
+
   const charRows = await supabase
     .select('characters', `select=name,exclude_inventory,exclude_from_stats,inventory_checksum&guild_id=eq.${encodeURIComponent(guildId)}&name=ilike.${encodeURIComponent(character)}&limit=1`)
     .catch(() => null);
@@ -10370,6 +10529,11 @@ async function _handleAgentSpellbook(req, res) {
     res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0, note: 'supabase disabled' }));
   }
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+
+  // Spellbook rows are stored only for the caller's own characters.
+  if (!(await _callerMayActAs(identity, character))) {
+    res.writeHead(403); return res.end(JSON.stringify({ error: 'not your character' }));
+  }
 
   const charRows = await supabase
     .select('characters', `select=name,exclude_inventory,spellbook_checksum&guild_id=eq.${encodeURIComponent(guildId)}&name=ilike.${encodeURIComponent(character)}&limit=1`)
@@ -10568,6 +10732,9 @@ async function _handleAgentBuffCasts(req, res) {
       // case and means UNPROVEN, never "a different mob" — see _idScopeKeep.
       target_id:    Number.isFinite(Number(c.target_id)) ? Math.trunc(Number(c.target_id)) : null,
       is_charm_spell: !!c.is_charm_spell,
+      // The uploader's own cast line resolved to this landing (the agent's _selfCast), so `observer` cast it.
+      // Every agent since resolveSelfCastLanding has sent it; the column is what lets target-buffs say so.
+      self_cast:    c._selfCast === true,
       uploaded_by_discord_id: identity.discord_id,
     };
     (sid !== 0 ? resolved : ambiguous).push(row);
@@ -12293,7 +12460,7 @@ async function _handleAgentTargetBuffs(req, res) {
     const rows = await supabase.select('buff_casts',
       `guild_id=eq.${encodeURIComponent(guildId)}&target=ilike.${encodeURIComponent(name)}` +
       `&cast_at=gte.${encodeURIComponent(since)}` +
-      `&select=spell_name,dur_ticks,cast_at,observer,is_charm_spell,target_id&order=cast_at.desc&limit=50`);
+      `&select=spell_name,dur_ticks,cast_at,observer,is_charm_spell,target_id,self_cast&order=cast_at.desc&limit=50`);
     const now = Date.now();
     // Dedup by spell_name — most recent cast wins (a recast overwrites the
     // previous landing's timer).
@@ -12316,7 +12483,14 @@ async function _handleAgentTargetBuffs(req, res) {
       if (durSecs > 0 && (now - castMs) > durSecs * 1000) continue;     // expired
       const k = String(r.spell_name).toLowerCase();
       const prev = bySpell.get(k);
-      if (!prev || castMs > prev.castMs) bySpell.set(k, { row: r, castMs, durSecs });
+      // The newest landing of a spell wins (a recast overwrites), EXCEPT that the CASTER's own report outranks a
+      // bystander's of the same cast: within 10 s of each other they are one landing, and the caster's is the
+      // one that names the spell's owner (the guild lead, 2026-11-01).
+      const sameCast = prev && Math.abs(castMs - prev.castMs) <= 10_000;
+      const better = !prev
+        || (sameCast ? (!!r.self_cast !== !!prev.row.self_cast ? !!r.self_cast : castMs > prev.castMs)
+                     : castMs > prev.castMs);
+      if (better) bySpell.set(k, { row: r, castMs, durSecs });
     }
     const buffs = [];
     for (const v of bySpell.values()) {
@@ -12330,6 +12504,11 @@ async function _handleAgentTargetBuffs(req, res) {
         // even when catalog good_effect says otherwise.
         good:           v.row.is_charm_spell ? 0 : null,
         owner:          v.row.observer || null,
+        // The landing came from its CASTER's own agent (its own cast line resolved to this landing), so
+        // `observer` is the caster. Agents let it outrank a bystander's landing of the same effect, and a
+        // caster row with no spawn id still counts for the mob on screen. null id = unproven, never spawn 0.
+        by_caster:      !!v.row.self_cast,
+        target_id:      Number(v.row.target_id) > 0 ? Number(v.row.target_id) : null,
       });
     }
     return JSON.stringify({ buffs });
@@ -15100,6 +15279,65 @@ async function _handleAgentMyParses(req, res) {
   res.writeHead(200, Object.assign({ 'Content-Type': 'application/json', 'Vary': 'Accept-Encoding' },
     gzip ? { 'Content-Encoding': 'gzip' } : {}));
   return res.end(gzip ? require('zlib').gzipSync(body) : body);
+}
+
+// GET /api/agent/raid-fights?since=<ISO>
+// Every fight the guild uploaded since `since` (default 8 h, at most 12 h back), each once, ended only, newest
+// first, at most 60: the "Raid" list beside "Mine" in Mimic's DPS History (the guild lead, 2026-11-01).
+// One row per ENCOUNTER, which find_or_create_encounter already merged across clients. A fight's board is the
+// existing /api/agent/live-damage?boss=<name>&fight_start=<started_at>. Guild kills and guild wipes only
+// (classification null or 'wipe'). A hub or guest session never gets here (requireAgentAuth's allowlists).
+// 50 Mimics polling cost one set of three reads per 20 s: the cache key is the guild + the since minute.
+const _raidFightsCache = new Map();
+const _RAID_FIGHTS_TTL_MS = 20_000;
+async function _handleAgentRaidFights(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const supabase = require('./utils/supabase');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const now = Date.now();
+  let sinceMs = NaN;
+  try { sinceMs = Date.parse(new URL(req.url, 'http://x').searchParams.get('since') || ''); } catch { /* */ }
+  if (!Number.isFinite(sinceMs)) sinceMs = now - 8 * 3600_000;
+  sinceMs = Math.min(now, Math.max(sinceMs, now - 12 * 3600_000));
+  const sinceBucket = Math.floor(sinceMs / 60_000) * 60_000;   // down: a minute more, never a minute less
+
+  const out = await require('./utils/ttlCache').cached(_raidFightsCache, guildId + '|' + sinceBucket, _RAID_FIGHTS_TTL_MS, async () => {
+    const encs = await supabase.select('encounters',
+      `guild_id=eq.${encodeURIComponent(guildId)}`
+      + `&ended_at=not.is.null&started_at=gte.${encodeURIComponent(new Date(sinceBucket).toISOString())}`
+      + '&or=(classification.is.null,classification.eq.wipe)'
+      + '&select=id,npc_id,started_at,ended_at,duration_sec,is_wipe,eqemu_npc_types(name)'
+      + '&order=started_at.desc&limit=60').catch(() => null);
+    if (!Array.isArray(encs)) return { status: 502, body: JSON.stringify({ error: 'unavailable' }), keep: false };
+    if (!encs.length) return { status: 200, body: JSON.stringify({ fights: [] }), keep: true };
+
+    // Paged (60 fights × dozens of uploaders runs past PostgREST's 1,000-row page). Players are not read: the Raid row
+    // shows only how many clients sent the fight, and its board comes from /live-damage.
+    const contribs = await supabase.selectAllPaged('contributions',
+      `encounter_id=in.(${encs.map(e => e.id).join(',')})&select=encounter_id,uploaded_by_discord_id,contributor_character`, 'id').catch(() => null);
+    const clients = new Map();
+    for (const c of Array.isArray(contribs) ? contribs : []) {
+      const who = c.uploaded_by_discord_id || ('c:' + String(c.contributor_character || '').toLowerCase());
+      if (!clients.has(c.encounter_id)) clients.set(c.encounter_id, new Set());
+      clients.get(c.encounter_id).add(who);
+    }
+    const qd = require('./utils/questDialog');
+    const fights = encs.map(e => ({
+      id: e.id,
+      name: qd.displayName(e.eqemu_npc_types?.name),
+      npc_id: e.npc_id,
+      started_at: e.started_at,
+      ended_at: e.ended_at,
+      duration_s: e.duration_sec ?? Math.max(0, Math.round((Date.parse(e.ended_at) - Date.parse(e.started_at)) / 1000)),
+      wipe: !!e.is_wipe,
+      clients: Array.isArray(contribs) ? (clients.get(e.id)?.size || 0) : null,
+    }));
+    // A failed side read leaves `clients` null: answer now, but ask again next time.
+    return { status: 200, body: JSON.stringify({ fights }), keep: Array.isArray(contribs) };
+  }, { shouldCache: (r) => r.keep, max: 20 });
+  res.writeHead(out.status, { 'Content-Type': 'application/json' });
+  return res.end(out.body);
 }
 
 // The live raid split (§124, utils/raidGroups.js): which raid each uploader and raider is in when
@@ -20904,10 +21142,29 @@ async function _handleAgentTrigger(req, res) {
   // charged on ACCEPT rather than on send success — stricter, and correct
   // for a cap meant to bound the firehose.
   const triggerJobs = [];
+  // Speaking in the raid voice channel and posting to the broadcast channel are for officers and for the guild's own
+  // enabled triggers (matched by id or name) plus the built-in rampage callout. Any other fire is acknowledged and
+  // dropped, so a sender's queue never retries it. A failed trigger read allows officers only.
+  let relayable = null;
+  const mayRelay = async (ev) => {
+    if (identity.is_officer) return true;
+    const nm = String(ev?.name || '').trim().toLowerCase();
+    if (nm === 'rampage') return true;
+    if (!relayable) {
+      const bundle = await _guildTriggersFor().catch(() => null);
+      relayable = { ids: new Set(), names: new Set() };
+      for (const t of (bundle && Array.isArray(bundle.triggers) ? bundle.triggers : [])) {
+        if (t && t.id != null) relayable.ids.add(String(t.id));
+        if (t && t.name) relayable.names.add(String(t.name).trim().toLowerCase());
+      }
+    }
+    return (ev?.trigger_id != null && relayable.ids.has(String(ev.trigger_id))) || (!!nm && relayable.names.has(nm));
+  };
   for (const ev of triggers) {
     const message = String(ev?.message || '').trim().slice(0, 300);
     if (!message) continue;
     const mode = ev?.mode === 'voice' ? 'voice' : 'post';
+    if (!(await mayRelay(ev))) continue;
     // Per-uploader rate cap (across all keys + modes).
     const rate = _triggerRate.get(identity.discord_id) || [];
     if (rate.filter(t => now - t < TRIGGER_RATE_WINDOW_MS).length >= TRIGGER_RATE_MAX) break;
@@ -21084,6 +21341,7 @@ async function _handleAgentFeedback(req, res) {
         `>>> ${message.slice(0, 1500)}${attached}`,
       files: shotsMod.discordFiles(shots),
       components: [_feedbackRecvRow()],
+      allowedMentions: { parse: [] },
     });
     // Stamp the post on the row. Without it relayWebFeedback (which posts every
     // row with no discord_msg_id) posted this report a second time a minute
@@ -21097,6 +21355,42 @@ async function _handleAgentFeedback(req, res) {
   } catch (err) { console.warn('[feedback] discord post failed:', err?.message); }
 }
 
+// A relayed action keeps its `sound` only when it is a plain sound NAME (letters, digits, space, _ . -) — the shape the
+// agent's sound-name cleaner gives a built-in sound — or exactly an address one of the guild's own enabled triggers
+// stores. Any other value (an address, a path, a custom file) is removed, with its volume and mode, so the receiving
+// Mimic speaks the callout instead. The guild's addresses are read only when a relayed action carries one.
+const _RELAY_SOUND_NAME_RX = /^[a-z0-9][a-z0-9 _.-]{0,60}$/i;
+const _RELAY_ACTION_TYPES = new Set(['text_overlay', 'voice', 'sound', 'timer']);
+async function _guildSoundAddresses() {
+  const out = new Set();
+  const bundle = await _guildTriggersFor().catch(() => null);
+  for (const t of (bundle && Array.isArray(bundle.triggers) ? bundle.triggers : [])) {
+    for (const a of (Array.isArray(t && t.actions) ? t.actions : [])) {
+      if (a && typeof a.sound === 'string' && /^https?:\/\//i.test(a.sound.trim())) out.add(a.sound.trim());
+    }
+  }
+  return out;
+}
+async function _relayCleanActions(actions) {
+  let guildAddrs = null;
+  const out = [];
+  for (const raw of actions) {
+    // Only the effects a receiving Mimic runs locally are relayed (the agent never relays a Discord post).
+    if (!raw || typeof raw !== 'object' || !_RELAY_ACTION_TYPES.has(raw.type)) continue;
+    const a = { ...raw };
+    if (a.sound != null) {
+      const s = String(a.sound).trim();
+      let ok = _RELAY_SOUND_NAME_RX.test(s);
+      if (!ok && /^https?:\/\//i.test(s)) {
+        if (!guildAddrs) guildAddrs = await _guildSoundAddresses();
+        ok = guildAddrs.has(s);
+      }
+      if (!ok) { delete a.sound; delete a.sound_volume; delete a.sound_mode; }
+    }
+    out.push(a);
+  }
+  return out;
+}
 async function _handleTriggerRelayPost(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -21189,7 +21483,7 @@ async function _handleTriggerRelayPost(req, res) {
       name,
       key,
       captures:            (f?.captures && typeof f.captures === 'object') ? f.captures : {},
-      actions:             Array.isArray(f?.actions) ? f.actions.slice(0, 5) : [],
+      actions:             Array.isArray(f?.actions) ? await _relayCleanActions(f.actions.slice(0, 5)) : [],
       // A zone-timer trigger's countdown is longer than an hour (the stampede-by row is 7200 s).
       timer_duration_sec:  Math.max(0, Math.min(zt ? _zoneTimersMod.ZONE_TIMER_MAX_SEC : 3600, parseInt(f?.timer_duration_sec, 10) || 0)),
       // Carried so a receiver can apply the same cooldown gate as the origin —
@@ -24645,95 +24939,16 @@ const httpServer = http.createServer(async (req, res) => {
     }
   }
 
-  // OpenDKP character registration from the web admin panel. The web
-  // /admin/links page calls this when an officer clicks "Register" on a
-  // row in the "Not in OpenDKP" section. Body:
-  //   { name, class, race?, level, rank, recorded_by_discord_id }
-  // Wraps utils/opendkp.createCharacter — same call path as the
-  // /register Discord command, just invoked via HTTP so the web can do
-  // it without redirecting the officer to Discord. Auth via the agent
-  // bearer (same shared secret); the web action validates officer status
-  // server-side before calling, and the bot logs the recorded_by id for
-  // audit. The guild lead 2026-06-21.
-  if (req.method === 'POST' && req.url === '/api/admin/opendkp-register') {
-    const identity = await mimicLink.requireAgentAuth(req, res);
-    if (!identity) return;
-    try {
-      const chunks = []; let total = 0;
-      for await (const chunk of req) {
-        total += chunk.length;
-        if (total > 4096) { res.writeHead(413); return res.end(); }
-        chunks.push(chunk);
-      }
-      let body;
-      try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
-      catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
-      const name  = String(body?.name  || '').trim();
-      const cls   = String(body?.class || '').trim();
-      const race  = String(body?.race  || '').trim();
-      const level = parseInt(body?.level, 10);
-      const rank  = String(body?.rank  || '').trim();
-      const recordedBy = String(body?.recorded_by_discord_id || '').trim();
-      // OpenDKP CharacterId of the family root this new character should be
-      // parented under. The web /admin/links page computes this from the
-      // uploader's existing characters cluster — e.g. a Mimic uploads
-      // a new alt and OpenDKP already roots that family somewhere, so
-      // the new character lands as one of that main's alts instead of becoming
-      // its own un-parented root. 0 = no parent (acceptable when the web
-      // genuinely couldn't resolve a family root for the uploader).
-      const parentOpenDkpId = Number.isFinite(parseInt(body?.parent_opendkp_id, 10))
-        ? parseInt(body.parent_opendkp_id, 10) : 0;
-      if (!name || !cls || !Number.isFinite(level) || !rank) {
-        res.writeHead(400);
-        return res.end(JSON.stringify({ error: 'missing required fields (name/class/level/rank)' }));
-      }
-      const { createCharacter } = require('./utils/opendkp');
-      const result = await createCharacter({
-        Name:    name,
-        Class:   cls,
-        Race:    race || 'Iksar',     // OpenDKP requires a race; Iksar is a safe default,
-                                       // officer fixes in OpenDKP if wrong (UI surfaces race)
-        Level:   level,
-        Active:  1,
-        Rank:    rank,
-        ParentId: parentOpenDkpId,
-      });
-      // Audit marker for the "Awaiting OpenDKP claim" admin-queue category.
-      // Keep the upsert SCOPED to the registered_via_web_* fields so we don't
-      // clobber whatever the OpenDKP sync wrote into class/race/rank/main_name
-      // when it runs between our create call and this write — PostgREST merge
-      // resolution leaves columns we don't send alone. On the first-insert
-      // case the other columns land at their defaults (active=true, the rest
-      // null) and the next OpenDKP sync (every few minutes) fills them in.
-      try {
-        const supabase = require('./utils/supabase');
-        const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
-        await supabase.upsert('characters', [{
-          guild_id:                          guildId,
-          name,
-          registered_via_web_at:             new Date().toISOString(),
-          registered_via_web_by_discord_id:  recordedBy || null,
-        }], 'guild_id,name');
-      } catch (err) {
-        console.warn('[opendkp-register] characters audit upsert failed:', err?.message);
-      }
-      console.log(`[opendkp-register] ${name} (${cls} L${level} ${rank}, parent ${parentOpenDkpId || 'none'}) by Discord ${recordedBy} → ${JSON.stringify(result).slice(0, 200)}`);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ ok: true, result }));
-    } catch (err) {
-      console.warn('[opendkp-register] failed:', err?.message);
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ error: err?.message || 'register failed' }));
-    }
-  }
-
   // Cache bust for voice_settings. The /admin/voice page calls this after
   // saving so the ripcord takes effect without waiting out the 30s TTL.
-  // Bearer-auth gated (same token as the agent endpoints) — anyone with
-  // the token already has full data-plane access, so this is no broader.
+  // Officers only: the voice ripcord is an officer control.
   if (req.method === 'POST' && req.url === '/api/admin/voice-settings/refresh') {
     const identity = await mimicLink.requireAgentAuth(req, res);
     if (!identity) return;
+    if (!identity.is_officer) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'officers only' }));
+    }
     try {
       const vs = require('./utils/voiceSettings');
       vs.invalidate();
@@ -24967,6 +25182,14 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentMyParses(req, res); }
     catch (err) {
       console.error('[my-parses] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/raid-fights')) {
+    try { return await _handleAgentRaidFights(req, res); }
+    catch (err) {
+      console.error('[raid-fights] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
@@ -25541,6 +25764,15 @@ const httpServer = http.createServer(async (req, res) => {
     }
   }
 
+  // The slow-mode window, for Mimic's Map timers (FB-114: a Planes of Power kill inside it respawns in 18 hours).
+  // Our guild's flag: a session of another guild on Raid Mimic never reaches here (mimicLink's hub route allowlist).
+  if (req.method === 'GET' && req.url === '/api/agent/slow-mode') {
+    const identity = await mimicLink.requireAgentAuth(req, res);
+    if (!identity) return;
+    const f = require('./utils/slowMode').getSlowMode();
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    return res.end(JSON.stringify(f ? { on: !!f.on, set_at: f.set_at || null, auto_off_at: f.auto_off_at || null, off_at: f.off_at || null } : { on: false }));
+  }
   // Bastion of Thunder slow mode starting/ending, as heard by an agent (utils/slowMode.js)
   if (req.method === 'POST' && req.url === '/api/agent/slow-mode') {
     if (await _overBudget('slow_mode', req, res)) return;

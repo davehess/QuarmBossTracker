@@ -1,0 +1,14 @@
+{
+  "potactics": [
+    {
+      "npc_id": 214316,
+      "at": "50% HP",
+      "note": "Fades into five figures: one is the real Vallon Zek, the rest are fakes that vanish after about two minutes. Read from the server's potactics/214316.lua (event_hp), which the death-handler parser does not see.",
+      "into": [
+        { "id": 214317, "min": 1, "max": 1 },
+        { "id": 214318, "min": 0, "max": 4 },
+        { "id": 214319, "min": 0, "max": 4 }
+      ]
+    }
+  ]
+}

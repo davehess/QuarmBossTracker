@@ -272,31 +272,68 @@ async function readTable(db: Db, spec: TableSpec, ids: Ids, playerIds: string[],
   return { row_count: rows.length, capped, cap, rows };
 }
 
+// The download is prepared in the BROWSER, one section at a time (the guild lead, 2026-11-01: the single streamed file
+// showed no size and stopped partway, leaving invalid JSON): the manifest route returns exportHeader() + the section
+// list, the part route returns exportSection() for one name, and lib/selfDataPrepare.ts stitches them into the file.
+
+/** The section names, in file order. The part route's allow-list: a name is looked up here, never used in a filter. */
+export const EXPORT_SECTIONS: string[] = SELF_TABLES.map(t => t.table);
+
+/** The spec for an allow-listed section name, or null. Exact match only; anything else (a number, an injected string) is null. */
+export function findSection(name: unknown): TableSpec | null {
+  return typeof name === 'string' ? SELF_TABLES.find(t => t.table === name) ?? null : null;
+}
+
+/** Everything in the file that is not a section: when it was taken, what it is, the caps, and what it leaves out. */
+export function exportHeader(now: Date = new Date()) {
+  return {
+    exported_at: now.toISOString(),
+    about: 'Everything the Wolf Pack / Raid Mimic site holds that is yours, as it stood when you pressed Prepare. Your own data is complete. The guild\'s raid records are only the rows that are yours, newest first, capped per table (see each table\'s "capped"). Anything a table cannot show is listed under "not_included".',
+    row_cap: EXPORT_ROW_CAP,
+    character_row_cap: EXPORT_CHARACTER_CAP,
+    not_included: NOT_INCLUDED,
+  };
+}
+
+// One response from a non-streamed function is capped (4.5 MB on Vercel). A section past this many bytes is cut to
+// its newest rows and says so, rather than failing the whole preparation.
+export const PART_MAX_BYTES = 4_000_000;
+
 /**
- * The download, as chunks of one JSON document, table by table. Streaming keeps memory flat and keeps a big file
- * clear of the response size ceiling on a non-streamed function. A table that cannot be read says so in the file
- * (`error`) instead of leaving a silent gap, and the document is always valid JSON.
+ * One section of the download: the rows of ONE allow-listed table that are the session's own. A table that cannot be
+ * read says so in the section (`error`) instead of leaving a silent gap. The caller has already resolved `spec` with
+ * findSection(); `ids` is what resolveSelf() read off the session.
  */
-export async function* exportChunks(db: Db, ids: Ids, now: Date = new Date()): AsyncGenerator<string> {
-  yield `{"exported_at":${JSON.stringify(now.toISOString())},`
-    + `"about":${JSON.stringify('Everything the Wolf Pack / Raid Mimic site holds that is yours, as it stood when you pressed Download. Your own data is complete. The guild\'s raid records are only the rows that are yours, newest first, capped per table (see each table\'s "capped"). Anything a table cannot show is listed under "not_included".')},`
-    + `"row_cap":${EXPORT_ROW_CAP},"character_row_cap":${EXPORT_CHARACTER_CAP},"tables":{`;
-  let chars: Chars = [];
-  try { chars = await loadOwnCharacters(db, ids); } catch { /* each name-keyed table reports its own gap below */ }
-  let playerIds: string[] = [];
+export async function exportSection(db: Db, spec: TableSpec, ids: Ids): Promise<{ group: TableSpec['group'] } & TableOut> {
   try {
-    const { data } = await db.from('hub_players').select('player_id').eq('discord_id', ids.discordId);
-    playerIds = ((data ?? []) as { player_id: string }[]).map(r => r.player_id).filter(Boolean);
-  } catch { /* hub tables may not exist on this database */ }
-  let first = true;
-  for (const spec of SELF_TABLES) {
-    let out: TableOut;
-    try { out = await readTable(db, spec, ids, playerIds, chars); }
-    catch { out = { error: 'This table could not be read just now. Download again in a few minutes.' }; }
-    yield `${first ? '' : ','}${JSON.stringify(spec.table)}:${JSON.stringify({ group: spec.group, ...out })}`;
-    first = false;
+    let chars: Chars = [];
+    if (spec.clauses.some(c => c.kind === 'name')) chars = await loadOwnCharacters(db, ids);
+    let playerIds: string[] = [];
+    if (spec.clauses.some(c => c.kind === 'player')) {
+      try {
+        const { data } = await db.from('hub_players').select('player_id').eq('discord_id', ids.discordId);
+        playerIds = ((data ?? []) as { player_id: string }[]).map(r => r.player_id).filter(Boolean);
+      } catch { /* hub tables may not exist on this database */ }
+    }
+    return { group: spec.group, ...(await readTable(db, spec, ids, playerIds, chars)) };
+  } catch {
+    return { group: spec.group, error: 'This table could not be read just now. Prepare again in a few minutes.' };
   }
-  yield `},"not_included":${JSON.stringify(NOT_INCLUDED)}}`;
+}
+
+/** The part as a response body: JSON text, trimmed to PART_MAX_BYTES by dropping the oldest rows (and flagged as capped). */
+export function sectionBody(out: { group: string } & TableOut, maxBytes: number = PART_MAX_BYTES): string {
+  let text = JSON.stringify(out);
+  if ('error' in out || text.length <= maxBytes / 4) return text;   // length counts characters; bytes are at most 4x, so a short text is safe
+  const size = (s: string) => new TextEncoder().encode(s).length;
+  if (size(text) <= maxBytes) return text;
+  const rows = out.rows.slice();
+  const note = 'This section was too large for one response, so only the newest rows are here.';
+  while (rows.length > 1 && size(text) > maxBytes) {
+    rows.length = Math.floor(rows.length * 0.8);
+    text = JSON.stringify({ ...out, row_count: rows.length, capped: true, note, rows });
+  }
+  return text;
 }
 
 // ─── One download per person per 10 minutes ───────────────────────────────────────────────────────────────────
@@ -307,6 +344,20 @@ export const exportKey = (userId: string): string => `data_export:${userId}`;
  * Claims the person's download slot in bot_kv (guild_id + key is the primary key). The update only matches a marker
  * older than the cooldown and the insert only succeeds when there is none, so two requests at once cannot both pass.
  */
+/** How long after a Prepare (the manifest's claim) the person's section reads are served. */
+export const PREPARE_WINDOW_MIN = 15;
+
+/**
+ * True when this person pressed Prepare within PREPARE_WINDOW_MIN: the part route serves sections only then, so the
+ * one-prepare-per-10-minutes limit cannot be skipped by calling parts directly. Read-only; fails closed.
+ */
+export async function prepareIsOpen(db: Db, userId: string, now: number = Date.now()): Promise<boolean> {
+  const { data, error } = await db.from('bot_kv').select('updated_at').eq('guild_id', GUILD_TAG).eq('key', exportKey(userId)).maybeSingle();
+  if (error || !data?.updated_at) return false;
+  const since = now - Date.parse(data.updated_at);
+  return since >= 0 && since <= PREPARE_WINDOW_MIN * 60_000;
+}
+
 export async function claimExport(db: Db, userId: string, now: number = Date.now()): Promise<{ ok: true } | { ok: false; retryAfterSec: number }> {
   const key = exportKey(userId);
   const at = new Date(now).toISOString();

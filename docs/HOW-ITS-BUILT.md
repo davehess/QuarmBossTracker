@@ -110,7 +110,7 @@ writes.
   `20261031150000_hub_registry_discord_guild.sql`, both applied to production 2026-10-31; the second adds
   `hub_guilds.discord_guild_id` and `hub_players.avatar_url`). Supabase Auth redirect entries for `raidmimic.com`,
   `www.raidmimic.com` and `*.raidmimic.com` were added by the guild lead the same day. Test: `test/raidmimic-signin.test.js`
-  (115 tests). The sign-in-first LANDING is the beta variant below (Web features, "raidmimic.com landing `?v=b`").
+  (115 tests). The sign-in-first `?v=b` landing variant was deleted when the story-stage home page graduated (web 2.1.87; the story stage ends on a Discord sign-up card).
 - **Agent → bot**: per-user bearer tokens minted at Mimic sign-in
   (`mimicLink.requireAgentAuth` on every `/api/agent/*` route). `/token` in
   Discord lists/revokes sessions. Every upload is traceable to a Discord id.
@@ -1394,6 +1394,24 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   LTX audio-only retake of the finished picture, unmuted by a "Sound on" button) plays once, then swaps to a seamless six-second loop, with a "Watch again" button;
   the four real captures sit in a strip below it (four across, two by two on a phone). `_landing/MotionStage.tsx`, files in
   `web/public/raidmimic/motion/` (`story-` and `loop-` at 1080 and 720, `story-poster.jpg` 720x1280); tests in `test/raidmimic-landing.test.js`.
+
+### raidmimic.com story-stage home page + register form, legal pages, your data (web 2.1.87, 2026-11-01; the guild lead's "ship it")
+- **The page is now the story stage** (replaces "Pick your path" above; its `PathsLayout`, `MotionStage`, `ClipTabs`, `SceneClip`, `MascotHero`, `MascotVideo`,
+  `HowItWorks` and the `?v=b`/`?v=c`/`?v=d` previews are deleted). `web/app/raidmimic/page.tsx` → `_landing/StoryStage.tsx` (first screen: the video, edges faded
+  into the page colour, cues on the video's clock) + `StoryVideo.tsx` (the one client piece: sound, CC, Skip, Hide, reduced-motion and no-script show everything)
+  + `StoryParts.tsx` / `StoryBits.tsx` (feature pictures, Raid management, pricing, register band) + `FeatureIcons.tsx`. Words and cue times: `web/lib/raidmimicStory.ts`.
+  Classes `.rm-stage` / `.rm-frame` in `web/app/globals.css`. Pictures: `web/public/raidmimic/shots/` (made by `scripts/raidmimic-shots/shoot*.mjs`). Tests:
+  `test/raidmimic-landing.test.js`, `test/raidmimic-landing-variants.test.js`.
+- **Register your guild:** `web/app/raidmimic/register/` (page, `RegisterForm.tsx`, `actions.ts`), rules in `web/lib/guildInterest.ts` + `guildInterestFields.ts`, table
+  `guild_interest`; officers read `web/app/admin/interest/page.tsx`. `b.raidmimic.com` handling is in `web/lib/raidmimicHost.ts`. Tests: `test/guild-interest.test.js`,
+  `test/raidmimic-beta-host.test.js`.
+- **Legal pages:** `web/app/raidmimic/{privacy,terms,refunds}/page.tsx` + `_legal/LegalParts.tsx`, words and version in `web/lib/legal.ts`, `AgreeLine.tsx`,
+  `LegalLinks.tsx`, `recordTermsAcceptance` (`web/lib/termsAcceptance.ts`, called from both sign-in callbacks). Test: `test/legal-pages.test.js`.
+- **Your data:** `web/app/me/data/` (`YourData.tsx`, `DeleteAccount.tsx`, `actions.ts`, `export/route.ts`), `web/app/guilds/data/export/route.ts`, `web/lib/selfData.ts` +
+  `selfDataRoute.ts`, RPCs `member_self_delete` / `member_self_unlink_batch`. Test: `test/self-serve-data.test.js`.
+- **Officer surfaces:** the departed-member pop-up (`web/components/DepartedMemberNotice.tsx` + `DepartedMemberPopup.tsx`, `web/lib/departedMembers*.ts`, on `/` and `/admin`;
+  lock-out in `web/app/admin/access/actions.ts`) — `test/departed-members.test.js`; the review queue (`web/lib/admin-queue.ts`, `adminQueueData.ts`,
+  `web/app/admin/queue/page.tsx`, `AdminQueueBanner.tsx`) — `test/admin-queue-scope.test.js`.
 
 ### Set up Raid Mimic yourself: /raidmimic/setup (web, 2026-10-21, [beta]; DECISIONS §404)
 - **What:** a step-by-step guide for players outside the guild: download, run it local-only, what works on your own
@@ -3047,6 +3065,22 @@ the website has not cached the zone). Six-hour per-zone cache, weak ETag over th
 budget kind `zone_spawns` (30/min, GET, not sheddable). Instance sentinel respawn (1,700,000 s)
 reads `respawn_s: null`. Consumer: the Mimic overlay (`docs/DESIGN-mimic-2.9-spawn-map.md`).
 
+### DPS History: Mine / Raid; the caster's landing wins in Target Info — 2026-11-02 (§513 §514)
+Bot `_handleAgentRaidFights` (GET `/api/agent/raid-fights?since=`, guild kills and wipes, ended, ≤60, 20 s `ttlCache`) lists
+the night's fights with `clients` (distinct uploaders from `contributions`, a paged read); the agent serves it to the
+overlay at `/api/raid-fights` and a fight's board at `/api/raid-fights/board` (the bot's `/live-damage`). `buff_casts.self_cast`
+is set from the agent's `_selfCast` at ingest, and `insert_buff_casts` promotes a stored row when the caster's copy lost the
+dedup race; `/api/agent/target-buffs` returns `by_caster` and `target_id` and prefers the caster's row of the same cast.
+
+### Mobs that split, and slow mode, on the Map (zone-spawns) — 2026-11-01 (§511)
+Bot `utils/splitSpawns.js` (called from `zoneSpawns.build` beside the traps, never throws): reads the zone's death scripts from
+`eqemu_quest_scripts` (`event_death` / `event_death_complete`), counts `eq.spawn2` / `eq.unique_spawn` calls placed at the dead
+mob's own GetX/GetY (fixed coordinates are not splits; loops and `math.random` give min..max; unreadable = max null), names
+what spawns from `eqemu_npc_types`, plus `data/split-overrides.json` (Vallon Zek's 50% HP split). The NPC row gets
+`splits: { into: [{ name, min, max, unique? }], at?, note? }` and a `splits` badge (not for `unique` placeholder → named). The
+zone body carries `slow_zone: true` for Planes of Power (`eqemu_zone.expansion` 4); GET `/api/agent/slow-mode` serves the bot's
+window; the agent's `_mapMakeTimer` gives such a kill inside the window 18 h (`_mapSlowOnAt`, `_mapSlowRefresh`), marked 🐢.
+
 ### Traps on the Map (`traps` in the zone-spawns body) — 2026-10-23 (draft)
 Bot `utils/trapSpawns.js` (called from `zoneSpawns.build`, never throws): `point.trap` = the helper NPC id of a **trap spot**, and
 `traps.defs[<id>]` = `{ k, grp, ch, r, title, text }`. A spot is a body-type 65/66/67 helper that is a key of the zone's
@@ -3487,6 +3521,15 @@ Loads the character's ini bundle (`ui-studio-read-bundle`), parses window
 sections (`XPos<res>` blocks, bare Width/Height), rescales source→target
 resolution, drag/snap editor, writes back with `.bak` or defers until logout
 (`defer-save` + background watcher).
+**Compare-first restore, Keep in sync, This PC** (Mimic beta `d494250d`, 2026-11-01, DECISIONS §510): Settings' ↩ Restore
+calls `ui-restore-plan` (backup vs disk per part, from `apps/mimic/uiRestorePlan.js`: `classify` / `compare` / `fitLayout` /
+`buildRestore` / `windowRects`) and `ui-restore-parts` (write now, or queue `{kind:'restore'}` for after the camp). Parts: layout
+(`UI_<char>*` whole, fitted), hotkeys (`[HotButtons*]`), socials (`[Socials]` + `Sock_`/`Socials_` files), spell sets, keybinds
+(`eqclient.ini [KeyMaps]` only), Zeal (`zeal.ini` keys, this character's and shared sections, never other characters' or
+ChannelAutoJoin/password keys), other. Keep in sync and This PC: `apps/mimic/uiSync.js` (redaction, hash, newer-elsewhere, overlay
+scale suggestion), `cfg.uiSync` / `cfg.uiSyncState` / `cfg.screenInches`, IPCs `ui-sync-get/set/dismiss`, `ui-this-pc`,
+`ui-this-pc-inches`; the camp hook is `_uiScheduleAutoBackup` in `_retireZealChar`; the check runs 90 s after boot and every 20 min.
+The bot prunes `label = 'Auto: after camp'` backups to 5 per character and computer (`_pruneAutoUiSnapshots`, bot 4.0.45).
 **Picking a character = their current UI, unconverted** (Mimic beta `5ce28ec4`, 2026-10-15, DECISIONS §339): the
 dropdown change runs a fresh disk read at the file's own resolution (Source = Target) — eqclient.ini `[VideoMode]`
 Width/Height when the UI file has that block, else the block with the most windows. Load + Rescale stays the
@@ -4230,7 +4273,7 @@ crash card labels it "🐺 Wolf Pack Zeal" (`wpZealBuildTag`). Runbook: `docs/up
   `UpgradeCheck`; the bank is never shown to anyone else. Test: `test/gear-sets.test.js` (29 tests, 21 mutations killed). **Option
   B (saved sets from the combinations most often captured) is the next step** and reads `character_worn_sets` (bot 4.0.39, Bot
   features above). Preview: https://b.wolfpack.quest/character/<name>/gear.
-- **raidmimic.com landing `?v=b`: sign in first (beta variant, 2026-10-31; DECISIONS §492 pick A).** The pitch and the story video
+- **raidmimic.com landing `?v=b`: sign in first (beta variant, 2026-10-31; DECISIONS §492 pick A) — DELETED 2026-11-01 when the story-stage home page graduated (see "story-stage home page" above).** The pitch and the story video
   on the left, a sign-in card on the right (Discord, identify only, `next=/guilds`, a guest-code link), three doors under it (a
   raider in a hosted guild, an officer starting one, a solo player), today's page below the fold. `SignInTop.tsx` + a `signIn`
   prop on `PathsLayout`, words in `SIGNIN_FIRST` (`web/lib/raidmimicPlayer.ts`), optional `label`/`className` on `SignInButton`.

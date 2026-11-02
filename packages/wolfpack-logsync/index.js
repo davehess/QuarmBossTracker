@@ -501,6 +501,42 @@ function parseEqTimestamp(line) {
   return isNaN(d.getTime()) ? null : d;
 }
 
+// ── A log whose clock is a whole hour off this PC's (the guild lead, 2026-11-02, the first raid after the clocks went
+// back: "I think the timezone change is messing people up - the hails weren't coming through initially"). That night's
+// hails reached the bot on time, but a third of them carried a log time exactly one hour early or one hour late, so the
+// hail board (which credits a hail inside the projection's 20 minutes) dropped them. Some EverQuest client or this
+// process was still on summer time. A LIVE line is written seconds before we read it, so when a log's live lines keep
+// reading exactly 1 or 2 hours away from this PC's clock, its timestamps are rewritten by that many hours before
+// anything else sees the line. Only lines whose own time sits on that hour step are touched (a line read late, or a
+// second EverQuest that is in step, is left alone), and the correction ends once the log is back in step.
+const LOG_CLOCK_BAND_MS = 90 * 1000;   // how far from a whole hour still counts as "on the hour step"
+const LOG_CLOCK_CONFIRM = 5;           // live lines in a row before a shift is believed (or dropped)
+const _EQ_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const _EQ_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function _eqStamp(d) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${_EQ_DAYS[d.getDay()]} ${_EQ_MONTHS[d.getMonth()]} ${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())} ${d.getFullYear()}`;
+}
+// `st` is one log's state ({ shiftH, candH, offRun, okRun }); `say` reports a change. Returns the line, rewritten or not.
+function _fixLogClock(line, st, nowMs, say) {
+  const m = TS_RX.exec(line);
+  if (!m) return line;
+  const t = new Date(m[1]).getTime();
+  if (!Number.isFinite(t)) return line;
+  const d = t - nowMs, h = Math.round(d / 3600000);
+  if (Math.abs(d - h * 3600000) > LOG_CLOCK_BAND_MS || Math.abs(h) > 2) return line;   // read late, or not a clock step
+  if (h === 0) {
+    st.offRun = 0;
+    if (st.shiftH && ++st.okRun >= LOG_CLOCK_CONFIRM) { st.shiftH = 0; if (say) say(0); }
+    return line;
+  }
+  st.okRun = 0;
+  if (st.candH === h) st.offRun++; else { st.candH = h; st.offRun = 1; }
+  if (st.shiftH !== h && st.offRun >= LOG_CLOCK_CONFIRM) { st.shiftH = h; if (say) say(h); }
+  if (st.shiftH !== h) return line;
+  return '[' + _eqStamp(new Date(t - h * 3600000)) + ']' + line.slice(m[0].length);
+}
+
 // ── Filter (the privacy layer) ──────────────────────────────────────────────
 // Returns true if the line should be KEPT for further processing.
 // Order: priority keeps (override drops) → drop list → keep list.
@@ -4310,7 +4346,10 @@ function targetBuffsFor(targetLower, wantId) {
       unproven: wantId != null && b.target_id == null && typeof _GENERIC_MOB_RX !== 'undefined'
         && _GENERIC_MOB_RX.test(String(b.target_name || targetLower)),
       tick_snapped: !!(fade && fade.snapped),
-      owner: (b && b.owner) ? b.owner : null });
+      owner: (b && b.owner) ? b.owner : null,
+      // Our own cast, proven by our own log (cast_by): a caster landing, which outranks a bystander's
+      // landing of the same effect when Target Info merges the relay in (_applyDebufferPrecedence).
+      ...((b && b.cast_by) ? { by_caster: true, caster: b.cast_by } : {}) });
   }
   if (mp.size === 0) _buffLandingsByTarget.delete(targetLower);
   return out;
@@ -8405,6 +8444,11 @@ function _slowShortName(name) {
 // by the same spell are two entries. `targetId` null = the id is unknown (a bystander
 // line names no spawn); readers that know their spawn id use it (_bestSlowForTarget).
 const _slowsByTarget = new Map();
+// Slows other raiders' agents reported as cast BY THEM (the bot's target-buffs relay, `by_caster`), per target
+// NAME: targetLower → [{ name, magnitude, caster, targetId, landedAtMs, expiresAtMs, remote: true }]. Replaced
+// whole on every relay read (noteRemoteCasterSlows), so it never outlives what the bot last said; read by
+// _bestSlowForTarget beside _slowsByTarget. A bystander emote can never name the spell; this can.
+const _remoteSlowsByTarget = new Map();
 const SLOW_TARGET_CAP     = 200;
 const SLOW_PRUNE_GRACE_MS = 3000;
 // Per-target last-ANNOUNCED best slow (targetLower → { name, magnitude }) — edge
@@ -8432,6 +8476,55 @@ function _pickBestActiveSlow(entries, nowMs) {
   }
   return best;
 }
+// Are `casterName` (a spell some raider's own agent reported casting) and `row` (a landing someone else saw)
+// the same effect for precedence's sake? The same spell, a spell the row's own ambiguous crown listed as a
+// possibility (`row.family`), or two members of one shared-emote family (SLOW_AMBIG_FAMILIES: every "yawns."
+// slow prints the same line, so a bystander's crowned "Turgur's Insects" is a guess at whichever of them landed).
+function _slowSameFamily(casterName, row) {
+  const norm = (s) => String(s || '').toLowerCase().replace(/`/g, "'").trim();
+  const c = norm(casterName), r = norm(row && row.name);
+  if (!c || !r) return false;
+  if (c === r) return true;
+  if (row && Array.isArray(row.family) && row.family.some(f => norm(f) === c)) return true;
+  return SLOW_AMBIG_FAMILIES.some(f => f.family.has(c) && f.family.has(r));
+}
+// The debuffer's landing takes precedence: while a live, named, caster-reported slow is in the pool, every
+// bystander entry of the same family is dropped (it can only be the same land, seen without a spell name).
+// Caster entries all stay (two raiders' different slows are both real); bystanders of another family stay.
+function _dropSupersededBystanders(entries, nowMs) {
+  const casters = entries.filter(e => e && e.caster && !e.ambiguous && e.name && e.magnitude > 0
+    && !(e.expiresAtMs > 0 && e.expiresAtMs <= nowMs));
+  if (casters.length === 0) return entries;
+  return entries.filter(e => (e && e.caster && !e.ambiguous) || !casters.some(c => _slowSameFamily(c.name, e)));
+}
+// Record the caster-reported slows the bot's target-buffs relay carried for `targetName` (rows already through
+// _sanitizeRemoteBuffs: clock-corrected, wrong-spawn rows gone). Replaces whatever the last read stored; an
+// empty answer clears it. A slow on a reverse-slow mob is never recorded, as in _noteSlowForTarget.
+function _noteRemoteCasterSlows(targetName, remoteBuffs) {
+  const targetLower = String(targetName || '').toLowerCase();
+  if (!targetLower) return;
+  const out = [];
+  if (_reverseSlowKnown(targetName) !== true) {
+    for (const b of Array.isArray(remoteBuffs) ? remoteBuffs : []) {
+      if (!b || !b.name || !b.by_caster || !_isSlowSpell(b.name)) continue;
+      const magnitude = _slowMagnitude(b.name);
+      const landedAtMs = Number(b.observed_at_ms) || 0;
+      const total = Number(b.total_secs) > 0 ? Number(b.total_secs) : 0;
+      if (!(magnitude > 0) || !landedAtMs || !total) continue;   // a slow always has a catalog length
+      out.push({ name: b.name, magnitude, caster: b.caster || b.owner || null,
+                 targetId: Number(b.target_id) > 0 ? Number(b.target_id) : null,
+                 ambiguous: false, family: null, remote: true,
+                 landedAtMs, expiresAtMs: landedAtMs + total * 1000 });
+    }
+  }
+  if (out.length) {
+    _remoteSlowsByTarget.delete(targetLower);   // re-insert at the tail so the cap evicts the stalest
+    _remoteSlowsByTarget.set(targetLower, out);
+    if (_remoteSlowsByTarget.size > SLOW_TARGET_CAP) _remoteSlowsByTarget.delete(_remoteSlowsByTarget.keys().next().value);
+  } else {
+    _remoteSlowsByTarget.delete(targetLower);
+  }
+}
 // Best active slow on a target for DISPLAY — { name, magnitude, caster,
 // remaining_secs, total_secs, uncertain } or null. Prunes long-expired entries as it reads.
 // FB-83: `wantId` is the spawn id of the mob the reader is showing, when it knows one
@@ -8439,22 +8532,32 @@ function _pickBestActiveSlow(entries, nowMs) {
 // certain, an entry tied to a DIFFERENT id is some other mob of the same name and is
 // left out, and an id-less entry (a bystander line) may or may not be this mob: it is
 // returned with `uncertain: true`, and only when no certain entry exists.
+// CASTER PRECEDENCE (the guild lead, 2026-11-01: "The debuffer should always be the one whose buff landing takes
+// precedence"): an entry with a known `caster` (our own cast, or another raider's agent reporting its own cast)
+// names the spell exactly; a bystander emote ("<mob> yawns.") cannot. A caster entry that carries no spawn id
+// still counts as THIS mob for a reader that has one (shown certain, no "?"); only a caster entry tied to a
+// DIFFERENT spawn is left out. See _dropSupersededBystanders for what the caster entry replaces.
 function _bestSlowForTarget(targetLower, nowMs, wantId) {
   const mp = _slowsByTarget.get(targetLower);
-  if (!mp || mp.size === 0) return null;
   const now = nowMs || Date.now();
   const entries = [];
-  for (const [k, e] of mp) {
-    if (e && e.expiresAtMs > 0 && e.expiresAtMs <= now - SLOW_PRUNE_GRACE_MS) { mp.delete(k); continue; }
-    if (e) entries.push(e);
+  if (mp) {
+    for (const [k, e] of mp) {
+      if (e && e.expiresAtMs > 0 && e.expiresAtMs <= now - SLOW_PRUNE_GRACE_MS) { mp.delete(k); continue; }
+      if (e) entries.push(e);
+    }
+    if (mp.size === 0) _slowsByTarget.delete(targetLower);
   }
-  if (mp.size === 0) { _slowsByTarget.delete(targetLower); return null; }
+  const remote = _remoteSlowsByTarget.get(targetLower);
+  if (remote) for (const e of remote) if (!(e.expiresAtMs > 0 && e.expiresAtMs <= now)) entries.push(e);
+  if (entries.length === 0) return null;
   let pool = entries, uncertain = false;
   if (wantId > 0) {
-    const certain = entries.filter(e => e.targetId === wantId);
+    const certain = entries.filter(e => e.targetId === wantId || (e.caster && !e.ambiguous && !(e.targetId > 0)));
     if (_pickBestActiveSlow(certain, now)) pool = certain;
     else { pool = entries.filter(e => !(e.targetId > 0)); uncertain = true; }
   }
+  pool = _dropSupersededBystanders(pool, now);
   const best = _pickBestActiveSlow(pool, now);
   if (!best) return null;
   const remaining = best.expiresAtMs > 0 ? Math.max(0, Math.round((best.expiresAtMs - now) / 1000)) : null;
@@ -36660,6 +36763,17 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(_fightHistoryPayload(have)));
       }
+      // History → Raid: the guild's fights of tonight ({state, fights}), and one fight's board (?boss=&fight_start=).
+      // Read only while History is on screen with Raid picked; the bot is asked at most every 30 s (_raidFightsList).
+      if (req.url && (req.url === '/api/raid-fights' || req.url.indexOf('/api/raid-fights?') === 0 || req.url.indexOf('/api/raid-fights/board?') === 0)) {
+        let pathname = '', q = null;
+        try { const u = new URL(req.url, 'http://x'); pathname = u.pathname; q = u.searchParams; } catch { /* */ }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        try {
+          if (pathname === '/api/raid-fights/board') return res.end(JSON.stringify(await _raidFightBoard(q.get('boss'), q.get('fight_start'))));
+          return res.end(JSON.stringify(await _raidFightsList()));
+        } catch { return res.end(JSON.stringify({ state: 'error', fights: [], players: [] })); }
+      }
       // The Guild triggers card's list, read only while the Triggers tab is on screen and only when the
       // `guildTriggersRev` on /api/state moved. Out of /api/state so the overlays do not parse it ~10x/s.
       if (req.url && (req.url === '/api/guild-triggers' || req.url.indexOf('/api/guild-triggers?') === 0)) {
@@ -45651,6 +45765,81 @@ function _startFightHistoryPersistence() {
   _fightsPersist = true;
 }
 
+// ── Raid fights: every fight the guild uploaded tonight (DPS meter → History → Raid) ──
+// The guild lead, 2026-11-01: "B, and merged after each fight ends". The bot's GET /api/agent/raid-fights lists them, each
+// once with every client's numbers merged; a Raid row's board is the same /live-damage call History's "synced" numbers use.
+// Served to the overlay at GET /api/raid-fights and GET /api/raid-fights/board, which the overlay reads only while History
+// is on screen with Raid picked. The bot is asked at most every 30 s; an older bot (404) is not asked again for ten minutes.
+const RAID_FIGHTS_EVERY_MS = 30_000;
+const RAID_FIGHTS_BACKOFF_MS = 10 * 60_000;
+const RAID_FIGHTS_SINCE_MS = 8 * 3600_000;
+const RAID_BOARD_FULL_MS = 5 * 60_000;       // a board that has numbers
+const RAID_BOARD_EMPTY_MS = 30_000;          // one that came back empty, or failed
+const RAID_BOARD_MAX = 60;
+let _raidFights = { nextAt: 0, state: 'idle', fights: [], inflight: null, boards: new Map() };
+function _resetRaidFightsForTest() { _raidFights = { nextAt: 0, state: 'idle', fights: [], inflight: null, boards: new Map() }; }
+// The fields the overlay reads, nothing else.
+function _raidFightRow(f) {
+  return {
+    id: f.id, name: String(f.name || '').slice(0, 80), npc_id: f.npc_id == null ? null : f.npc_id,
+    started_at: f.started_at, ended_at: f.ended_at, duration_s: Number(f.duration_s) || 0, wipe: !!f.wipe,
+    clients: Number(f.clients) || 0, players: Number(f.players) || 0, top_dps: Number(f.top_dps) || 0,
+  };
+}
+async function _raidFightsList(now = Date.now()) {
+  const R = _raidFights;
+  const view = () => ({ state: R.state, fights: R.fights });
+  if (!_canAskGuildForFights()) return { state: 'offline', fights: [] };
+  if (now < R.nextAt && R.state !== 'idle') return view();
+  if (!R.inflight) {
+    R.inflight = (async () => {
+      try {
+        const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+        const since = new Date(now - RAID_FIGHTS_SINCE_MS).toISOString();
+        const r = await fetch(`${base}/raid-fights?since=${encodeURIComponent(since)}`, {
+          headers: { Authorization: `Bearer ${_uploadOpts.token}` },
+        });
+        if (r.status === 404) { R.state = 'old_bot'; R.fights = []; R.nextAt = now + RAID_FIGHTS_BACKOFF_MS; return; }
+        if (!r.ok) { R.state = 'error'; R.nextAt = now + RAID_FIGHTS_EVERY_MS; return; }   // keep the list we had
+        const j = await r.json();
+        if (!j || !Array.isArray(j.fights)) { R.state = 'error'; R.nextAt = now + RAID_FIGHTS_EVERY_MS; return; }
+        R.fights = j.fights.filter(f => f && f.id != null && f.name && f.started_at).slice(0, 60).map(_raidFightRow);
+        R.state = 'ok'; R.nextAt = now + RAID_FIGHTS_EVERY_MS;
+      } catch { R.state = 'error'; R.nextAt = now + RAID_FIGHTS_EVERY_MS; }
+    })().finally(() => { R.inflight = null; });
+  }
+  await R.inflight;
+  return view();
+}
+// One fight's board: { state, boss, players, uploaders, total }. Empty `players` = no numbers for it yet.
+async function _raidFightBoard(boss, startIso, now = Date.now()) {
+  boss = String(boss || '').slice(0, 120);
+  const startMs = Date.parse(startIso);
+  if (!boss || !Number.isFinite(startMs)) return { state: 'bad', boss, players: [], uploaders: 0, total: 0 };
+  const empty = (state) => ({ state, boss, players: [], uploaders: 0, total: 0 });
+  if (!_canAskGuildForFights()) return empty('offline');
+  const key = boss.toLowerCase() + '|' + startMs;
+  const hit = _raidFights.boards.get(key);
+  if (hit && now - hit.at < (hit.board.players.length ? RAID_BOARD_FULL_MS : RAID_BOARD_EMPTY_MS)) return hit.board;
+  let board;
+  try {
+    const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+    const r = await fetch(`${base}/live-damage?boss=${encodeURIComponent(boss)}&fight_start=${encodeURIComponent(new Date(startMs).toISOString())}`, {
+      headers: { Authorization: `Bearer ${_uploadOpts.token}` },
+    });
+    if (!r.ok) board = empty(r.status === 404 ? 'old_bot' : 'error');
+    else {
+      const j = await r.json();
+      board = j && Array.isArray(j.players)
+        ? { state: 'ok', boss, players: j.players.slice(0, 60), uploaders: j.uploaders || 0, total: j.total || 0 }
+        : empty('error');
+    }
+  } catch { board = empty('error'); }
+  if (_raidFights.boards.size >= RAID_BOARD_MAX) _raidFights.boards.delete(_raidFights.boards.keys().next().value);
+  _raidFights.boards.set(key, { at: now, board });
+  return board;
+}
+
 // ── Target history (Target Info's pager and Recent tab) ─────────────────────
 // The guild lead, 2026-10-04: "Target Info would be good to have a history (and filter for if we killed
 // it or not) forward/back button ... so we could scroll back through these mobs and see the drops"
@@ -53547,12 +53736,51 @@ function _mapAttribute(points, name, loc, grids, taken) {
 // The respawn WINDOW from a death time: respawn +/- variance, as a range and never a single time.
 // null for a point with no usable respawn (the 1,700,000 s instance sentinel).
 function _mapMakeTimer(point, diedAt, source, name) {
-  const r = Number(point && point.respawn_s), v = Math.max(0, Number(point && point.variance_s) || 0);
+  let r = Number(point && point.respawn_s), v = Math.max(0, Number(point && point.variance_s) || 0);
   if (!(r > 0) || r >= MAP_INSTANCE_SENTINEL_S || !Number.isFinite(diedAt)) return null;
+  // Slow mode (FB-114; the guild lead, 2026-11-01: "these spawns should be more like 18 hours not 20 minutes"): a
+  // Planes of Power kill made while our guild's thread is slowed respawns 18 hours after death, judged by the kill's
+  // own time (the bot's rule, utils/slowMode.js). _mapPrune rebuilds through here, so the 18 hours stick.
+  const slow = !!(point && point.slow_zone) && _mapSlowOnAt(diedAt);
+  if (slow) { r = Math.max(r, MAP_SLOW_RESPAWN_S); v = 0; }
   return {
     point_id: point.id, name: name || _mapBestName(point), died_at: diedAt,
     earliest: diedAt + Math.max(0, r - v) * 1000, latest: diedAt + (r + v) * 1000, source,
+    ...(slow ? { slow: true } : {}),
   };
+}
+// ── Slow mode, for the Map's timers: the bot's window (GET /api/agent/slow-mode), asked every 2 minutes while the Map
+// is in use. ponytail: any Planes of Power zone counts as our guild's copy while the window is open; the window is one
+// raid night (the bot turns it off after 8 hours), so a public PoP zone visited that night is the known ceiling.
+const MAP_SLOW_RESPAWN_S = 18 * 3600;
+let _mapSlowFlag = null, _mapSlowAskedAt = 0, _mapSlowBusy = false;
+function _mapSlowOnAt(atMs, flag = _mapSlowFlag) {
+  if (!flag) return false;
+  const start = Date.parse(flag.set_at);
+  const ends = [Date.parse(flag.auto_off_at), flag.on ? NaN : Date.parse(flag.off_at)].filter(Number.isFinite);
+  if (!Number.isFinite(start) || !ends.length) return false;
+  return atMs >= start && atMs < Math.min(...ends);
+}
+function _mapSlowRefresh(now) {
+  if (_mapSlowBusy || now - _mapSlowAskedAt < 120000 || !_mapFetchAllowed()) return;
+  _mapSlowBusy = true; _mapSlowAskedAt = now;
+  const opts = _uploadOpts;
+  let u;
+  try { u = new URL(opts.botUrl.replace(/\/encounter(\?.*)?$/, '/slow-mode')); } catch { _mapSlowBusy = false; return; }
+  const mod = u.protocol === 'https:' ? https : http;
+  const req = mod.request({ method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname,
+    headers: { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` }, timeout: 15000 }, (res) => {
+    const chunks = [];
+    res.on('data', c => chunks.push(c));
+    res.on('end', () => {
+      _mapSlowBusy = false;
+      if (res.statusCode !== 200) return;   // an older bot (404) or a refusal: keep what we had
+      try { const j = JSON.parse(Buffer.concat(chunks).toString('utf8')); if (j && typeof j === 'object') _mapSlowFlag = j; } catch { /* keep */ }
+    });
+  });
+  req.on('error', () => { _mapSlowBusy = false; });
+  req.on('timeout', () => { req.destroy(); });
+  req.end();
 }
 // wait = not yet (red) | flash = it just became possible | window = inside the window (yellow) | up = past it (green)
 function _mapTimerState(t, now) {
@@ -53610,8 +53838,14 @@ function _mapPrune(zdoc, points, now) {
   let changed = false;
   const byId = new Map((points || []).map(p => [String(p.id), p]));
   for (const [k, t] of Object.entries(zdoc.timers)) {
-    const fresh = t && byId.size ? _mapMakeTimer(byId.get(String(t.point_id)), t.died_at, t.source, t.name) : null;
-    if (fresh && (fresh.earliest !== t.earliest || fresh.latest !== t.latest)) { t.earliest = fresh.earliest; t.latest = fresh.latest; changed = true; }
+    let fresh = t && byId.size ? _mapMakeTimer(byId.get(String(t.point_id)), t.died_at, t.source, t.name) : null;
+    // A slow-mode timer stays as it is until the bot's window is known again (just after a restart it is not), so a
+    // boot never cuts an 18-hour timer back to its usual length and drops it.
+    if (fresh && t.slow && !fresh.slow && !_mapSlowFlag) fresh = null;
+    if (fresh && (fresh.earliest !== t.earliest || fresh.latest !== t.latest || !!fresh.slow !== !!t.slow)) {
+      t.earliest = fresh.earliest; t.latest = fresh.latest; changed = true;
+      if (fresh.slow) t.slow = true; else delete t.slow;
+    }
     if (!t || !(now <= t.latest + MAP_TIMER_KEEP_MS)) { delete zdoc.timers[k]; changed = true; }
   }
   const keepU = zdoc.unassigned.filter(u => {
@@ -53822,6 +54056,8 @@ function _mapBrewallEnsure(short, now) {
 // ── Zone data: disk first, the bot second ───────────────────────────────────────────────────────
 const _mapZones = new Map();   // short -> { short, body, byId, etag, fetchedAt, retryAt, none, inflight }
 function _mapIndexBody(rec) {
+  // A Planes of Power zone (the bot's `slow_zone`): its points take slow mode's 18 hours (_mapMakeTimer).
+  if (rec.body && rec.body.slow_zone && Array.isArray(rec.body.points)) for (const p of rec.body.points) if (p) p.slow_zone = true;
   rec.byId = new Map(((rec.body && rec.body.points) || []).map(p => [String(p.id), p]));
   rec.version = rec.body ? (rec.body.zone || rec.short) + '@' + (rec.body.generated_at || '') : null;
 }
@@ -55848,6 +56084,7 @@ function _mapStatePayload(have, now, haveLocal, haveRoute) {
   const out = { zone: null, long_name: null, zone_id: null, version: null, status: character ? 'ok' : 'no-pipe', local_only: _localOnly(),
     map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], engaged: [], unassigned: [], copy: null, cc: [], paths: {}, watched: {}, corpses: [], route_ver: null, now };
   if (!st) return out;
+  _mapSlowRefresh(now);
   out.zone_id = Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
   out.pos_at = Number.isFinite(st.updatedAt) ? st.updatedAt : null;   // when the agent last heard from Mimic: the overlay's "pos NNN ms"
   const zone = _mapZoneShort(st.zone);
@@ -56447,6 +56684,65 @@ function fetchTargetCasts(name, selfChar, targetId) {
     req.on('timeout', () => { req.destroy(); _targetCastsInflight.delete(key); });
     req.end();
   } catch { _targetCastsInflight.delete(key); }
+}
+
+// A landing's clock can be an hour off (the guild lead, 2026-11-01: the clocks went back, one PC kept stamping
+// its log an hour AHEAD, so a 65-tick slow showed "659/65 · 1h05"). Where the stamp puts the landing in the
+// future — past the spell's whole length plus 6 s (remaining > total + 6 s), or more than 2 minutes ahead when
+// no length is known — it is moved back by the nearest whole number of hours IF that puts it inside the spell's
+// length; a landing that still does not fit is dropped (null). A stamp under 2 minutes ahead is ordinary
+// clock skew between two PCs: kept, as "just landed". Pure; `castAtMs` / `nowMs` are epoch ms, `totalSecs` the
+// catalog length or 0 when unknown. Returns { castAtMs, shifted } or null.
+function _reconcileLandingClock(castAtMs, totalSecs, nowMs) {
+  const HOUR_MS = 3600000, SKEW_MS = 120000, GRACE_MS = 6000;
+  const ageMs = nowMs - castAtMs;
+  const total = totalSecs > 0 ? totalSecs : 0;
+  if (ageMs >= -(total > 0 ? GRACE_MS : SKEW_MS)) return { castAtMs, shifted: false };
+  if (-ageMs <= SKEW_MS) return { castAtMs: nowMs, shifted: false };   // a little ahead, not an hour
+  const hours = Math.round(-ageMs / HOUR_MS);
+  if (hours < 1) return null;                                          // minutes ahead: no shift explains it
+  const back = castAtMs - hours * HOUR_MS;
+  const backAge = nowMs - back;
+  if (backAge < -SKEW_MS) return null;                      // still ahead of now
+  if (total > 0 && backAge > total * 1000) return null;     // would already have worn off
+  return { castAtMs: Math.min(back, nowMs), shifted: true };
+}
+// The relay's rows, made safe to show: a row proven to be a DIFFERENT spawn than the one on screen is dropped
+// (the bot already scopes by id; this is for a bot that does not yet send it), and each row's landing time goes
+// through _reconcileLandingClock. Rows it cannot place are dropped. An untouched row is returned as the same
+// object; a corrected one is a copy with the new time, the time left recomputed, and clock_shifted: true.
+function _sanitizeRemoteBuffs(buffs, nowMs, wantId) {
+  if (!Array.isArray(buffs)) return [];
+  const out = [];
+  for (const b of buffs) {
+    if (!b || !b.name) continue;
+    if (wantId > 0 && Number(b.target_id) > 0 && Number(b.target_id) !== wantId) continue;
+    const at = Number(b.observed_at_ms) || 0;
+    if (!at) { out.push(b); continue; }
+    const total = Number(b.total_secs) > 0 ? Number(b.total_secs) : 0;
+    const fix = _reconcileLandingClock(at, total, nowMs);
+    if (!fix) continue;
+    if (fix.castAtMs === at) { out.push(b); continue; }
+    out.push({ ...b, observed_at_ms: fix.castAtMs, clock_shifted: fix.shifted,
+      remaining_secs: total > 0 ? Math.max(0, Math.round(total - (nowMs - fix.castAtMs) / 1000)) : b.remaining_secs });
+  }
+  return out;
+}
+// The debuffer's landing takes precedence (the guild lead, 2026-11-01). A relay row flagged `by_caster` is a
+// landing its CASTER's own agent reported (the bot's self_cast flag); it replaces, in the merged debuff list,
+// every bystander landing of the same effect: the same spell, or another member of its shared-emote family
+// (_slowSameFamily). Bystander rows stay when no caster row covers them. Local rows that are our own casts
+// (`by_caster`) are never replaced. Returns { local, remote } filtered; a caster row gets `caster` named so
+// the later cast-relay lookup leaves it alone.
+function _applyDebufferPrecedence(local, remote) {
+  const casters = remote.filter(b => b && b.by_caster);
+  if (casters.length === 0) return { local, remote };
+  const covered = (row) => casters.some(c => _slowSameFamily(c.name, row));
+  return {
+    local: local.filter(l => !l || l.by_caster || !covered(l)),
+    remote: remote.filter(b => b && (b.by_caster || !covered(b))).map(b =>
+      (b.by_caster && !b.caster && b.owner) ? { ...b, caster: b.owner } : b),
+  };
 }
 
 // Name the caster of each Target Info effect (the guild lead, 2026-10-08: mousing over the time left
@@ -57509,7 +57805,7 @@ function _mobTrackGc(nowMs) {
 function _clearNameObservations(nameLower) {
   if (!nameLower) return;
   try { _buffLandingsByTarget.delete(nameLower); } catch { /* */ }
-  try { _slowsByTarget.delete(nameLower); _slowCalloutState.delete(nameLower); } catch { /* */ }
+  try { _slowsByTarget.delete(nameLower); _slowCalloutState.delete(nameLower); _remoteSlowsByTarget.delete(nameLower); } catch { /* */ }
   try { _extMobHpHist.delete(nameLower); _extMobResetAt.delete(nameLower); } catch { /* */ }
   try { _mobTicks.delete(nameLower); } catch { /* */ }   // the next spawn has its own tick
 }
@@ -58239,8 +58535,14 @@ function buildMobInfo() {
   } else if (liveBuffs !== null) {
     buffs = liveBuffs;
   } else {
-    const local  = targetBuffsFor(tnameLower, _curIdForRelay);
-    const remote = (ctb && Array.isArray(ctb.buffs)) ? ctb.buffs : [];
+    const nowRelay = Date.now();
+    // The relay's rows, clock-corrected (an hour-ahead stamp is put back or dropped), then the debuffer's
+    // landing outranks a bystander's of the same effect — in this list and in the slow badge below.
+    const remoteOk = _sanitizeRemoteBuffs((ctb && Array.isArray(ctb.buffs)) ? ctb.buffs : [], nowRelay, _curIdForRelay);
+    try { _noteRemoteCasterSlows(st.target_name, remoteOk); } catch { /* the badge falls back to local landings */ }
+    const prec = _applyDebufferPrecedence(targetBuffsFor(tnameLower, _curIdForRelay), remoteOk);
+    const local  = prec.local;
+    const remote = prec.remote;
     const seen = new Set(local.map(b => String(b.name || '').toLowerCase()));
     buffs = local.slice();
     for (const b of remote) {
@@ -64360,8 +64662,13 @@ async function main() {
       const HAIL_SELF_WINDOW_MS = 8000;
       let _hailFound = false;
       let _pendingSelfHail = null;   // #176 { target, atMs } — set on OUR own hail
+      const _logClock = { shiftH: 0, candH: 0, offRun: 0, okRun: 0 };
       await tailFile(b.logPath, line => {
         if (watched) { watched.lastSeen = Date.now(); }
+        // A log a whole hour off this PC's clock (the clocks changing): put its live lines back on the hour first.
+        line = _fixLogClock(line, _logClock, Date.now(), (h) => console.log(h
+          ? `[clock] ${b.character || path.basename(b.logPath)}: this log's times are ${Math.abs(h)} hour${Math.abs(h) === 1 ? '' : 's'} ${h > 0 ? 'ahead of' : 'behind'} this PC's clock; correcting them`
+          : `[clock] ${b.character || path.basename(b.logPath)}: this log's times match this PC's clock again`));
         // Your own timers pause while you are logged out: the earliest point every raw line passes, before any
         // privacy filter drops it, with the character known. Keeps "when did this log last speak" and spots the login.
         try { _noteOwnRawLine(line, b.character); } catch (e) { void e; }
@@ -66457,12 +66764,16 @@ async function _rescanFile(file, ctx, sink) {
     let carry = null;
     let workStart = Date.now();
     sink.prev = null; sink.prevPassed = false;
+    const pos0 = pos;
+    ctx.frac = 0;                              // how far into THIS file (the status route's progress)
     while (pos < size && ctx.bytes > 0 && !ctx.stop) {
-      if (_liveFightActive() && ctx.waited < RESCAN_MAX_WAIT_MS) { ctx.waited += 1500; await _rescanSleep(1500); continue; }
+      if (_liveFightActive() && ctx.waited < RESCAN_MAX_WAIT_MS) { ctx.paused = true; ctx.waited += 1500; await _rescanSleep(1500); continue; }
+      ctx.paused = false;
       const want = Math.min(chunk.length, ctx.bytes, size - pos);
       const { bytesRead } = await fh.read(chunk, 0, want, pos);
       if (bytesRead <= 0) break;
       pos += bytesRead; ctx.bytes -= bytesRead;
+      ctx.frac = Math.min(1, (pos - pos0) / Math.max(1, size - pos0));
       const data = carry ? Buffer.concat([carry, chunk.subarray(0, bytesRead)]) : chunk.subarray(0, bytesRead);
       const nl = data.lastIndexOf(10);
       if (nl < 0) { carry = data.length > (1 << 20) ? null : Buffer.from(data); continue; }
@@ -66484,7 +66795,7 @@ async function _rescanFile(file, ctx, sink) {
     }
     if (carry && carry.length && !ctx.stop) { try { _rescanLine(carry.toString('utf8').replace(/\r$/, ''), file.character, ctx.sinceMs, sink); } catch { void 0; } }
     return true;
-  } catch { return false; } finally { try { await fh.close(); } catch { void 0; } }
+  } catch { return false; } finally { ctx.paused = false; try { await fh.close(); } catch { void 0; } }
 }
 // The per-character module state the readers keep (the line before, the last hail, the #popflags time state) is
 // the LIVE tail's: a re-read starts from nothing and puts every entry back, so it can neither borrow the live
@@ -66589,7 +66900,7 @@ async function _rescanRun(req, prog) {
       if (prog) prog.current = f.character;
       if (await _rescanFile(f, ctx, sink)) opened++;
       sink.flush();
-      if (prog) prog.filesDone++;
+      if (prog) { prog.filesDone++; ctx.frac = 0; }
     }
     exportsRead = _rescanPopFlagsExports(files, sink, mode);
     if (prog) prog.exports = exportsRead;
@@ -66704,6 +67015,10 @@ function _rescanStatus() {
       startedAt: p.startedAt, finishedAt: p.finishedAt || null, days: p.days || null,
       files: p.files || 0, filesDone: p.filesDone || 0, excluded: p.excluded || [],
       bytesRead: p.ctx ? RESCAN_MAX_BYTES - p.ctx.bytes : 0,
+      // Waiting out a live fight (the read resumes between pulls), and how far along: 0..1 across the files, or
+      // null before the first file has been sized.
+      paused: p.state === 'running' && !!(p.ctx && p.ctx.paused),
+      progress: p.state === 'done' ? 1 : (p.files && p.ctx ? Math.min(1, ((p.filesDone || 0) + (p.ctx.frac || 0)) / p.files) : null),
       found: p.result ? p.result.found : (p.sink ? p.sink.found : 0),
       logs: p.result ? p.result.logs : 0,
       exports: p.result ? p.result.exports : (p.exports || 0),
@@ -67950,6 +68265,7 @@ module.exports = {
   // Meter History on disk + its own endpoint (2026-10-04).
   FIGHT_HISTORY_MAX, FIGHT_HISTORY_KEEP_MS, _saveFightHistory, _loadFightHistory, _resettleRestoredFights,
   _fightHistoryPayload, _setUploadOptsForTest: (o) => { _uploadOpts = o; },
+  _raidFightsList, _raidFightBoard, _resetRaidFightsForTest,
   // Target Info history (2026-10-19): the last 50 targets, the frame hook, the slain-line hook, the past-mob shape and its endpoint.
   TGT_HIST_MAX, TGT_HIST_KEEP_MS, _tgtHistNoteFromState, _tgtHistNoteSlain, _targetHistoryPayload, _pastMobInfo,
   _saveTargetHistory, _loadTargetHistory, _trimTargetHistory,

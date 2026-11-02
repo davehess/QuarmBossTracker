@@ -28,6 +28,32 @@
   .row label{margin:0;color:var(--wp-text);font-size:12px}
   button{margin-top:14px;background:var(--wp-accent);border:none;color:#fff;padding:8px 16px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:12px}
   button:disabled{opacity:0.6;cursor:wait}
+  /* UI Studio compare-first restore, Keep in sync, This PC (the guild lead, 2026-11-01). */
+  .uicmp{border:1px solid var(--wp-border);border-radius:6px;background:var(--wp-bg);padding:10px 12px;font-size:12px}
+  .uicmp .src{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;color:var(--wp-text)}
+  .uicmp .src span.m{color:var(--wp-dim)}
+  .uicmp .thumbs{display:flex;gap:12px;margin:10px 0 4px;flex-wrap:wrap}
+  .uicmp .scr{position:relative;width:150px;height:84px;border:1px solid var(--wp-border);border-radius:3px;background:color-mix(in srgb, black 30%, var(--wp-bg));overflow:hidden}
+  .uicmp .scr i{position:absolute;background:color-mix(in srgb, var(--wp-blue) 20%, var(--wp-bg));border:1px solid color-mix(in srgb, var(--wp-blue) 40%, var(--wp-bg));border-radius:2px;box-sizing:border-box}
+  .uicmp .cap{font-size:10px;color:var(--wp-dim);text-align:center;margin-top:3px}
+  .uicmp table{width:100%;border-collapse:collapse;margin-top:8px}
+  .uicmp th{text-align:left;color:var(--wp-dim);font-weight:normal;font-size:10px;padding:3px 4px;border-bottom:1px solid var(--wp-border)}
+  .uicmp td{padding:6px 4px;border-bottom:1px solid var(--wp-border);vertical-align:top;font-size:11px}
+  .uicmp td.d{color:var(--wp-dim)}
+  .uicmp td.d.chg{color:var(--wp-gold)}
+  .uicmp .seg{display:inline-flex;border:1px solid var(--wp-border);border-radius:4px;overflow:hidden}
+  .uicmp .seg button{margin:0;border:none;border-radius:0;background:transparent;color:var(--wp-dim);padding:3px 8px;font-size:10px;white-space:nowrap}
+  .uicmp .seg button.on{background:var(--wp-accent);color:white}
+  .uicmp .never{margin-top:10px;font-size:11px;color:var(--wp-dim);background:color-mix(in srgb, var(--wp-gold) 6%, var(--wp-bg));border:1px solid color-mix(in srgb, var(--wp-gold) 25%, var(--wp-bg));border-radius:5px;padding:6px 8px}
+  .uicmp .acts{display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:10px}
+  .uicmp .acts button{margin:0}
+  .uicmp .acts .sec{background:transparent;border:1px solid var(--wp-border);color:var(--wp-text)}
+  .uichips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 2px}
+  .uichips label{display:inline-flex;align-items:center;gap:4px;margin:0;font-size:11px;color:var(--wp-text);border:1px solid var(--wp-border);border-radius:12px;padding:2px 8px;cursor:pointer}
+  .uikv{display:grid;grid-template-columns:140px 1fr;gap:6px 10px;font-size:12px;align-items:center}
+  .uikv .k{color:var(--wp-dim)}
+  .uisugg{margin-top:8px;border:1px solid color-mix(in srgb, var(--wp-green) 30%, var(--wp-bg));background:color-mix(in srgb, var(--wp-green) 6%, var(--wp-bg));border-radius:5px;padding:7px 9px;font-size:12px;display:flex;gap:10px;align-items:center;justify-content:space-between}
+  .uisugg button{margin:0;padding:4px 10px;font-size:11px}
   button.success{background:#1a7f37}
   button.error{background:#a3260a}
   .lock{color:#f6c365}
@@ -158,8 +184,12 @@
     <div class="sub" style="margin-top:8px">Writes <b>Log=TRUE</b> (<code>eqclient.ini</code>) + <b>ExportOnCamp</b> / <b>PipeDelay</b> / <b>PipeVerbose</b> (<code>zeal.ini</code>) across every folder above — the settings that make logging and raid/HP data flow. <b>Close EverQuest first</b> (it overwrites <code>eqclient.ini</code> on exit). Already in-game? Type <code>/log on</code> to start logging this session; the Zeal settings apply on next EQ launch.</div>
   </div>
 
-  <h2>UI Studio <span style="background:#7c4a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">BETA</span></h2>
+  <h2 id="uistudio">UI Studio <span style="background:#7c4a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">BETA</span></h2>
   <div class="sub">Back up your EQ window layout, hotkeys, chat tabs, bandolier, socials, and <code>eqclient.ini</code> to wolfpack.quest. Restore on any computer so you don't have to drag every window again. Files are encrypted before they leave this machine.</div>
+
+  <div id="uiSyncPrompts"></div>
+  <div id="uiSyncPanel" style="margin-top:10px"></div>
+  <div id="uiThisPc" style="margin-top:10px"></div>
 
   <div id="uiStudioPanel" style="margin-top:10px">
     <div class="hint" id="uiStudioStatus">Scanning for characters…</div>
@@ -591,6 +621,7 @@
   async function _renderUiStudio() {
     const status = document.getElementById('uiStudioStatus');
     const list   = document.getElementById('uiStudioCharList');
+    _uiRenderSync(); _uiRenderThisPc();
     try { _uiStudioChars = await window.mimic.uiStudioListCharacters(); }
     catch (e) { status.textContent = '✕ ' + (e && e.message ? e.message : String(e)); return; }
     if (!_uiStudioChars || _uiStudioChars.length === 0) {
@@ -621,6 +652,132 @@
     if (n.includes('spellsets')) return 'spell sets';
     if (n.includes('_protected')) return 'Zeal protected items';
     return '';
+  }
+
+  // ── Compare-first restore, Keep in sync, This PC (the guild lead, 2026-11-01) ──
+  function _uiEsc(t) { return String(t == null ? '' : t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+  function _uiRes(w, h) { return w && h ? w + '×' + h : 'unknown size'; }
+  function _uiThumb(rects) {
+    return '<div class="scr">' + (rects || []).map(r =>
+      '<i style="left:' + (r.x * 100).toFixed(1) + '%;top:' + (r.y * 100).toFixed(1) + '%;width:' + (r.w * 100).toFixed(1) +
+      '%;height:' + (r.h * 100).toFixed(1) + '%"></i>').join('') + '</div>';
+  }
+  // A backup compared with this PC's files, part by part. Keep mine / Backup per part; nothing is written until
+  // the button, and then only the parts set to Backup, merged into the files as they are (main.js ui-restore-parts).
+  async function _uiRenderCompare(box, t) {
+    box.innerHTML = '<div class="uicmp"><span style="color:var(--wp-dim)">Comparing with this PC…</span></div>';
+    let p;
+    try { p = await window.mimic.uiRestorePlan(t); } catch (err) { p = { ok: false, error: err && err.message }; }
+    if (!p || !p.ok) { box.innerHTML = '<div class="uicmp" style="color:var(--wp-red)">✕ ' + _uiEsc(p && p.error ? p.error : 'could not compare') + '</div>'; return; }
+    const use = {};
+    // Default: take the backup where it differs, except keybinds (shared by every character on this PC).
+    p.parts.forEach(x => { use[x.key] = x.inBackup && !x.same && x.scope !== 'all' ? 'backup' : 'mine'; });
+    const when = p.busy === 'camp' ? ' when ' + t.character + ' camps' : p.busy === 'close' ? ' when EverQuest closes' : ' now';
+    function paint() {
+      const n = p.parts.filter(x => use[x.key] === 'backup').length;
+      box.innerHTML = '<div class="uicmp">' +
+        '<div class="src"><span>📦 <b>' + _uiEsc(p.source.machine || 'backup') + '</b> <span class="m">' + _uiRes(p.source.w, p.source.h) + '</span></span>' +
+          '<span style="color:var(--wp-gold)">vs</span><span>💻 <b>This PC</b> <span class="m">' + _uiRes(p.target.w, p.target.h) + '</span></span></div>' +
+        (p.preview.backup.length || p.preview.mine.length
+          ? '<div class="thumbs"><div>' + _uiThumb(p.preview.backup) + '<div class="cap">backup, fitted to this screen</div></div>' +
+            '<div>' + _uiThumb(p.preview.mine) + '<div class="cap">this PC now</div></div></div>' : '') +
+        '<table><tr><th>Part</th><th>Difference</th><th>Use</th></tr>' + p.parts.map(x => {
+          const can = x.inBackup > 0 && !x.same;
+          const diff = x.summary + (x.scope === 'all' && x.inBackup ? ' · all characters' : '');
+          return '<tr><td>' + _uiEsc(x.label) + '</td><td class="d' + (can ? ' chg' : '') + '">' + _uiEsc(diff) + '</td><td>' +
+            (can ? '<span class="seg"><button type="button" data-part="' + x.key + '" data-use="mine" class="' + (use[x.key] === 'mine' ? 'on' : '') + '">Keep mine</button>' +
+                   '<button type="button" data-part="' + x.key + '" data-use="backup" class="' + (use[x.key] === 'backup' ? 'on' : '') + '">Backup</button></span>'
+                 : '<span style="color:var(--wp-dim)">—</span>') + '</td></tr>';
+        }).join('') + '</table>' +
+        '<div class="never">🔒 Never copied between PCs: screen mode and resolution, chat-channel passwords. Your current files are kept as .bak copies.</div>' +
+        '<div class="acts"><span class="msg" style="font-size:11px;margin-right:auto"></span><button type="button" class="sec" data-act="cancel">Cancel</button>' +
+          '<button type="button" data-act="go"' + (n ? '' : ' disabled') + '>Restore ' + n + ' part' + (n === 1 ? '' : 's') + _uiEsc(when) + '</button></div></div>';
+      box.querySelectorAll('[data-part]').forEach(b => b.addEventListener('click', () => { use[b.dataset.part] = b.dataset.use; paint(); }));
+      box.querySelector('[data-act="cancel"]').addEventListener('click', () => { box.innerHTML = ''; if (box.parentNode && box.parentNode.dataset.restoreFor) box.parentNode.style.display = 'none'; if (t.onDone) t.onDone(false); });
+      box.querySelector('[data-act="go"]').addEventListener('click', async (e) => {
+        const msg = box.querySelector('.msg');
+        e.target.disabled = true; msg.style.color = 'var(--wp-dim)'; msg.textContent = 'Restoring…';
+        let r;
+        try { r = await window.mimic.uiRestoreParts({ character: t.character, eqDir: t.eqDir, id: t.id, parts: p.parts.filter(x => use[x.key] === 'backup').map(x => x.key) }); }
+        catch (err) { r = { ok: false, error: err && err.message }; }
+        if (r && r.ok) {
+          msg.style.color = 'var(--wp-green)';
+          msg.textContent = r.queued
+            ? '✓ Queued. It applies' + (r.busy === 'camp' ? ' when ' + t.character + ' camps.' : ' when EverQuest closes.')
+            : '✓ Restored (' + (r.written ? r.written.length : 0) + ' file' + (r.written && r.written.length === 1 ? '' : 's') + ' changed).';
+          if (t.onDone) t.onDone(true);
+        } else { msg.style.color = 'var(--wp-red)'; msg.textContent = '✕ ' + (r && r.error ? r.error : 'restore failed'); e.target.disabled = false; }
+      });
+    }
+    paint();
+  }
+  const _UI_SYNC_PARTS = [['layout', 'Layout'], ['hotkeys', 'Hotkeys'], ['socials', 'Socials'], ['spellsets', 'Spell sets'], ['keybinds', 'Keybinds'], ['zeal', 'Zeal'], ['other', 'Other']];
+  async function _uiRenderSync() {
+    const box = document.getElementById('uiSyncPanel');
+    let s;
+    try { s = await window.mimic.uiSyncGet(); } catch { return; }
+    if (!s) return;
+    box.innerHTML = '<div style="color:var(--wp-gold);font-size:13px;margin-bottom:4px">Keep in sync</div>' +
+      '<div class="hint" style="margin:0 0 6px">Backs up when you camp or close EQ (chat-channel passwords left out). A newer copy from another PC is only ever applied while that character is signed out.</div>' +
+      '<div class="row"><input type="checkbox" id="uiSyncAuto"' + (s.autoBackup ? ' checked' : '') + '><label for="uiSyncAuto">Back up each character when it camps</label></div>' +
+      '<div class="uikv" style="margin-top:6px"><span class="k">Newer copy from another PC</span><span><select id="uiSyncNewer" style="background:var(--wp-panel);color:var(--wp-text);border:1px solid var(--wp-border);border-radius:4px;padding:3px 6px;font-family:inherit">' +
+        [['ask', 'Ask me'], ['quiet', 'Apply quietly'], ['never', 'Never']].map(o => '<option value="' + o[0] + '"' + (s.newer === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select></span></div>' +
+      '<div class="hint" style="margin-top:8px">Bring over from another PC:</div><div class="uichips">' +
+        _UI_SYNC_PARTS.map(([k, l]) => '<label><input type="checkbox" data-syncpart="' + k + '"' + (s.parts.includes(k) ? ' checked' : '') + '>' + l + '</label>').join('') + '</div>' +
+      '<div class="hint">Keybinds are shared by every character on a PC, so they are off unless you tick them. "Ask me" opens the comparison so you choose each time.</div>';
+    const save = async () => {
+      const parts = [...box.querySelectorAll('[data-syncpart]')].filter(i => i.checked).map(i => i.dataset.syncpart);
+      try { await window.mimic.uiSyncSet({ autoBackup: document.getElementById('uiSyncAuto').checked, newer: document.getElementById('uiSyncNewer').value, parts }); } catch {}
+    };
+    box.querySelectorAll('input,select').forEach(el => el.addEventListener('change', save));
+    _uiRenderPrompts(s.prompts || []);
+  }
+  // "Ask me": a newer backup from another PC waits here (and in a Windows notification that opens this page).
+  function _uiRenderPrompts(prompts) {
+    const box = document.getElementById('uiSyncPrompts');
+    box.innerHTML = prompts.map((q, i) =>
+      '<div data-qwrap style="border:1px solid color-mix(in srgb, var(--wp-blue) 40%, var(--wp-bg));background:color-mix(in srgb, var(--wp-blue) 8%, var(--wp-bg));border-radius:6px;padding:8px 10px;margin:8px 0;font-size:12px">' +
+        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span>🔄 <b>' + _uiEsc(q.character) + '</b> has a newer UI from <b>' + _uiEsc(q.machine) + '</b>' +
+          (q.created_at ? ' <span style="color:var(--wp-dim)">(' + _uiEsc(new Date(q.created_at).toLocaleString()) + ')</span>' : '') + '</span>' +
+          '<button type="button" data-q="' + i + '" data-qa="cmp" style="margin:0 0 0 auto;padding:3px 10px;font-size:11px">Compare</button>' +
+          '<button type="button" data-q="' + i + '" data-qa="no" style="margin:0;padding:3px 10px;font-size:11px;background:transparent;border:1px solid var(--wp-border);color:var(--wp-text)">Not now</button></div>' +
+        '<div data-qbox="' + i + '" style="margin-top:8px"></div></div>').join('');
+    box.querySelectorAll('[data-qa]').forEach(b => b.addEventListener('click', () => {
+      const q = prompts[parseInt(b.dataset.q, 10)];
+      if (b.dataset.qa === 'no') { window.mimic.uiSyncDismiss(q.character).catch(() => {}); b.closest('[data-qwrap]').remove(); return; }
+      _uiRenderCompare(box.querySelector('[data-qbox="' + b.dataset.q + '"]'), { ...q, onDone: (ok) => { if (ok) window.mimic.uiSyncDismiss(q.character).catch(() => {}); } });
+    }));
+  }
+  async function _uiRenderThisPc() {
+    const box = document.getElementById('uiThisPc');
+    let t;
+    try { t = await window.mimic.uiThisPc(); } catch { return; }
+    if (!t) return;
+    const scr = (t.displays || []).map(d => _uiRes(d.w, d.h) + (d.scale && d.scale !== 1 ? ' at ' + Math.round(d.scale * 100) + '%' : '') + (d.id === t.homeId ? ' (overlays)' : '')).join(', ');
+    const sizes = [21, 22, 24, 27, 28, 32, 34, 38, 42, 48];
+    const sg = t.suggestion;
+    box.innerHTML = '<div style="color:var(--wp-gold);font-size:13px;margin-bottom:6px">This PC</div><div class="uikv">' +
+      '<span class="k">EQ runs at</span><span>' + (t.eq ? _uiRes(t.eq.w, t.eq.h) + ' <span class="hint">(read from EQ\'s settings)</span>' : '<span class="hint">not found in eqclient.ini</span>') + '</span>' +
+      '<span class="k">Screens</span><span>' + (t.displays || []).length + ' · ' + _uiEsc(scr) + '</span>' +
+      '<span class="k">Overlay screen size</span><span><select id="uiInches" style="background:var(--wp-panel);color:var(--wp-text);border:1px solid var(--wp-border);border-radius:4px;padding:3px 6px;font-family:inherit">' +
+        '<option value="">not set</option>' + sizes.map(n => '<option value="' + n + '"' + (t.inches === n ? ' selected' : '') + '>' + n + ' in</option>').join('') +
+        (t.inches && !sizes.includes(t.inches) ? '<option value="' + t.inches + '" selected>' + t.inches + ' in</option>' : '') +
+      '</select> <span class="hint">optional</span></span></div>' +
+      (sg ? '<div class="uisugg"><span>💡 Suggested overlay size: <b>' + sg.percent + '%</b>' + (Math.round((t.scale || 1) * 100) === sg.percent ? ' (what you have)' : ' (now ' + Math.round((t.scale || 1) * 100) + '%)') +
+        '<br><span class="hint">' + _uiEsc(sg.why) + '</span></span>' +
+        (Math.round((t.scale || 1) * 100) === sg.percent ? '' : '<button type="button" id="uiSuggApply">Apply</button>') + '</div>' : '') +
+      '<div class="hint" style="margin-top:6px">Backups made on this PC now record ' + (t.eq ? 'EQ\'s ' + _uiRes(t.eq.w, t.eq.h) : 'this screen\'s size') + ', so a restore elsewhere knows how to fit the layout.</div>';
+    document.getElementById('uiInches').addEventListener('change', async (e) => {
+      try { await window.mimic.uiThisPcInches(e.target.value ? Number(e.target.value) : null); } catch {}
+      _uiRenderThisPc();
+    });
+    const ap = document.getElementById('uiSuggApply');
+    if (ap) ap.addEventListener('click', async () => {
+      try { await window.mimic.setOverlayScale(sg.scale); } catch {}
+      const sl = document.getElementById('overlayScale');
+      if (sl) { sl.value = String(sg.percent); const v = document.getElementById('overlayScaleVal'); if (v) v.textContent = sg.percent + '%'; }
+      _uiRenderThisPc();
+    });
   }
 
   function _paintUiStudio() {
@@ -716,10 +873,11 @@
                   '<td style="padding:3px 4px;color:#8b949e">' + s.file_count + '</td>' +
                   '<td style="padding:3px 4px;text-align:right;white-space:nowrap">' +
                     '<button type="button" class="ui-files" data-id="' + s.id + '" data-charidx="' + idx + '" style="margin:0 4px 0 0;padding:3px 9px;font-size:10px;background:#21262d;border:1px solid #2a3140;color:var(--wp-text)">📄 Files</button>' +
-                    '<button type="button" class="ui-restore" data-id="' + s.id + '" data-charidx="' + idx + '" style="margin:0;padding:3px 9px;font-size:10px;background:#1a7f37">↩ Restore</button>' +
+                    '<button type="button" class="ui-restore" data-id="' + s.id + '" data-charidx="' + idx + '" data-machine="' + _uiEsc(s.machine_name || '') + '" style="margin:0;padding:3px 9px;font-size:10px;background:#1a7f37">↩ Restore</button>' +
                   '</td>' +
                 '</tr>' +
-                '<tr data-files-for="' + s.id + '" style="display:none"><td colspan="5" style="padding:4px 6px 8px"></td></tr>'
+                '<tr data-files-for="' + s.id + '" style="display:none"><td colspan="5" style="padding:4px 6px 8px"></td></tr>' +
+                '<tr data-restore-for="' + s.id + '" style="display:none"><td colspan="5" style="padding:4px 0 8px"></td></tr>'
               ).join('') +
             '</table>';
             // 📄 Files: what is inside a backup (the guild lead, 2026-10-04: "What 19 files were
@@ -757,28 +915,15 @@
             });
             slot.querySelectorAll('.ui-restore').forEach(b => {
               b.addEventListener('click', async (ev) => {
-                const sid     = ev.target.dataset.id;
-                const charIdx = parseInt(ev.target.dataset.charidx, 10);
-                const ch      = chars[charIdx];
-                if (!confirm('Restore this backup to ' + ch.eqDir + '?\n\nExisting files will be backed up with a .bak-<timestamp> suffix. EQ must be closed.')) return;
-                const msg = list.querySelector('[data-msg="' + charIdx + '"]');
-                msg.style.color = '#8b949e'; msg.textContent = 'Restoring…';
-                ev.target.disabled = true;
-                try {
-                  const r2 = await window.mimic.uiStudioRestore({ character: ch.character, id: sid, eqDir: ch.eqDir, clamp: true });
-                  if (r2 && r2.ok) {
-                    msg.style.color = 'var(--wp-green)';
-                    msg.textContent = '✓ ' + (r2.note || ('Restored ' + (r2.written ? r2.written.length : 0) + ' file(s).'));
-                  } else {
-                    msg.style.color = '#f87171';
-                    msg.textContent = '✕ ' + (r2 && r2.error ? r2.error : 'restore failed');
-                  }
-                } catch (err) {
-                  msg.style.color = '#f87171';
-                  msg.textContent = '✕ ' + (err && err.message ? err.message : String(err));
-                } finally {
-                  ev.target.disabled = false;
-                }
+                // Compare first (the guild lead, 2026-11-01, picked B): what each part would change, and a
+                // Keep mine / Backup choice per part, before anything is written.
+                const sid = ev.target.dataset.id;
+                const ch  = chars[parseInt(ev.target.dataset.charidx, 10)];
+                const row = slot.querySelector('[data-restore-for="' + sid + '"]');
+                if (!row) return;
+                if (row.style.display !== 'none') { row.style.display = 'none'; return; }
+                row.style.display = '';
+                _uiRenderCompare(row.firstChild, { character: ch.character, eqDir: ch.eqDir, id: sid, machine: ev.target.dataset.machine || null });
               });
             });
           }
@@ -947,7 +1092,8 @@
     setTimeout(() => { try { el.scrollIntoView({ block: 'start' }); } catch {} }, 700);
   }
   // Already open: main sends the part to show instead of reloading.
-  if (window.mimic && window.mimic.onSettingsGoto) window.mimic.onSettingsGoto(_gotoSection);
+  // A "newer UI on another PC" notification opens UI Studio here: show its prompt, then scroll to it.
+  if (window.mimic && window.mimic.onSettingsGoto) window.mimic.onSettingsGoto((sec) => { if (sec === 'uistudio') _uiRenderSync(); _gotoSection(sec); });
 
   // Overlay scale — label follows the drag; the scale applies on RELEASE
   // ('change'), and main glides every overlay's zoom + window bounds to the
