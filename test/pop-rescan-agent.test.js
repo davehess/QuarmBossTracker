@@ -45,7 +45,7 @@ function load(world = {}) {
     + 'function parsePopFlagLine(l, c) { __calls.push(l); return _realParsePopFlagLine(l, c); }\n'
     + pfBlock + '\n' + netBlock + '\n' + seekBlock + '\n' + readBodyBlock + '\n' + rescanBlock
     + '\nreturn { _rescanWants, _rescanLine, _rescanFile, _rescanIsolate, _rescanRun, _applyRescanResponse, _rescan, _pfState, _popPrevLine, _popLastHail, parsePopFlagLine, RESCAN_MAX_BYTES, RESCAN_MAX_WAIT_MS,'
-    + ' _rescanArgs, _rescanLocalStart, _rescanStatus, _localPopRescanRoute, _rescanUploadMode, _rescanCharacters, RESCAN_MAX_DAYS, RESCAN_BODY_MAX };';
+    + ' _rescanArgs, _rescanLocalStart, _rescanStatus, _localPopRescanRoute, _rescanUploadMode, _rescanCharacters, RESCAN_MAX_DAYS, RESCAN_BODY_MAX, RESCAN_LINES_MAX, _rescanFightNow };';
   // eslint-disable-next-line no-new-func
   const M = new Function('__calls', ...names, body)(calls, ...names.map(k => w[k]));
   return { M, calls, world: w };
@@ -78,6 +78,8 @@ function makeLog(name, extra, n = 14000) {
 }
 const sink = () => ({ events: [], found: 0, prev: null, prevPassed: false, flush() {} });
 const chars = (c) => [c];
+// A fight as the read sees it: the fight snapshot, published just now while `on()` says so.
+const fightStats = (on) => ({ get currentEncounterThreat() { return on() ? { publishedAt: Date.now() } : null; } });
 
 describe('the gate: only lines the PoP parsers already take', () => {
   const { M } = load();
@@ -202,7 +204,7 @@ describe('reading a real log', () => {
   });
   it('pauses while a fight is live (bounded), then reads', async () => {
     let calls = 0;
-    const { M } = load({ _liveFightActive: () => ++calls <= 1 });
+    const { M } = load({ stats: fightStats(() => ++calls <= 1) });
     const ctx = { sinceMs: SINCE, bytes: M.RESCAN_MAX_BYTES, waited: 0, stop: false };
     const t0 = Date.now();
     await M._rescanFile({ path: file, character: 'Aldenmar' }, ctx, sink());
@@ -548,9 +550,14 @@ describe('local pop-rescan: what the run does and says', () => {
     const { M } = load({ _rebuildCandidates: () => [...cands(), { path: '/b2.txt', character: 'aldenmar' }], _rebuildExcluded: (c) => c === 'Rethlan' });
     expect(M._rescanCharacters()).toEqual([{ name: 'Aldenmar', excluded: false }, { name: 'Brackwyn', excluded: false }, { name: 'Rethlan', excluded: true }]);
   });
-  it('the status carries no path and no line text', async () => {
+  // The flag lines themselves ride `run.lines` (2026-11-02, the overlay's copy box). This server answers only this PC
+  // (the router's _localGuardBlock checks Host and Origin first), as /api/my-parses does for the same logs.
+  it('the status carries no path, and line text only in run.lines', async () => {
     const { status } = await run({});
-    expect(JSON.stringify(status)).not.toMatch(/eqlog_|wp-rescan|evidence of Mavuin/);
+    expect(JSON.stringify(status)).not.toMatch(/eqlog_|wp-rescan/);
+    const { lines, ...rest } = status.run;
+    expect(lines.length).toBe(4);
+    expect(JSON.stringify({ ...status, run: rest })).not.toMatch(/evidence of Mavuin/);
   });
 });
 
@@ -621,7 +628,7 @@ describe('the status says when the read is resting for a fight, and how far alon
     let ctx;
     let n = 0;
     // Asked before every chunk: the first answer is "fight on", then "clear" for the rest.
-    const { M } = load({ _liveFightActive: () => { seen.push({ paused: ctx.paused, frac: ctx.frac }); return n++ === 0; } });
+    const { M } = load({ stats: fightStats(() => { seen.push({ paused: ctx.paused, frac: ctx.frac }); return n++ === 0; }) });
     ctx = { sinceMs: at(30).getTime(), bytes: M.RESCAN_MAX_BYTES, waited: 0, stop: false };
     await M._rescanFile({ path: f, character: 'Aldenmar' }, ctx, sink());
     expect(seen.length).toBeGreaterThanOrEqual(4);                          // a log of several chunks
@@ -640,7 +647,7 @@ describe('the status says when the read is resting for a fight, and how far alon
   it('GET status: run.paused is true while a fight holds the read, and the run finishes at progress 1 once it clears', async () => {
     const f = makeLog('eqlog_Aldenmar_pq.proj.txt', lines, 200);
     let fight = true;
-    const { M } = load({ _rebuildCandidates: () => [{ path: f, character: 'Aldenmar' }], _liveFightActive: () => fight });
+    const { M } = load({ _rebuildCandidates: () => [{ path: f, character: 'Aldenmar' }], stats: fightStats(() => fight) });
     expect(M._rescanLocalStart({}).status).toBe(202);
     let st = null;
     for (let i = 0; i < 300 && !(st && st.run && st.run.paused); i++) { await new Promise(r => setTimeout(r, 10)); st = M._rescanStatus(); }
@@ -658,5 +665,54 @@ describe('the status says when the read is resting for a fight, and how far alon
     expect(M._rescanStatus().run).toMatchObject({ state: 'running', paused: false, progress: 0 });
     release();
     await settle(M);
+  });
+});
+
+// The guild lead, 2026-11-02: "not currently in a fight for this sync. we should also pull out all of the seer/popflags
+// lines into a window below this button to copy/paste" + "also a link to the pop/guide page to paste the lines in".
+describe('the read rests only for a fight happening now, and hands back the lines it read', () => {
+  const lines = [[3, "Brackwyn tells the guild, 'hello'"], [2, 'The evidence of Mavuin is the only thing that can save him now.'], [1, "Mavuin's case: Mavuin's case is complete"]];
+
+  it('a fight snapshot older than 15 s, or one already flushed, does not hold the read', () => {
+    let et = null;
+    const { M } = load({ stats: { get currentEncounterThreat() { return et; } } });
+    expect(M._rescanFightNow()).toBe(false);
+    et = { publishedAt: Date.now() };
+    expect(M._rescanFightNow()).toBe(true);
+    et = { publishedAt: Date.now() - 20_000 };
+    expect(M._rescanFightNow()).toBe(false);                 // _liveFightActive's 150 s window would still say "fight"
+    et = { publishedAt: Date.now(), flushedAt: Date.now() };
+    expect(M._rescanFightNow()).toBe(false);
+  });
+
+  it('keeps every Seer / #popflags line it read (not chat), newest kept past the cap', () => {
+    const { M } = load();
+    const s = { ...sink(), lines: [] };
+    const ts = stamp(at(1));
+    M._rescanLine(`${ts} Brackwyn tells the guild, 'The evidence of Mavuin is the only thing that can save him now.'`, 'Aldenmar', 0, s);
+    M._rescanLine(`${ts} The evidence of Mavuin is the only thing that can save him now.`, 'Aldenmar', 0, s);
+    expect(s.lines).toEqual([`${ts} The evidence of Mavuin is the only thing that can save him now.`]);
+    for (let i = 0; i < M.RESCAN_LINES_MAX + 5; i++) M._rescanLine(`${ts} Mavuin's case: Mavuin's case is complete`, 'Aldenmar', 0, s);
+    expect(s.lines.length).toBe(M.RESCAN_LINES_MAX);
+    expect(s.lines[0]).toContain("Mavuin's case");          // the oldest one fell off
+  });
+
+  it('GET status carries the lines once the run is done', async () => {
+    const f = makeLog('eqlog_Aldenmar_pq.proj.txt', lines, 200);
+    const { M } = load({ _rebuildCandidates: () => [{ path: f, character: 'Aldenmar' }] });
+    M._rescanLocalStart({});
+    expect(M._rescanStatus().run.lines).toBeUndefined();     // not while it runs
+    await settle(M);
+    const run = M._rescanStatus().run;
+    expect(run.state).toBe('done');
+    expect(run.lines.map(l => l.replace(/^\[[^\]]*\]\s*/, ''))).toEqual([lines[1][1], lines[2][1]]);
+  });
+
+  it('the PoP overlay shows them in a box with Copy and a link to paste them on the guide', () => {
+    const html = stripJs(fs.readFileSync(path.join(path.dirname(AGENT_INDEX), '..', '..', 'apps', 'mimic', 'popraid.html'), 'utf8'));
+    expect(html).toMatch(/id="flagsCopyLines"/);
+    expect(html).toMatch(/id="flagsCapText"[^>]*readonly/);
+    expect(html).toMatch(/'https:\/\/wolfpack\.quest\/pop\/guide' \+ \(who \? '\?c=' \+ encodeURIComponent\(who\) : ''\) \+ '#seer-paste'/);
+    expect(html).toMatch(/_cap\.lines = run\.lines/);
   });
 });

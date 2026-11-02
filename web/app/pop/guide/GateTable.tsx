@@ -13,9 +13,11 @@ export type GateChoice = { key: string; name: string; short: string };
 
 const KIND_WORD = { kill: 'kill', task: 'task', handin: 'hand-in' } as const;
 
-export default function GateTable({ gates, selected, rows, hrefFor, singleHref }: {
+// A character's name opens their own piece-by-piece list (the guild lead, 2026-11-02: "the family view is great, and
+// the individual view is good if we click on one of the character names from that list").
+export default function GateTable({ gates, selected, rows, hrefFor, singleHref, charHref }: {
   gates: GateChoice[]; selected: string; rows: GateTableRow[];
-  hrefFor: (gateKey: string) => string; singleHref: string;
+  hrefFor: (gateKey: string) => string; singleHref: string; charHref?: (name: string) => string;
 }) {
   const gate = gates.find(g => g.key === selected) ?? gates[0];
   const heads = rows[0]?.pieces ?? [];
@@ -60,7 +62,9 @@ export default function GateTable({ gates, selected, rows, hrefFor, singleHref }
               {rows.map(r => (
                 <tr key={r.name} className="border-t border-border">
                   <th scope="row" className="sticky left-0 z-10 bg-panel text-left font-normal pr-3 py-1.5 align-top whitespace-nowrap">
-                    <span className="text-text">{r.name}</span>
+                    {charHref
+                      ? <a href={charHref(r.name)} className="text-text hover:text-blue hover:underline" title={`What ${r.name} is missing, piece by piece`}>{r.name}</a>
+                      : <span className="text-text">{r.name}</span>}
                     {!r.isMain && <span className="text-dim"> (alt)</span>}
                     {r.cls && <span className="block text-[10px] text-dim">{r.cls}</span>}
                   </th>

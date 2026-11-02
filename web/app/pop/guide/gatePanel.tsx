@@ -55,6 +55,7 @@ export async function gatePanel({ mode, chars, c, all, gate }: {
   });
   return (
     <GateTable gates={GATES.map(g => ({ key: g.key, name: g.name, short: g.short }))} selected={selected} rows={rows}
-               hrefFor={key => href('gate-b', c ?? null, key)} singleHref={href('gate-a', first)} />
+               hrefFor={key => href('gate-b', c ?? null, key)} singleHref={href('gate-a', first)}
+               charHref={name => href('gate-a', name)} />
   );
 }

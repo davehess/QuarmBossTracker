@@ -29,6 +29,7 @@ import { gatePanel } from './gatePanel';
 import { gateMode } from '@/lib/popGateStatus';
 import { loadRoute } from './routeData';
 import { GUILD_TAG } from '@/lib/guild';
+import { selectAll } from '@/lib/selectAll';
 
 export const dynamic = 'force-dynamic';
 export const metadata = {
@@ -106,7 +107,9 @@ export default async function PopGuidePage(
   // last thing mentioned"): ?v=gate-a is the next-up card with every piece of each blocked gate checked off,
   // ?v=gate-b is one gate across the whole family. Both ride on the default layout below (the layouts own ?v=b and
   // ?v=c); any other ?v= is as it was. gatePanel.tsx builds them, popGatePieces.ts says what a gate is made of.
-  const gm = gateMode(v);
+  // Picked 2026-11-02 (the guild lead: "the family view is great, and the individual view is good if we click on one of
+  // the character names from that list"): the family table is what the page opens on; a name opens ?v=gate-a.
+  const gm = gateMode(v) ?? (!v && !nx ? 'b' : null);
   const gateChars = gm ? (await (routeLoad ?? loadRoute(mine))).chars : [];
   const gates = gm ? await gatePanel({ mode: gm, chars: gateChars, c, all, gate }) : null;
 
@@ -152,15 +155,12 @@ export default async function PopGuidePage(
     names.length === 0 ? Promise.resolve({ data: [] }) :
       admin.from('pop_guide_ticks').select('character_name, item_key')
         .eq('guild_id', GUILD_TAG).in('character_name', names),
-    // pop_flags.character is free text, so match names case-blind (same as /pop). The real flags only:
-    // 'unmapped' and 'hail' rows are not flags and there are thousands of them (about 16,000 unmapped
-    // across the roster's households on 2026-10-04; three households hold over 1,000 rows each, max 2,291,
-    // none of them real). Real flags are the newest rows, so a bare .limit(1000) read the oldest 1,000 and
-    // would drop every real flag those households earn. A household holds at most 26 real ones.
+    // Each character's real flags ONCE (pop_flags_distinct: case-blind names, no 'unmapped'/'hail' rows). A bare
+    // .limit(1000) read stopped holding them once Mimic began storing every #popflags read: one household reached
+    // 5,710 rows for 334 flags on 2026-11-02 and the oldest 1,000 left newer progress out (the guild lead, 2026-11-02).
     names.length === 0 ? Promise.resolve({ data: [] }) :
-      admin.from('pop_flags').select('character, flag_key')
-        .not('flag_key', 'in', '(unmapped,hail)')
-        .or(names.map(n => `character.ilike.${n}`).join(',')).limit(1000),
+      selectAll<{ character: string; flag_key: string }>((from, to) =>
+        admin.rpc('pop_flags_distinct', { p_guild_id: GUILD_TAG, p_names: names }).range(from, to)).then(data => ({ data })),
     admin.rpc('item_card_info', { p_item_ids: guideItemIds() }),
   ]);
 
