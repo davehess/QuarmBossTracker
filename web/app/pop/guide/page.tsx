@@ -24,6 +24,8 @@ import GuideChecklist, { type GuideChar } from './GuideChecklist';
 import GuideRoute from './GuideRoute';
 import NextUp from './NextUp';
 import NextTable from './NextTable';
+import { gatePanel } from './gatePanel';
+import { gateMode } from '@/lib/popGateStatus';
 import { loadRoute } from './routeData';
 import { GUILD_TAG } from '@/lib/guild';
 import { selectAll } from '@/lib/selectAll';
@@ -35,9 +37,9 @@ export const metadata = {
 };
 
 export default async function PopGuidePage(
-  { searchParams }: { searchParams: Promise<{ c?: string; v?: string; all?: string; nx?: string }> },
+  { searchParams }: { searchParams: Promise<{ c?: string; v?: string; all?: string; nx?: string; gate?: string }> },
 ) {
-  const { c, v, all, nx } = await searchParams;
+  const { c, v, all, nx, gate } = await searchParams;
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/pop/guide');
 
@@ -99,6 +101,17 @@ export default async function PopGuidePage(
                 initial={nxFirst} anchorPrefix={anchorPrefix} compareHref={nxHref(null, 'b')} />
       : <NextTable rows={nxRows} hrefFor={(name, key) => nxHref(name, 'b', key)} singleHref={nxHref(nxFirst, 'a')} />)
     : null;
+
+  // What each character is missing, piece by piece (the guild lead, 2026-11-01: "the side bar where it says specifically
+  // what you're missing, not just the last thing mentioned"). ?v=gate-a is the next-up card with every piece of each
+  // blocked gate checked off, ?v=gate-b is one gate across the whole family. Picked 2026-11-02 (the guild lead: "the
+  // family view is great, and the individual view is good if we click on one of the character names from that list";
+  // shipped on "looks right now, ship it"): the family table is what the page opens on; a name opens ?v=gate-a. Both ride
+  // on the default layout below (the layouts own ?v=b and ?v=c). gatePanel.tsx builds them, popGatePieces.ts says what
+  // a gate is made of.
+  const gm = gateMode(v) ?? (!v && !nx ? 'b' : null);
+  const gateChars = gm ? (await (routeLoad ?? loadRoute(mine))).chars : [];
+  const gates = gm ? await gatePanel({ mode: gm, chars: gateChars, c, all, gate }) : null;
 
   // Beta (the guild lead, 2026-09-29: "more detail, maps, who to turn things into, expectations and who
   // you will go back to. a sidebar nav with sections"): two layouts to pick from, GuideRoute.tsx. No
@@ -181,6 +194,7 @@ export default async function PopGuidePage(
         </p>
         {hiddenNote}
       </section>
+      {gates}
       {nxPanel}
       <GuideChecklist chars={chars} initial={initial} cards={cards} noLevel={noLevel} />
     </div>
