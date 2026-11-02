@@ -193,6 +193,11 @@ next touch one rather than assuming a missing row means a missing doc.
   picked (§522) and the real board is live for Wolf Pack at https://wolfpack.quest/pop/flag-events (web 2.1.99, `[beta]`;
   officers post, everyone sees who still needs it; "Ping" waits on the bot). The Discord setup checklist is an artifact
   (link in the private briefing).
+- **🧪 raidmimic.com onboarding: "Free to start" with the planned pricing (beta preview, 2026-11-02, DECISIONS §531).**
+  Two previews at the top of both onboarding pages, waiting on the guild lead's pick:
+  https://b.wolfpack.quest/raidmimic/setup?v=b (one short card) and https://b.wolfpack.quest/raidmimic/setup?v=c (free vs
+  planned Pro table with why each costs money); the same on https://b.wolfpack.quest/guilds/new?v=b and `?v=c` (sign-in).
+  No `?v=` = production. On a pick: graduate it to main, drop the other and the `?v=` switch.
 - **🧪 Free flag syncing outside Wolf Pack, slice 1 (bot 4.0.50 `main`, migration `20261102210000_hub_sync.sql` applied,
   2026-11-02, §526, §527).** A player session (no guild) and the free/paid route gate; flags into `hub_flags` /
   `hub_characters`; the fight upload only for `managed` guilds. **Launch blocker cleared 2026-11-02:** self-delete and the data
