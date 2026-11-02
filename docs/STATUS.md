@@ -173,10 +173,19 @@ next touch one rather than assuming a missing row means a missing doc.
   guild lead: *"not currently in a fight for this sync. we should also pull out all of the seer/popflags lines into a window below this
   button to copy/paste"* + *"also a link to the pop/guide page to paste the lines in"*. The read used `_liveFightActive` (the update
   gate's 150 s window, which also counts other raiders' fighting nearby); it now uses `_rescanFightNow`: the fight snapshot published
-  in the last 15 s and not flushed. Every Seer / #popflags line the read takes is kept (`sink.lines`, newest 800), served on
-  `GET /api/local/pop-rescan/status` as `run.lines` once the run is done (local-only, behind the router's `_localGuardBlock`), and
-  `popraid.html` shows them in a read-only box with 📋 Copy and "paste them on wolfpack.quest ↗" (`/pop/guide?c=<name>#seer-paste`).
-  Test `test/pop-rescan-agent.test.js`. Next: the guide's paste box shows small when folded (web, beta preview).
+  in the last 15 s and not flushed. Every line the read's gate passes (Seer, #popflags, grants, trials, your hails and the
+  projection's / flag NPCs' answers) is kept once at its newest (`_rescanKeepLine`; a #popflags row keyed by its label, so a later
+  read replaces the earlier value), and the status serves the newest 300 by time as `run.lines` once the run is done (agent
+  4.0.57: *"pull from the tail of these logs so we're not getting extra old lines, but the hail lines from the projections and other
+  flag mobs are important as well"*). Local-only, behind the router's `_localGuardBlock`. `popraid.html` shows them in a read-only
+  box with 📋 Copy and "paste them on wolfpack.quest ↗" (`/pop/guide?c=<name>#seer-paste`). Test `test/pop-rescan-agent.test.js`.
+- **🧪 PoP guide paste box: small text box and Check always shown, steps on a click; reads #popflags too (web, beta preview,
+  2026-11-02).** The guild lead: *"that page should show the text box and check my flags button when minimized (just small) and
+  instructions when someone clicks it"*. `SeerPaste.tsx` is now `<section id="seer-paste">` with a 2-row text box (6 once
+  something is in it) and Check; the four steps sit behind "How do I get these lines?" (open at once on `/pop/raid/me`). Check
+  also runs the #popflags reader (`parsePopFlags`), its steps join the Seer's in the checklist, and Save sends each reader's own
+  recognised lines through its own action (`saveSeerRecital`, `savePopFlagsPaste`). Arriving at `#seer-paste` puts the cursor in
+  the box. See it at https://b.wolfpack.quest/pop/guide. Test `test/pop-seer-paste.test.js`.
 - **✅ Raid-Helper "sync has never landed" was a false alarm (bot 4.0.48, 2026-11-02).** The mirror syncs every 30 minutes
   (17k sign-ups, last sync minutes before); each post was one failed database read read as "never", and a single healthy
   check cleared the latch so the next blip re-posted. `freshnessSnapshot` now answers no verdict on a failed read, and the

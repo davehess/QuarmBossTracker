@@ -410,9 +410,15 @@ describe('the page wiring (stripped source)', () => {
     expect(box).not.toMatch(/saveSeerRecital\([^)]*\btext\b/);
     expect(box).not.toMatch(/localStorage|sessionStorage|indexedDB/);
   });
-  it('is a native <details> that starts closed, at the top of both layouts', () => {
-    expect(box).toMatch(/<details className="bg-panel/);
-    expect(box.slice(box.indexOf('<details className="bg-panel'), box.indexOf('<summary'))).not.toMatch(/\bopen\b/);
+  // The guild lead, 2026-11-02: "that page should show the text box and check my flags button when minimized (just small)
+  // and instructions when someone clicks it". The box, the text field and the button are always there; the steps fold.
+  it('shows a small text box and the button at once, the steps behind a closed toggle, at the top of both layouts', () => {
+    expect(box).toMatch(/<section id="seer-paste"/);
+    const head = box.slice(box.indexOf('<section id="seer-paste"'), box.indexOf('How do I get these lines?'));
+    expect(head).toMatch(/<textarea ref=\{box\}/);
+    expect(head).toMatch(/rows=\{big \? 6 : 2\}/);
+    expect(head).toMatch(/Check my flags/);
+    expect(box).toMatch(/<details className="text-xs" \{\.\.\.openProp\}>/);
     expect(box).toMatch(/Paste what the Seer says/);
     expect(checklist.indexOf('<SeerPaste')).toBeGreaterThan(0);
     expect(checklist.indexOf('<SeerPaste')).toBeLessThan(checklist.indexOf('<section className="bg-panel border border-border rounded-lg p-3 flex flex-col gap-3">'));
@@ -438,5 +444,21 @@ describe('the Start here section and the figurine are gone', () => {
     expect(auto).not.toMatch(/start_level46|start_mimic/);
     const route = read('web/app/pop/guide/routeData.ts');
     expect(route).not.toMatch(/who_directory|character_live_state/);
+  });
+});
+
+// Mimic's PoP Raids Capture sends Seer and #popflags lines together to /pop/guide#seer-paste (2026-11-02).
+describe('the box reads #popflags lines too, and the overlay can land on it', () => {
+  const box = read('web/app/pop/guide/SeerPaste.tsx');
+  it('Check runs both readers; Save sends each its own recognised lines through its own action', () => {
+    expect(box).toMatch(/const pf = parsePopFlags\(text\)/);
+    expect(box).toMatch(/heldClosure\(\[\.\.\.parsed\.stages, \.\.\.\(flags\?\.flags \?\? \[\]\)\]\)/);
+    expect(box).toMatch(/savePopFlagsPaste\(character, pfLines\)/);
+    expect(box).toMatch(/const pfLines = flags\?\.used \?\? \[\]/);
+    expect(box).not.toMatch(/savePopFlagsPaste\([^)]*\btext\b/);
+  });
+  it('has the #seer-paste anchor and puts the cursor in the box when the link lands there', () => {
+    expect(box).toMatch(/id="seer-paste"/);
+    expect(box).toMatch(/window\.location\.hash === '#seer-paste'\) box\.current\?\.focus/);
   });
 });

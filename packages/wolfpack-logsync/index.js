@@ -66709,7 +66709,24 @@ const RESCAN_BUDGET_MS   = 12;
 const RESCAN_REST_MS     = 25;
 const RESCAN_MAX_DAYS    = 60;
 const RESCAN_MAX_WAIT_MS = 10 * 60_000;     // total time spent paused for a live fight
-const RESCAN_LINES_MAX = 800;                // Seer / #popflags lines kept for the overlay's copy box
+const RESCAN_LINES_MAX = 300;                // the newest flag lines the overlay's copy box shows
+// The copy box is the TAIL of what was read (the guild lead, 2026-11-02: "pull from the tail of these logs so we're not
+// getting extra old lines, but the hail lines from the projections and other flag mobs are important as well"): every
+// line the gate passes (Seer, #popflags, grants, trials, your hails and the projection's / flag NPCs' answers), each
+// kept once at its NEWEST time. A #popflags row is keyed by its label, so a later read replaces "Missing" with
+// "Complete" instead of showing both.
+function _rescanKeepLine(sink, line, msg, gate, t, character) {
+  if (!(sink.lines instanceof Map)) return;
+  const i = gate === 'popflags' ? msg.indexOf(': ') : -1;
+  const key = String(character || '').toLowerCase() + '|' + (i > 0 ? 'pf:' + _pfNorm(msg.slice(0, i)) : msg.trim());
+  sink.lines.delete(key);
+  sink.lines.set(key, { t, line });
+  if (sink.lines.size > RESCAN_LINES_MAX * 4) sink.lines.delete(sink.lines.keys().next().value);   // bound memory
+}
+function _rescanTailLines(sink) {
+  if (!sink || !(sink.lines instanceof Map)) return [];
+  return [...sink.lines.values()].sort((a, b) => a.t - b.t).slice(-RESCAN_LINES_MAX).map(x => x.line);
+}
 const RESCAN_FIGHT_RECENT_MS = 15_000;
 // The read rests only for combat happening NOW: the fight snapshot published in the last 15 s. _liveFightActive's
 // 150 s window (made for the update gate) kept a capture "paused while you fight" for minutes after a fight, or
@@ -66747,8 +66764,8 @@ function _rescanLine(line, character, sinceMs, sink) {
   if (!gate) { sink.prevPassed = false; return; }
   const ts = parseEqTimestamp(line);
   if (!ts || ts.getTime() < sinceMs) { sink.prevPassed = false; return; }
-  // Every Seer / #popflags line read, for the PoP overlay to show and copy (the guild lead, 2026-11-02). Newest kept.
-  if (Array.isArray(sink.lines)) { sink.lines.push(line); if (sink.lines.length > RESCAN_LINES_MAX) sink.lines.shift(); }
+  // Every flag line read, for the PoP overlay to show and copy (the guild lead, 2026-11-02). See _rescanKeepLine.
+  _rescanKeepLine(sink, line, msg, gate, ts.getTime(), character);
   // parsePopFlagLine names a grant from the line just before it; a skipped line in between must not leave an older
   // NPC line standing in for it, so the real previous line is shown to it first (its answer, if any, is dropped).
   if (gate === 'grant' && !sink.prevPassed && prev) parsePopFlagLine(prev, character);
@@ -66893,7 +66910,7 @@ async function _rescanRun(req, prog) {
   if (!files.length) return done({});
   const opts = _uploadOpts || {};
   const sink = {
-    events: [], found: 0, sent: 0, prev: null, prevPassed: false, lines: [],
+    events: [], found: 0, sent: 0, prev: null, prevPassed: false, lines: new Map(),
     flush() {
       if (!this.events.length) return;
       const evs = this.events.splice(0);
@@ -67032,7 +67049,7 @@ function _rescanStatus() {
       progress: p.state === 'done' ? 1 : (p.files && p.ctx ? Math.min(1, ((p.filesDone || 0) + (p.ctx.frac || 0)) / p.files) : null),
       found: p.result ? p.result.found : (p.sink ? p.sink.found : 0),
       // The lines themselves once the read is done (not while it runs: the overlay polls this every few seconds).
-      ...(p.state === 'done' && p.sink && Array.isArray(p.sink.lines) ? { lines: p.sink.lines } : {}),
+      ...(p.state === 'done' && p.sink && p.sink.lines instanceof Map ? { lines: _rescanTailLines(p.sink) } : {}),
       logs: p.result ? p.result.logs : 0,
       exports: p.result ? p.result.exports : (p.exports || 0),
       sent: p.result ? p.result.sent : (p.sink ? p.sink.sent : 0),
