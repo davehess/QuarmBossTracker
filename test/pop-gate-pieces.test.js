@@ -283,3 +283,18 @@ describe('the page', () => {
     expect(table).toMatch(/What&apos;s left/);
   });
 });
+
+// Picked 2026-11-02: the family table is the default; a character's name opens their own piece-by-piece list.
+describe('the family table is the default and names drill down', () => {
+  const fs2 = require('node:fs'), p2 = require('node:path');
+  const page = fs2.readFileSync(p2.join(__dirname, '..', 'web/app/pop/guide/page.tsx'), 'utf8');
+  const table = fs2.readFileSync(p2.join(__dirname, '..', 'web/app/pop/guide/GateTable.tsx'), 'utf8');
+  const panel = fs2.readFileSync(p2.join(__dirname, '..', 'web/app/pop/guide/gatePanel.tsx'), 'utf8');
+  it('opens on the family table when no ?v= or ?nx= is asked for', () => {
+    expect(page).toMatch(/const gm = gateMode\(v\) \?\? \(!v && !nx \? 'b' : null\);/);
+  });
+  it('a name links to that character in ?v=gate-a', () => {
+    expect(table).toMatch(/<a href=\{charHref\(r\.name\)\}/);
+    expect(panel).toMatch(/charHref=\{name => href\('gate-a', name\)\}/);
+  });
+});
