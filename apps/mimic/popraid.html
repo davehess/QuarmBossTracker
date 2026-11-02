@@ -1329,12 +1329,13 @@
     return '<div class="panel ftiers"><div class="fcapr"><button type="button" class="fcap" id="flagsCapture"' + ((cap && cap.busy) || !name ? ' disabled' : '') + '>📥 Capture now</button>'
       + '<span class="qk" id="flagsCapNote">' + note + '</span></div><div id="flagsCapLines">' + fCapLinesHtml(cap) + '</div></div>';
   }
-  // Every Seer / #popflags line the last capture read, to copy or paste into the guide's "Paste what the Seer says" (the
-  // guild lead, 2026-11-02: "pull out all of the seer/popflags lines into a window below this button to copy/paste").
+  // The flag lines the last capture read (Seer, #popflags, hails and the NPCs' answers, each at its newest; the agent's
+  // _rescanKeepLine), to copy or paste into the guide's "Paste what the Seer says" (the guild lead, 2026-11-02: "pull out
+  // all of the seer/popflags lines into a window below this button to copy/paste").
   function fCapLinesHtml(cap){
     var lines = cap && Array.isArray(cap.lines) ? cap.lines : [];
     if (!lines.length) return '';
-    return '<div class="fcapl"><div class="fcaplh"><span>' + lines.length + ' Seer and #popflags line' + (lines.length === 1 ? '' : 's') + ' read</span>'
+    return '<div class="fcapl"><div class="fcaplh"><span>' + lines.length + ' flag line' + (lines.length === 1 ? '' : 's') + ' (newest of each)</span>'
       + '<button type="button" class="fcap" id="flagsCopyLines">📋 Copy</button>'
       + '<a href="#" class="fpaste" id="flagsPasteLink" title="Open the PoP guide to paste these in">paste them on wolfpack.quest ↗</a></div>'
       + '<textarea class="fcaptxt" id="flagsCapText" rows="8" readonly spellcheck="false">' + esc(lines.join('\n')) + '</textarea></div>';

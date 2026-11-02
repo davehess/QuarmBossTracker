@@ -45,7 +45,7 @@ function load(world = {}) {
     + 'function parsePopFlagLine(l, c) { __calls.push(l); return _realParsePopFlagLine(l, c); }\n'
     + pfBlock + '\n' + netBlock + '\n' + seekBlock + '\n' + readBodyBlock + '\n' + rescanBlock
     + '\nreturn { _rescanWants, _rescanLine, _rescanFile, _rescanIsolate, _rescanRun, _applyRescanResponse, _rescan, _pfState, _popPrevLine, _popLastHail, parsePopFlagLine, RESCAN_MAX_BYTES, RESCAN_MAX_WAIT_MS,'
-    + ' _rescanArgs, _rescanLocalStart, _rescanStatus, _localPopRescanRoute, _rescanUploadMode, _rescanCharacters, RESCAN_MAX_DAYS, RESCAN_BODY_MAX, RESCAN_LINES_MAX, _rescanFightNow };';
+    + ' _rescanArgs, _rescanLocalStart, _rescanStatus, _localPopRescanRoute, _rescanUploadMode, _rescanCharacters, RESCAN_MAX_DAYS, RESCAN_BODY_MAX, RESCAN_LINES_MAX, _rescanFightNow, _rescanTailLines };';
   // eslint-disable-next-line no-new-func
   const M = new Function('__calls', ...names, body)(calls, ...names.map(k => w[k]));
   return { M, calls, world: w };
@@ -685,16 +685,35 @@ describe('the read rests only for a fight happening now, and hands back the line
     expect(M._rescanFightNow()).toBe(false);
   });
 
-  it('keeps every Seer / #popflags line it read (not chat), newest kept past the cap', () => {
+  it('keeps the flag lines (Seer, hails, the NPC answers; not chat), each once at its newest, and only the tail', () => {
     const { M } = load();
-    const s = { ...sink(), lines: [] };
-    const ts = stamp(at(1));
-    M._rescanLine(`${ts} Brackwyn tells the guild, 'The evidence of Mavuin is the only thing that can save him now.'`, 'Aldenmar', 0, s);
-    M._rescanLine(`${ts} The evidence of Mavuin is the only thing that can save him now.`, 'Aldenmar', 0, s);
-    expect(s.lines).toEqual([`${ts} The evidence of Mavuin is the only thing that can save him now.`]);
-    for (let i = 0; i < M.RESCAN_LINES_MAX + 5; i++) M._rescanLine(`${ts} Mavuin's case: Mavuin's case is complete`, 'Aldenmar', 0, s);
-    expect(s.lines.length).toBe(M.RESCAN_LINES_MAX);
-    expect(s.lines[0]).toContain("Mavuin's case");          // the oldest one fell off
+    const s = { ...sink(), lines: new Map() };
+    const t = (d, sec = 0) => stamp(at(d, sec));
+    M._rescanLine(`${t(3)} Brackwyn tells the guild, 'The evidence of Mavuin is the only thing that can save him now.'`, 'Aldenmar', 0, s);
+    M._rescanLine(`${t(3)} The evidence of Mavuin is the only thing that can save him now.`, 'Aldenmar', 0, s);
+    M._rescanLine(`${t(3, 1)} You say, 'Hail, a Planar Projection'`, 'Aldenmar', 0, s);
+    M._rescanLine(`${t(3, 2)} A Planar Projection says, 'You have done well.'`, 'Aldenmar', 0, s);
+    M._rescanLine(`${t(1)} You say, 'Hail, a Planar Projection'`, 'Aldenmar', 0, s);           // the same hail, later
+    expect(M._rescanTailLines(s)).toEqual([
+      `${t(3)} The evidence of Mavuin is the only thing that can save him now.`,
+      `${t(3, 2)} A Planar Projection says, 'You have done well.'`,
+      `${t(1)} You say, 'Hail, a Planar Projection'`,
+    ]);
+    // Past the cap, the oldest go first.
+    for (let i = 0; i < M.RESCAN_LINES_MAX + 5; i++) M._rescanLine(`${stamp(new Date(at(0).getTime() - 3600_000 + i * 1000))} The Planar Projection says, 'line ${i}'`, 'Aldenmar', 0, s);
+    const tail = M._rescanTailLines(s);
+    expect(tail.length).toBe(M.RESCAN_LINES_MAX);
+    expect(tail.join('\n')).not.toMatch(/evidence of Mavuin|'line 4'$/m);
+    expect(tail[tail.length - 1]).toContain(`'line ${M.RESCAN_LINES_MAX + 4}'`);
+  });
+
+  it('a later #popflags read replaces the earlier value of the same row', () => {
+    const { M } = load();
+    const s = { ...sink(), lines: new Map() };
+    M._rescanLine(`${stamp(at(5))} Mavuin's case: The Tribunal has agreed to hear Mavuin's case`, 'Aldenmar', 0, s);
+    M._rescanLine(`${stamp(at(1))} Mavuin's case: Mavuin's case is complete`, 'Aldenmar', 0, s);
+    const tail = M._rescanTailLines(s);
+    expect(tail.filter(l => l.includes("Mavuin's case:")).map(l => l.replace(/^\[[^\]]*\]\s*/, ''))).toEqual(["Mavuin's case: Mavuin's case is complete"]);
   });
 
   it('GET status carries the lines once the run is done', async () => {
