@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-93-2026-11-02',
+    title: 'Web 2.1.93',
+    version: 'Web 2.1.93',
+    date: '2026-11-02',
+    headline: 'The PoP guide sees every flag you have earned, and Download my data includes your chat, XP and fight records again.',
+    features: [],
+    fixes: [
+      'The PoP guide missed newer flags for characters with a lot of saved #popflags reads, so finished trials showed as missing. It reads every flag now.',
+      'Download my data left out inventory, chat, XP and your per-fight records for members with many characters ("could not be read just now"). They are included again.',
+    ],
+  },
+  {
     key: 'mimic-3-0-6-2026-11-01',
     title: 'Mimic 3.0.6',
     version: 'Mimic 3.0.6 · Web 2.1.90',

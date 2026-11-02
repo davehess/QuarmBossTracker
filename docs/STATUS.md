@@ -244,6 +244,12 @@ next touch one rather than assuming a missing row means a missing doc.
   `https://wolfpack.quest/me#your-data` and on raidmimic.com/guilds: a streamed JSON file of the person's own rows (session identity only, explicit columns, guild-scoped,
   one download per 10 minutes) and a typed-DELETE removal (`member_self_delete` + `member_self_unlink_batch`; the guild's raid rows stay, unlinked; a sole guild owner is
   refused). The `/me` hub layout (`?v=b`) is beta-only and was not brought. Test: `test/self-serve-data.test.js`.
+  **Web 2.1.93 (2026-11-02):** the guild lead's second export parsed whole (the Nov 1 one was cut off, fixed by the per-section
+  prepare), but `character_inventory`, `encounter_players`, `encounter_combat_rollup`, `chat_messages` and `xp_events` came back
+  "could not be read just now". Cause: names matched with one case-blind `ilike` each (48 characters), which no index serves, so
+  Postgres walked the guild's rows newest first testing every name (chat page 1: 2.7 s; later pages past the 8 s limit). Now one
+  exact `in` over each name as written, Capitalised and lower case (`nameVariants`; the only casings those five tables hold,
+  measured), which runs inside the name index (deepest chat page 0.22 s warm).
 - **🧪 Token layers: one colour set under the site, the overlays and the dashboard (web beta `99f5092c`, Mimic beta `aeaceec5`, agent 4.0.50 beta; 2026-10-31; DECISIONS §488 pick C; `docs/DESIGN-theming.md` §7 steps 1 to 3).**
   Nothing changes on screen, by proof: the site's built CSS diffs equal; 13 overlay stand-in screenshots are 0 px apart; 15 dashboard tabs
   render byte-identical PNGs. `web/app/tokens.css` + the Tailwind mapping, `apps/mimic/theme.css` (25 windows; `command.html` deliberately
