@@ -453,9 +453,13 @@ describe('20261102210000_hub_sync.sql', () => {
     expect('~player').not.toMatch(/^[a-z0-9][a-z0-9-]{1,22}[a-z0-9]$/);
   });
 
-  it('is the newest migration', () => {
+  // It sorts after the migrations it builds on (hub_players, the link codes); later migrations may follow it. (It used to
+  // assert "is the newest", which the next migration of any kind broke.)
+  it('sorts after the hub registry and the link-code migrations it alters', () => {
     const files = fs.readdirSync(path.join(ROOT, 'supabase', 'migrations')).filter(f => f.endsWith('.sql')).sort();
-    expect(files[files.length - 1]).toBe('20261102210000_hub_sync.sql');
+    const at = files.indexOf('20261102210000_hub_sync.sql');
+    expect(at).toBeGreaterThan(-1);
+    for (const dep of files.filter(f => /open_hub_registry|mimic_link/.test(f))) expect(files.indexOf(dep), dep).toBeLessThan(at);
   });
 
   it('the guild-scope tooling leaves them alone: they are person tables, not in the guild-table snapshot', () => {

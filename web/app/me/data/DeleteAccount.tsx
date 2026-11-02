@@ -63,6 +63,7 @@ export default function DeleteAccount() {
           <li>Your UI backups, personal triggers and shared UI sets.</li>
           <li>Your feedback and replies, votes, page views, and your onboarding and settings.</li>
           <li>Your characters&rsquo; inventory, spellbook, keys, quest settings and game-account labels.</li>
+          <li>The Planes of Power flags Mimic synced for you on Raid Mimic, and the character names they were synced under.</li>
           <li>The link between your Discord account and your characters. The characters stay on the roster.</li>
           <li>Your website sign-in.</li>
         </ul>
