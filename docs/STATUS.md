@@ -198,6 +198,10 @@ next touch one rather than assuming a missing row means a missing doc.
   https://b.wolfpack.quest/raidmimic/setup?v=b (one short card) and https://b.wolfpack.quest/raidmimic/setup?v=c (free vs
   planned Pro table with why each costs money); the same on https://b.wolfpack.quest/guilds/new?v=b and `?v=c` (sign-in).
   No `?v=` = production. On a pick: graduate it to main, drop the other and the `?v=` switch.
+- **🧪 Tower of Solusek Ro brazier clicks in the Command Center (Mimic beta, agent 4.0.59, 2026-11-02, first draft, not yet tried in
+  game).** The guild lead: "add in for the command center timers the clicks for the braziers for tower of solro after the mini
+  bosses are completed." One row per wing boss killed: countdown to the 30-minute depop and clicked / not clicked for this
+  character. HOW-ITS-BUILT: Tower of Solusek Ro brazier clicks. Graduates to `main` with the next stable Mimic.
 - **🧪 Free flag syncing outside Wolf Pack, slice 1 (bot 4.0.50 `main`, migration `20261102210000_hub_sync.sql` applied,
   2026-11-02, §526, §527).** A player session (no guild) and the free/paid route gate; flags into `hub_flags` /
   `hub_characters`; the fight upload only for `managed` guilds. **Launch blocker cleared 2026-11-02:** self-delete and the data
