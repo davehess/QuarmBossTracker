@@ -118,6 +118,12 @@ the page shows "3 of 5 guest places taken". A guild's own members never count ag
 **Guild links.** `hub_guilds` gains a Discord invite link and a website, set by the owner, shown on the guild's card and on each
 open event, so a guest can find the guild. Links are checked to be `discord.gg` / `discord.com/invite` or `https://`.
 
+**Whose data it is** (§528). A synced flag or kill is the player's (it follows them between guilds) and, while they are a
+member, the guild's too: the guild sees it, exports it, feeds it into its own site, and keeps what arrived during the
+membership after the player leaves, unlinked from them. So each hub row records the guild the player was in when it was
+synced (to add with the kills slice: `guild_id` on `hub_flags` and `hub_kills`, null for a player with no guild). A
+player's self-delete removes their copy; the guild's stays the guild's, as raid records do today.
+
 **Guild suggestion** (the guild lead, 2026-11-02: "if we recognize a character name in our /who directory data we can suggest
 their guild to them"). When a player on raidmimic.com has proved a character is theirs (the claim rule above), and the /who
 directory has seen that name with a guild tag that is a guild on Raid Mimic, `/guilds` says "Aldenmar was last seen in
