@@ -19,6 +19,7 @@ import { ownedCharacters } from '@/lib/ownedCharacters';
 import { LIST_MIN_LEVEL, loadLevels, partitionTiers } from '@/lib/listableChars';
 import { guideItemIds } from '@/lib/popGuide';
 import { charNextSteps, nextCard, nxMode } from '@/lib/popNextSteps';
+import { guideGettingThere } from '@/lib/popGettingThere';
 import { type ItemCard } from '@/app/character/[name]/inventory/ItemHover';
 import GuideChecklist, { type GuideChar } from './GuideChecklist';
 import GuideRoute from './GuideRoute';
@@ -141,7 +142,11 @@ export default async function PopGuidePage(
           {hiddenNote}
         </section>
         {nxPanel}
-        <GuideRoute chars={routeChars} initial={first} cards={rc} outlines={outlines} layout={v} noLevel={noLevel} />
+        {/* The guild lead, 2026-10-29: "take the paths we know and build that into the plan"; kept 2026-11-02 (§515).
+            A "Getting there" line at the start of each zone's run of steps, and on each folded tier under "Next:".
+            Both layouts. Only the finished sentences go to the browser (popGettingThere.ts). */}
+        <GuideRoute chars={routeChars} initial={first} cards={rc} outlines={outlines} layout={v}
+                    gettingThere={guideGettingThere()} noLevel={noLevel} />
       </div>
     );
   }

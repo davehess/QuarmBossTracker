@@ -554,11 +554,12 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
   `NextUp.tsx` (client, follows `?c=`), `NextTable.tsx` (server). Cells and links use the rows' own ids (`guide-<key>`,
   `route-<key>`); `GuideRoute.tsx` opens the level a `#route-<key>` link points into. Test `test/pop-next-steps.test.js`.
 
-### PoP guide: "Getting there" line (`/pop/guide?v=b`, beta preview, web 2.1.66, 2026-10-29)
+### PoP guide: "Getting there" line (`/pop/guide?v=b`, live web 2.1.95 on the guild lead's pick A 2026-11-02, §515; built web 2.1.66, 2026-10-29)
 - The guild lead, 2026-10-29: "take the paths we know and build that into the plan". One compact line above the first
   step of each zone's run of steps ("PoK book → Tranquility → Valor portal (needs Mavuin 3)"), and, where
-  `web/lib/popTravel.ts` has a repeat-visit shortcut, a muted second line. A pick between this and leaving the guide as
-  it is is the guild lead's; `?v=c` and the default view are untouched.
+  `web/lib/popTravel.ts` has a repeat-visit shortcut, a muted second line. Kept (pick A, §515); both sidebar layouts
+  (`?v=b`, `?v=c`) carry it, and a folded tier card shows its "Next:" step's line (`lineFor`). The default checklist
+  view does not.
 - `web/lib/popGettingThere.ts` (server) turns `FORWARD_ROUTES` into sentences from a `PHRASE` table (one entry per hop,
   held to the routes by `test/pop-getting-there.test.js`) and places each step in a zone (`stepZone`: its flag-chart link,
   else its first placed NPC, else `STEP_ZONE`). `web/lib/popGettingThereRuns.ts` is the import-free half the client
