@@ -4346,7 +4346,10 @@ function targetBuffsFor(targetLower, wantId) {
       unproven: wantId != null && b.target_id == null && typeof _GENERIC_MOB_RX !== 'undefined'
         && _GENERIC_MOB_RX.test(String(b.target_name || targetLower)),
       tick_snapped: !!(fade && fade.snapped),
-      owner: (b && b.owner) ? b.owner : null });
+      owner: (b && b.owner) ? b.owner : null,
+      // Our own cast, proven by our own log (cast_by): a caster landing, which outranks a bystander's
+      // landing of the same effect when Target Info merges the relay in (_applyDebufferPrecedence).
+      ...((b && b.cast_by) ? { by_caster: true, caster: b.cast_by } : {}) });
   }
   if (mp.size === 0) _buffLandingsByTarget.delete(targetLower);
   return out;
@@ -8441,6 +8444,11 @@ function _slowShortName(name) {
 // by the same spell are two entries. `targetId` null = the id is unknown (a bystander
 // line names no spawn); readers that know their spawn id use it (_bestSlowForTarget).
 const _slowsByTarget = new Map();
+// Slows other raiders' agents reported as cast BY THEM (the bot's target-buffs relay, `by_caster`), per target
+// NAME: targetLower → [{ name, magnitude, caster, targetId, landedAtMs, expiresAtMs, remote: true }]. Replaced
+// whole on every relay read (noteRemoteCasterSlows), so it never outlives what the bot last said; read by
+// _bestSlowForTarget beside _slowsByTarget. A bystander emote can never name the spell; this can.
+const _remoteSlowsByTarget = new Map();
 const SLOW_TARGET_CAP     = 200;
 const SLOW_PRUNE_GRACE_MS = 3000;
 // Per-target last-ANNOUNCED best slow (targetLower → { name, magnitude }) — edge
@@ -8468,6 +8476,55 @@ function _pickBestActiveSlow(entries, nowMs) {
   }
   return best;
 }
+// Are `casterName` (a spell some raider's own agent reported casting) and `row` (a landing someone else saw)
+// the same effect for precedence's sake? The same spell, a spell the row's own ambiguous crown listed as a
+// possibility (`row.family`), or two members of one shared-emote family (SLOW_AMBIG_FAMILIES: every "yawns."
+// slow prints the same line, so a bystander's crowned "Turgur's Insects" is a guess at whichever of them landed).
+function _slowSameFamily(casterName, row) {
+  const norm = (s) => String(s || '').toLowerCase().replace(/`/g, "'").trim();
+  const c = norm(casterName), r = norm(row && row.name);
+  if (!c || !r) return false;
+  if (c === r) return true;
+  if (row && Array.isArray(row.family) && row.family.some(f => norm(f) === c)) return true;
+  return SLOW_AMBIG_FAMILIES.some(f => f.family.has(c) && f.family.has(r));
+}
+// The debuffer's landing takes precedence: while a live, named, caster-reported slow is in the pool, every
+// bystander entry of the same family is dropped (it can only be the same land, seen without a spell name).
+// Caster entries all stay (two raiders' different slows are both real); bystanders of another family stay.
+function _dropSupersededBystanders(entries, nowMs) {
+  const casters = entries.filter(e => e && e.caster && !e.ambiguous && e.name && e.magnitude > 0
+    && !(e.expiresAtMs > 0 && e.expiresAtMs <= nowMs));
+  if (casters.length === 0) return entries;
+  return entries.filter(e => (e && e.caster && !e.ambiguous) || !casters.some(c => _slowSameFamily(c.name, e)));
+}
+// Record the caster-reported slows the bot's target-buffs relay carried for `targetName` (rows already through
+// _sanitizeRemoteBuffs: clock-corrected, wrong-spawn rows gone). Replaces whatever the last read stored; an
+// empty answer clears it. A slow on a reverse-slow mob is never recorded, as in _noteSlowForTarget.
+function _noteRemoteCasterSlows(targetName, remoteBuffs) {
+  const targetLower = String(targetName || '').toLowerCase();
+  if (!targetLower) return;
+  const out = [];
+  if (_reverseSlowKnown(targetName) !== true) {
+    for (const b of Array.isArray(remoteBuffs) ? remoteBuffs : []) {
+      if (!b || !b.name || !b.by_caster || !_isSlowSpell(b.name)) continue;
+      const magnitude = _slowMagnitude(b.name);
+      const landedAtMs = Number(b.observed_at_ms) || 0;
+      const total = Number(b.total_secs) > 0 ? Number(b.total_secs) : 0;
+      if (!(magnitude > 0) || !landedAtMs || !total) continue;   // a slow always has a catalog length
+      out.push({ name: b.name, magnitude, caster: b.caster || b.owner || null,
+                 targetId: Number(b.target_id) > 0 ? Number(b.target_id) : null,
+                 ambiguous: false, family: null, remote: true,
+                 landedAtMs, expiresAtMs: landedAtMs + total * 1000 });
+    }
+  }
+  if (out.length) {
+    _remoteSlowsByTarget.delete(targetLower);   // re-insert at the tail so the cap evicts the stalest
+    _remoteSlowsByTarget.set(targetLower, out);
+    if (_remoteSlowsByTarget.size > SLOW_TARGET_CAP) _remoteSlowsByTarget.delete(_remoteSlowsByTarget.keys().next().value);
+  } else {
+    _remoteSlowsByTarget.delete(targetLower);
+  }
+}
 // Best active slow on a target for DISPLAY — { name, magnitude, caster,
 // remaining_secs, total_secs, uncertain } or null. Prunes long-expired entries as it reads.
 // FB-83: `wantId` is the spawn id of the mob the reader is showing, when it knows one
@@ -8475,22 +8532,32 @@ function _pickBestActiveSlow(entries, nowMs) {
 // certain, an entry tied to a DIFFERENT id is some other mob of the same name and is
 // left out, and an id-less entry (a bystander line) may or may not be this mob: it is
 // returned with `uncertain: true`, and only when no certain entry exists.
+// CASTER PRECEDENCE (the guild lead, 2026-11-01: "The debuffer should always be the one whose buff landing takes
+// precedence"): an entry with a known `caster` (our own cast, or another raider's agent reporting its own cast)
+// names the spell exactly; a bystander emote ("<mob> yawns.") cannot. A caster entry that carries no spawn id
+// still counts as THIS mob for a reader that has one (shown certain, no "?"); only a caster entry tied to a
+// DIFFERENT spawn is left out. See _dropSupersededBystanders for what the caster entry replaces.
 function _bestSlowForTarget(targetLower, nowMs, wantId) {
   const mp = _slowsByTarget.get(targetLower);
-  if (!mp || mp.size === 0) return null;
   const now = nowMs || Date.now();
   const entries = [];
-  for (const [k, e] of mp) {
-    if (e && e.expiresAtMs > 0 && e.expiresAtMs <= now - SLOW_PRUNE_GRACE_MS) { mp.delete(k); continue; }
-    if (e) entries.push(e);
+  if (mp) {
+    for (const [k, e] of mp) {
+      if (e && e.expiresAtMs > 0 && e.expiresAtMs <= now - SLOW_PRUNE_GRACE_MS) { mp.delete(k); continue; }
+      if (e) entries.push(e);
+    }
+    if (mp.size === 0) _slowsByTarget.delete(targetLower);
   }
-  if (mp.size === 0) { _slowsByTarget.delete(targetLower); return null; }
+  const remote = _remoteSlowsByTarget.get(targetLower);
+  if (remote) for (const e of remote) if (!(e.expiresAtMs > 0 && e.expiresAtMs <= now)) entries.push(e);
+  if (entries.length === 0) return null;
   let pool = entries, uncertain = false;
   if (wantId > 0) {
-    const certain = entries.filter(e => e.targetId === wantId);
+    const certain = entries.filter(e => e.targetId === wantId || (e.caster && !e.ambiguous && !(e.targetId > 0)));
     if (_pickBestActiveSlow(certain, now)) pool = certain;
     else { pool = entries.filter(e => !(e.targetId > 0)); uncertain = true; }
   }
+  pool = _dropSupersededBystanders(pool, now);
   const best = _pickBestActiveSlow(pool, now);
   if (!best) return null;
   const remaining = best.expiresAtMs > 0 ? Math.max(0, Math.round((best.expiresAtMs - now) / 1000)) : null;
@@ -56619,6 +56686,65 @@ function fetchTargetCasts(name, selfChar, targetId) {
   } catch { _targetCastsInflight.delete(key); }
 }
 
+// A landing's clock can be an hour off (the guild lead, 2026-11-01: the clocks went back, one PC kept stamping
+// its log an hour AHEAD, so a 65-tick slow showed "659/65 · 1h05"). Where the stamp puts the landing in the
+// future — past the spell's whole length plus 6 s (remaining > total + 6 s), or more than 2 minutes ahead when
+// no length is known — it is moved back by the nearest whole number of hours IF that puts it inside the spell's
+// length; a landing that still does not fit is dropped (null). A stamp under 2 minutes ahead is ordinary
+// clock skew between two PCs: kept, as "just landed". Pure; `castAtMs` / `nowMs` are epoch ms, `totalSecs` the
+// catalog length or 0 when unknown. Returns { castAtMs, shifted } or null.
+function _reconcileLandingClock(castAtMs, totalSecs, nowMs) {
+  const HOUR_MS = 3600000, SKEW_MS = 120000, GRACE_MS = 6000;
+  const ageMs = nowMs - castAtMs;
+  const total = totalSecs > 0 ? totalSecs : 0;
+  if (ageMs >= -(total > 0 ? GRACE_MS : SKEW_MS)) return { castAtMs, shifted: false };
+  if (-ageMs <= SKEW_MS) return { castAtMs: nowMs, shifted: false };   // a little ahead, not an hour
+  const hours = Math.round(-ageMs / HOUR_MS);
+  if (hours < 1) return null;                                          // minutes ahead: no shift explains it
+  const back = castAtMs - hours * HOUR_MS;
+  const backAge = nowMs - back;
+  if (backAge < -SKEW_MS) return null;                      // still ahead of now
+  if (total > 0 && backAge > total * 1000) return null;     // would already have worn off
+  return { castAtMs: Math.min(back, nowMs), shifted: true };
+}
+// The relay's rows, made safe to show: a row proven to be a DIFFERENT spawn than the one on screen is dropped
+// (the bot already scopes by id; this is for a bot that does not yet send it), and each row's landing time goes
+// through _reconcileLandingClock. Rows it cannot place are dropped. An untouched row is returned as the same
+// object; a corrected one is a copy with the new time, the time left recomputed, and clock_shifted: true.
+function _sanitizeRemoteBuffs(buffs, nowMs, wantId) {
+  if (!Array.isArray(buffs)) return [];
+  const out = [];
+  for (const b of buffs) {
+    if (!b || !b.name) continue;
+    if (wantId > 0 && Number(b.target_id) > 0 && Number(b.target_id) !== wantId) continue;
+    const at = Number(b.observed_at_ms) || 0;
+    if (!at) { out.push(b); continue; }
+    const total = Number(b.total_secs) > 0 ? Number(b.total_secs) : 0;
+    const fix = _reconcileLandingClock(at, total, nowMs);
+    if (!fix) continue;
+    if (fix.castAtMs === at) { out.push(b); continue; }
+    out.push({ ...b, observed_at_ms: fix.castAtMs, clock_shifted: fix.shifted,
+      remaining_secs: total > 0 ? Math.max(0, Math.round(total - (nowMs - fix.castAtMs) / 1000)) : b.remaining_secs });
+  }
+  return out;
+}
+// The debuffer's landing takes precedence (the guild lead, 2026-11-01). A relay row flagged `by_caster` is a
+// landing its CASTER's own agent reported (the bot's self_cast flag); it replaces, in the merged debuff list,
+// every bystander landing of the same effect: the same spell, or another member of its shared-emote family
+// (_slowSameFamily). Bystander rows stay when no caster row covers them. Local rows that are our own casts
+// (`by_caster`) are never replaced. Returns { local, remote } filtered; a caster row gets `caster` named so
+// the later cast-relay lookup leaves it alone.
+function _applyDebufferPrecedence(local, remote) {
+  const casters = remote.filter(b => b && b.by_caster);
+  if (casters.length === 0) return { local, remote };
+  const covered = (row) => casters.some(c => _slowSameFamily(c.name, row));
+  return {
+    local: local.filter(l => !l || l.by_caster || !covered(l)),
+    remote: remote.filter(b => b && (b.by_caster || !covered(b))).map(b =>
+      (b.by_caster && !b.caster && b.owner) ? { ...b, caster: b.owner } : b),
+  };
+}
+
 // Name the caster of each Target Info effect (the guild lead, 2026-10-08: mousing over the time left
 // "should show you how long it lasted and who cast it"). EverQuest's landing lines never name a
 // caster, so the only source is the bot's cast relay: target-casts' `last_casters` ([{ spell, caster,
@@ -57679,7 +57805,7 @@ function _mobTrackGc(nowMs) {
 function _clearNameObservations(nameLower) {
   if (!nameLower) return;
   try { _buffLandingsByTarget.delete(nameLower); } catch { /* */ }
-  try { _slowsByTarget.delete(nameLower); _slowCalloutState.delete(nameLower); } catch { /* */ }
+  try { _slowsByTarget.delete(nameLower); _slowCalloutState.delete(nameLower); _remoteSlowsByTarget.delete(nameLower); } catch { /* */ }
   try { _extMobHpHist.delete(nameLower); _extMobResetAt.delete(nameLower); } catch { /* */ }
   try { _mobTicks.delete(nameLower); } catch { /* */ }   // the next spawn has its own tick
 }
@@ -58409,8 +58535,14 @@ function buildMobInfo() {
   } else if (liveBuffs !== null) {
     buffs = liveBuffs;
   } else {
-    const local  = targetBuffsFor(tnameLower, _curIdForRelay);
-    const remote = (ctb && Array.isArray(ctb.buffs)) ? ctb.buffs : [];
+    const nowRelay = Date.now();
+    // The relay's rows, clock-corrected (an hour-ahead stamp is put back or dropped), then the debuffer's
+    // landing outranks a bystander's of the same effect — in this list and in the slow badge below.
+    const remoteOk = _sanitizeRemoteBuffs((ctb && Array.isArray(ctb.buffs)) ? ctb.buffs : [], nowRelay, _curIdForRelay);
+    try { _noteRemoteCasterSlows(st.target_name, remoteOk); } catch { /* the badge falls back to local landings */ }
+    const prec = _applyDebufferPrecedence(targetBuffsFor(tnameLower, _curIdForRelay), remoteOk);
+    const local  = prec.local;
+    const remote = prec.remote;
     const seen = new Set(local.map(b => String(b.name || '').toLowerCase()));
     buffs = local.slice();
     for (const b of remote) {
