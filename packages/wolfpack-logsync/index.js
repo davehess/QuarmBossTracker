@@ -66709,6 +66709,15 @@ const RESCAN_BUDGET_MS   = 12;
 const RESCAN_REST_MS     = 25;
 const RESCAN_MAX_DAYS    = 60;
 const RESCAN_MAX_WAIT_MS = 10 * 60_000;     // total time spent paused for a live fight
+const RESCAN_LINES_MAX = 800;                // Seer / #popflags lines kept for the overlay's copy box
+const RESCAN_FIGHT_RECENT_MS = 15_000;
+// The read rests only for combat happening NOW: the fight snapshot published in the last 15 s. _liveFightActive's
+// 150 s window (made for the update gate) kept a capture "paused while you fight" for minutes after a fight, or
+// while other raiders fought nearby (the guild lead, 2026-11-02: "not currently in a fight for this sync").
+function _rescanFightNow() {
+  const et = stats.currentEncounterThreat;
+  return !!(et && !et.flushedAt && et.publishedAt && Date.now() - et.publishedAt < RESCAN_FIGHT_RECENT_MS);
+}
 const RESCAN_FLUSH       = 100;             // events per upload
 // ONE in-flight guard for both callers: the website's request (the poll's `rescan` stream) and the dashboard's
 // "Capture latest PoP flags" button (POST /api/local/pop-rescan). `running` is that guard; `by` says who holds it;
@@ -66738,6 +66747,8 @@ function _rescanLine(line, character, sinceMs, sink) {
   if (!gate) { sink.prevPassed = false; return; }
   const ts = parseEqTimestamp(line);
   if (!ts || ts.getTime() < sinceMs) { sink.prevPassed = false; return; }
+  // Every Seer / #popflags line read, for the PoP overlay to show and copy (the guild lead, 2026-11-02). Newest kept.
+  if (Array.isArray(sink.lines)) { sink.lines.push(line); if (sink.lines.length > RESCAN_LINES_MAX) sink.lines.shift(); }
   // parsePopFlagLine names a grant from the line just before it; a skipped line in between must not leave an older
   // NPC line standing in for it, so the real previous line is shown to it first (its answer, if any, is dropped).
   if (gate === 'grant' && !sink.prevPassed && prev) parsePopFlagLine(prev, character);
@@ -66767,7 +66778,7 @@ async function _rescanFile(file, ctx, sink) {
     const pos0 = pos;
     ctx.frac = 0;                              // how far into THIS file (the status route's progress)
     while (pos < size && ctx.bytes > 0 && !ctx.stop) {
-      if (_liveFightActive() && ctx.waited < RESCAN_MAX_WAIT_MS) { ctx.paused = true; ctx.waited += 1500; await _rescanSleep(1500); continue; }
+      if (_rescanFightNow() && ctx.waited < RESCAN_MAX_WAIT_MS) { ctx.paused = true; ctx.waited += 1500; await _rescanSleep(1500); continue; }
       ctx.paused = false;
       const want = Math.min(chunk.length, ctx.bytes, size - pos);
       const { bytesRead } = await fh.read(chunk, 0, want, pos);
@@ -66882,7 +66893,7 @@ async function _rescanRun(req, prog) {
   if (!files.length) return done({});
   const opts = _uploadOpts || {};
   const sink = {
-    events: [], found: 0, sent: 0, prev: null, prevPassed: false,
+    events: [], found: 0, sent: 0, prev: null, prevPassed: false, lines: [],
     flush() {
       if (!this.events.length) return;
       const evs = this.events.splice(0);
@@ -67020,6 +67031,8 @@ function _rescanStatus() {
       paused: p.state === 'running' && !!(p.ctx && p.ctx.paused),
       progress: p.state === 'done' ? 1 : (p.files && p.ctx ? Math.min(1, ((p.filesDone || 0) + (p.ctx.frac || 0)) / p.files) : null),
       found: p.result ? p.result.found : (p.sink ? p.sink.found : 0),
+      // The lines themselves once the read is done (not while it runs: the overlay polls this every few seconds).
+      ...(p.state === 'done' && p.sink && Array.isArray(p.sink.lines) ? { lines: p.sink.lines } : {}),
       logs: p.result ? p.result.logs : 0,
       exports: p.result ? p.result.exports : (p.exports || 0),
       sent: p.result ? p.result.sent : (p.sink ? p.sink.sent : 0),

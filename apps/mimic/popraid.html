@@ -239,6 +239,13 @@
   .fcap:hover{background:rgba(86,211,100,0.3)}
   .fcap:disabled{opacity:0.45;cursor:default}
   .fcapr{display:flex;align-items:center;gap:8px}
+  .fcapl{margin-top:6px}
+  .fcaplh{display:flex;align-items:center;gap:8px;font-size:9px;color:var(--wp-dim)}
+  .fcaplh .fcap{padding:2px 8px;font-size:10px}
+  .fpaste{margin-left:auto;color:var(--wp-blue);font-size:10px;text-decoration:none}
+  .fpaste:hover{text-decoration:underline}
+  .fcaptxt{display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:4px 6px;resize:vertical;
+    background:var(--wp-bg);color:var(--wp-text);border:1px solid var(--wp-border);border-radius:4px;font:10px/1.35 ui-monospace,Consolas,monospace}
   .fback{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 5px;font-size:9px;color:#8b949e}
   .fstate{font-size:11px;color:#e6edf3;line-height:1.45}
   .ringed{outline:2px solid #f0b429;outline-offset:1px;border-radius:3px}
@@ -1320,7 +1327,17 @@
   function fCaptureHtml(name, cap){
     var note = cap && cap.note ? esc(cap.note) : (name ? 'reads ' + esc(name) + '\'s last 14 days of log · same scan as the dashboard' : 'needs a character');
     return '<div class="panel ftiers"><div class="fcapr"><button type="button" class="fcap" id="flagsCapture"' + ((cap && cap.busy) || !name ? ' disabled' : '') + '>📥 Capture now</button>'
-      + '<span class="qk" id="flagsCapNote">' + note + '</span></div></div>';
+      + '<span class="qk" id="flagsCapNote">' + note + '</span></div><div id="flagsCapLines">' + fCapLinesHtml(cap) + '</div></div>';
+  }
+  // Every Seer / #popflags line the last capture read, to copy or paste into the guide's "Paste what the Seer says" (the
+  // guild lead, 2026-11-02: "pull out all of the seer/popflags lines into a window below this button to copy/paste").
+  function fCapLinesHtml(cap){
+    var lines = cap && Array.isArray(cap.lines) ? cap.lines : [];
+    if (!lines.length) return '';
+    return '<div class="fcapl"><div class="fcaplh"><span>' + lines.length + ' Seer and #popflags line' + (lines.length === 1 ? '' : 's') + ' read</span>'
+      + '<button type="button" class="fcap" id="flagsCopyLines">📋 Copy</button>'
+      + '<a href="#" class="fpaste" id="flagsPasteLink" title="Open the PoP guide to paste these in">paste them on wolfpack.quest ↗</a></div>'
+      + '<textarea class="fcaptxt" id="flagsCapText" rows="8" readonly spellcheck="false">' + esc(lines.join('\n')) + '</textarea></div>';
   }
   // The whole mode. `B` is the agent's /api/pop-status body (or null when the agent did not answer).
   // ctx: { A, Q, ageText, cap }.
@@ -1597,6 +1614,18 @@
     var go = t.closest('[data-go]');
     if (go) { popGoto(go.getAttribute('data-go'), fFrom(go)); return; }
     if (t.closest('#flagsCapture')) { flagsCapture(); return; }
+    if (t.closest('#flagsPasteLink')) {
+      e.preventDefault();
+      var who = _flags && (_flags.character || _flags.active);
+      openExt('https://wolfpack.quest/pop/guide' + (who ? '?c=' + encodeURIComponent(who) : '') + '#seer-paste');
+      return;
+    }
+    if (t.closest('#flagsCopyLines')) {
+      var txt = (_cap.lines || []).join('\n'), cb = t.closest('#flagsCopyLines');
+      var done = function(){ cb.textContent = '✓ Copied'; setTimeout(function(){ cb.textContent = '📋 Copy'; }, 1500); };
+      try { navigator.clipboard.writeText(txt).then(done, function(){ var ta = document.getElementById('flagsCapText'); if (ta) { ta.select(); document.execCommand('copy'); done(); } }); } catch (e) { void e; }
+      return;
+    }
     // A drill-down block: an era opens its planes, a plane its steps, a step its card.
     var blk = t.closest('.qblock');
     if (blk) {
@@ -1702,6 +1731,11 @@
         return;
       }
       if (run && run.state === 'error') { _capSay('failed: ' + (run.error || 'could not read the log'), false); return; }
+      if (run && Array.isArray(run.lines)) {
+        _cap.lines = run.lines;
+        var box = document.getElementById('flagsCapLines');
+        if (box) box.innerHTML = fCapLinesHtml(_cap);
+      }
       _capSay('done: ' + ((run && run.found) || 0) + ' flag line(s) read; new flags show here in a moment', false);
     } catch (e) { _capSay('agent offline', false); }
   }

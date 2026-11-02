@@ -499,7 +499,9 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
   (`dashboard.html`: `renderPopCaptureCard`, `wpPcStart`). `POST /api/local/pop-rescan {character|null, days}` + `GET .../status`
   (`_localPopRescanRoute` → `_rescanLocalStart` → the same `_rescanRun` as the website's `_rescanPump`; one guard, `_rescan.running`). No tray item.
   Maelin needs no gate of its own: her flags are the generic grant line after a "Maelin ..." line (`_POP_GRANT_RX` + `_POP_PREV_RX`).
-  `test/pop-rescan-agent.test.js`, `test/dashboard-pop-capture.test.js`.
+  `test/pop-rescan-agent.test.js`, `test/dashboard-pop-capture.test.js`. Rests only while `_rescanFightNow()` (snapshot < 15 s old,
+  agent 4.0.56); the lines it read come back as `run.lines` on the status once done, shown with Copy + a link to `/pop/guide#seer-paste`
+  in the PoP Raids overlay (`popraid.html` `fCapLinesHtml`).
 
 ### Self-ticked PoP flags on /pop (web 1.8.86, 2026-10-03)
 - A flag is self-reported when `pop_guide_ticks` holds the guide step that grants it, else `flag:<key>`

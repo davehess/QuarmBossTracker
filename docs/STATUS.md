@@ -169,6 +169,14 @@ next touch one rather than assuming a missing row means a missing doc.
   `encounter_threat_graph` is not archived on Tower and stays in Supabase; its watermark was not read (the RPC timed out), so the first
   nights may clear less than the backlog. Copy method for Tower's file: `docs/HANDOFF-tower-archive-catchup.md`.
 
+- **🧪 PoP Raids Capture: rests only for a fight happening now, and shows the lines it read (agent 4.0.56, beta, 2026-11-02).** The
+  guild lead: *"not currently in a fight for this sync. we should also pull out all of the seer/popflags lines into a window below this
+  button to copy/paste"* + *"also a link to the pop/guide page to paste the lines in"*. The read used `_liveFightActive` (the update
+  gate's 150 s window, which also counts other raiders' fighting nearby); it now uses `_rescanFightNow`: the fight snapshot published
+  in the last 15 s and not flushed. Every Seer / #popflags line the read takes is kept (`sink.lines`, newest 800), served on
+  `GET /api/local/pop-rescan/status` as `run.lines` once the run is done (local-only, behind the router's `_localGuardBlock`), and
+  `popraid.html` shows them in a read-only box with 📋 Copy and "paste them on wolfpack.quest ↗" (`/pop/guide?c=<name>#seer-paste`).
+  Test `test/pop-rescan-agent.test.js`. Next: the guide's paste box shows small when folded (web, beta preview).
 - **✅ Raid-Helper "sync has never landed" was a false alarm (bot 4.0.48, 2026-11-02).** The mirror syncs every 30 minutes
   (17k sign-ups, last sync minutes before); each post was one failed database read read as "never", and a single healthy
   check cleared the latch so the next blip re-posted. `freshnessSnapshot` now answers no verdict on a failed read, and the
