@@ -11,6 +11,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { discordIdOf } from '@/lib/lockout';
 import { GUILD_SLUG_RX, INVITE_CODE_RX, normaliseInviteCode } from '@/lib/hubRegistry';
 import { activeInvites, canManageInvites, newInviteRow, INVITE_ACTIVE_CAP } from '@/lib/hubGuilds';
+import { checkSiteUrl } from '@/lib/guildSites';
 
 export type InviteResult = { ok: boolean; message: string; code?: string };
 
@@ -77,4 +78,24 @@ export async function revokeInvite(slug: string, rawCode: string): Promise<Invit
   if (!(data ?? []).length) return NO('That code is not one of this guild’s.');
   revalidatePath(`/guilds/${slug}`);
   return { ok: true, message: `Revoked ${code}.`, code };
+}
+
+// The guild's own website and whether raidmimic.com sends its members there (the guild lead, 2026-11-02, "redirect by
+// default"). Same owner-or-officer check as the invites, repeated here because this is its own public POST endpoint. The
+// address is validated by checkSiteUrl (https only, 200 characters, not a Raid Mimic host); the database repeats the shape.
+export type SiteResult = { ok: boolean; message: string; url?: string | null };
+
+export async function saveGuildSite(slug: string, rawUrl: string, redirectMembers: boolean): Promise<SiteResult> {
+  const who = await officerOf(String(slug));
+  if ('error' in who) return NO(who.error);
+  const check = checkSiteUrl(rawUrl);
+  if (!check.ok) return NO(check.message);
+
+  const { error } = await supabaseAdmin().from('hub_guilds')
+    .update({ website_url: check.url, redirect_members: redirectMembers === true })
+    .eq('guild_id', slug);
+  if (error) return NO('Could not save that just now. Try again in a minute.');
+  revalidatePath(`/guilds/${slug}`);
+  revalidatePath('/guilds');
+  return { ok: true, message: check.url ? 'Saved.' : 'Saved. No website is set.', url: check.url };
 }

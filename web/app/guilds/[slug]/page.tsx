@@ -17,7 +17,9 @@ import { EQMIMIC_ORIGIN } from '@/lib/raidmimicLanding';
 import { pageMetadata } from '@/lib/pageMetaData';
 import { guildAccess, activeInvites, canManageInvites, ROLE_LABEL, type InviteListRow } from '@/lib/hubGuilds';
 import NewPageTag from '@/components/NewPageTag';
+import { GUILDS_STAY_PATH, cleanSiteUrl, siteLabel } from '@/lib/guildSites';
 import { NewInviteButton, RevokeButton } from './InviteControls';
+import SiteSettings from './SiteSettings';
 import HostFrame from '@/components/RaidmimicFrame';
 
 // The card and the tab say the same words: "Guild", never the guild's name (web/lib/pageMeta.ts).
@@ -27,7 +29,7 @@ export async function generateMetadata({ params }: { params: { slug: string } })
 
 export const dynamic = 'force-dynamic';
 
-type GuildRow = { guild_id: string; display_name: string; plan: string; open_join: boolean | null; discord_guild_id: string | null; suspended_at: string | null };
+type GuildRow = { guild_id: string; display_name: string; plan: string; open_join: boolean | null; discord_guild_id: string | null; suspended_at: string | null; website_url: string | null; redirect_members: boolean | null };
 
 const PLAN_LABEL: Record<string, string> = { commons: 'Commons (free)', managed: 'Managed', self_hosted: 'Self-hosted' };
 const CARD = 'rounded-lg border border-border bg-panel p-4';
@@ -47,7 +49,7 @@ export default async function GuildPage({ params }: { params: { slug: string } }
   let guild: GuildRow | null = null;
   let membership: { role: string; left_at: string | null } | null = null;
   try {
-    const { data: g } = await admin.from('hub_guilds').select('guild_id, display_name, plan, open_join, discord_guild_id, suspended_at').eq('guild_id', slug).maybeSingle();
+    const { data: g } = await admin.from('hub_guilds').select('guild_id, display_name, plan, open_join, discord_guild_id, suspended_at, website_url, redirect_members').eq('guild_id', slug).maybeSingle();
     guild = (g as GuildRow | null) ?? null;
     if (guild && discordId) {
       const { data: player } = await admin.from('hub_players').select('player_id').eq('discord_id', discordId).is('deleted_at', null).maybeSingle();
@@ -74,7 +76,7 @@ export default async function GuildPage({ params }: { params: { slug: string } }
         <p className={`${CARD} mt-4 text-sm text-dim`}>
           You are not a member of this guild. Ask an officer for an invite code, then enter it under &ldquo;Join a guild&rdquo; on Your guilds.
         </p>
-        <p className="mt-4"><a href="/guilds" className="inline-flex min-h-11 items-center text-sm">&larr; Your guilds</a></p>
+        <p className="mt-4"><a href={GUILDS_STAY_PATH} className="inline-flex min-h-11 items-center text-sm">&larr; Your guilds</a></p>
       </div>
       </HostFrame>
     );
@@ -85,6 +87,7 @@ export default async function GuildPage({ params }: { params: { slug: string } }
   // Only an owner or officer reads the invites.
   let invites: InviteListRow[] = [];
   const manage = canManageInvites(access.role);
+  const site = cleanSiteUrl(guild.website_url);
   if (manage) {
     const { data } = await admin.from('hub_invites').select('code, uses, max_uses, expires_at').eq('guild_id', slug);
     invites = activeInvites((data ?? []) as InviteListRow[]);
@@ -108,6 +111,24 @@ export default async function GuildPage({ params }: { params: { slug: string } }
             <div><dt className="text-xs text-dim">Discord server id</dt><dd className="font-mono text-text">{guild.discord_guild_id}</dd></div>
           )}
         </dl>
+      </section>
+
+      {/* The guild's own website (the guild lead, 2026-11-02, "redirect by default"). Anyone in the guild sees the link;
+          only an owner or officer sees the form, and the server action checks the role again. */}
+      <section aria-label="Website" className={`${CARD} mt-4`}>
+        <h2 className="text-base text-[#f2ede1]">Website</h2>
+        {site && <p className="mt-1 text-sm"><a href={site} className="inline-flex min-h-11 items-center">Open {guild.display_name}&rsquo;s site ({siteLabel(site)}) &rarr;</a></p>}
+        {manage ? (
+          <>
+            <p className="mt-1 text-xs leading-5 text-dim">
+              Where your guild lives online. With the box ticked, a member who signs in on Raid Mimic goes straight there; they can
+              still reach this page from &ldquo;Your guilds&rdquo;.
+            </p>
+            <SiteSettings slug={slug} url={site} redirectMembers={guild.redirect_members !== false} />
+          </>
+        ) : (
+          !site && <p className="mt-1 text-sm text-dim">This guild has not set a website.</p>
+        )}
       </section>
 
       <section aria-label="Invites" className={`${CARD} mt-4`}>
@@ -138,7 +159,7 @@ export default async function GuildPage({ params }: { params: { slug: string } }
         )}
       </section>
 
-      <p className="mt-4"><a href="/guilds" className="inline-flex min-h-11 items-center text-sm">&larr; Your guilds</a></p>
+      <p className="mt-4"><a href={GUILDS_STAY_PATH} className="inline-flex min-h-11 items-center text-sm">&larr; Your guilds</a></p>
     </div>
     </HostFrame>
   );

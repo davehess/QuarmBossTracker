@@ -266,6 +266,11 @@ next touch one rather than assuming a missing row means a missing doc.
   applied).** `https://raidmimic.com/privacy`, `/terms`, `/refunds` (also under `wolfpack.quest/raidmimic/...`, and `https://wolfpack.quest/terms`). Both sign-in callbacks
   record the accepted terms version, fail-open. "Animated with AI tools" on the story video. Words in `web/lib/legal.ts`. ⏳ `CONTACT_EMAIL` hello@raidmimic.com must still
   be created. Test: `test/legal-pages.test.js`.
+- **🟡 raidmimic.com references no Wolf Pack address; a guild's own site and redirect by default (first draft 2026-11-02, not yet shipped; the guild lead).**
+  `hub_guilds.website_url` / `redirect_members` (migration `20261102230000_hub_guild_site.sql`, not yet applied: apply BEFORE the web change ships), Wolf Pack's site from
+  `GUILD_SITE_URL` / `GUILD_SITE_REDIRECT` (`web/lib/guildSites.ts`), `/guilds` redirects a one-guild player to it unless `?stay=1`, the privacy page is self-contained.
+  Open: the root layout's title template / `metadataBase` / site name and the `/auth/signin` card still say WolfPack.quest on a raidmimic host; `/api/hubs` still names the
+  Wolf Pack site. Tests: `test/raidmimic-no-wolfpack.test.js`.
 - **✅ Self-serve "Download my data" and "Delete my account" (web 2.1.87, `main`; migration `20261101140000_member_self_delete.sql` applied).** A "Your data" section on
   `https://wolfpack.quest/me#your-data` and on raidmimic.com/guilds: a streamed JSON file of the person's own rows (session identity only, explicit columns, guild-scoped,
   one download per 10 minutes) and a typed-DELETE removal (`member_self_delete` + `member_self_unlink_batch`; the guild's raid rows stay, unlinked; a sole guild owner is

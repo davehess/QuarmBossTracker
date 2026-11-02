@@ -12,10 +12,11 @@ import NewPageTag from '@/components/NewPageTag';
 import { isRaidmimicHost, raidmimicSeo } from '@/lib/raidmimicHost';
 import { EQMIMIC_FEEDBACK_PATH, EQMIMIC_ORIGIN, interestUrl, RIGHTS_NOTICE } from '@/lib/raidmimicLanding';
 import {
-  BETA_NOTE, CREDIT, HERO, LANDING_PATH_ON_HOST, LANDING_PATH_ON_WOLFPACK, PRIVACY_URL, RELEASES_URL, REQUIREMENTS,
+  BETA_NOTE, CREDIT, HERO, LANDING_PATH_ON_HOST, LANDING_PATH_ON_WOLFPACK, RELEASES_URL, REQUIREMENTS,
   STEPS, STILL_STUCK, TROUBLESHOOTING, type Step,
 } from '@/lib/raidmimicSetup';
 import { REPO_URL } from '@/lib/eqmimicLanding';
+import { legalPaths } from '@/lib/legal';
 import { PRIMARY_BTN } from '../_landing/Parts';
 import { HostBar } from '@/components/RaidmimicFrame';
 
@@ -38,8 +39,8 @@ export function generateMetadata(): Metadata {
 const EXT = { target: '_blank', rel: 'noreferrer' } as const;
 const NOTE = 'mt-3 border-l-2 border-orange/60 pl-3 text-xs leading-5 text-dim';
 
-function StepCard({ n, step, guildHref, guildExternal }: { n: number; step: Step; guildHref: string; guildExternal: boolean }) {
-  const href = step.link?.href || guildHref;
+function StepCard({ n, step, guildHref, guildExternal, privacyHref }: { n: number; step: Step; guildHref: string; guildExternal: boolean; privacyHref: string }) {
+  const href = step.link?.href || (step.id === 'privacy' ? privacyHref : guildHref);
   const external = step.link?.href ? /^https?:/.test(step.link.href) : guildExternal;
   return (
     <li id={step.id} className="scroll-mt-4 rounded-md border border-border bg-panel p-4 sm:p-5">
@@ -70,6 +71,7 @@ export default function RaidmimicSetupPage() {
   // landing page is /raidmimic and its Register-interest button reaches the form by its real path.
   const onHost = isRaidmimicHost(headers().get('host'));
   const landing = onHost ? LANDING_PATH_ON_HOST : LANDING_PATH_ON_WOLFPACK;
+  const privacy = legalPaths(onHost).privacy;   // the Raid Mimic privacy page on every host
   const interest = onHost ? interestUrl(`${EQMIMIC_ORIGIN}/feedback`) : interestUrl(EQMIMIC_FEEDBACK_PATH);
 
   return (
@@ -109,7 +111,7 @@ export default function RaidmimicSetupPage() {
       </nav>
 
       <ol className="m-0 list-none space-y-4 p-0">
-        {STEPS.map((s, i) => <StepCard key={s.id} n={i + 1} step={s} guildHref={landing} guildExternal={false} />)}
+        {STEPS.map((s, i) => <StepCard key={s.id} n={i + 1} step={s} guildHref={landing} guildExternal={false} privacyHref={privacy} />)}
       </ol>
 
       <section id="troubleshooting" aria-label={TROUBLESHOOTING.title} className="mt-10 scroll-mt-4">
@@ -145,7 +147,7 @@ export default function RaidmimicSetupPage() {
         </aside>
         <p className="text-xs leading-6 text-dim">
           <a href={REPO_URL} {...EXT}>Source code</a> <span aria-hidden>&middot;</span>{' '}
-          <a href={PRIVACY_URL} {...EXT}>Privacy</a> <span aria-hidden>&middot;</span>{' '}
+          <a href={privacy}>Privacy</a> <span aria-hidden>&middot;</span>{' '}
           <a href={landing}>Raid Mimic</a> <span aria-hidden>&middot;</span>{' '}
           Licensed AGPL-3.0-or-later.
         </p>

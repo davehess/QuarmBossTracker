@@ -23,8 +23,8 @@ export { REPO_URL };
 // ─── Where things live ──────────────────────────────────────────────────────────────────────────────
 // The free player tool and the anonymous form both live on eqmimic.quest (raidmimic has no form of its own).
 export const EQMIMIC_ORIGIN = 'https://eqmimic.quest';
-export const EQMIMIC_FEEDBACK_PATH = '/eqmimic/feedback';   // the same form, on the wolfpack.quest hosts
-export const PRIVACY_URL = 'https://wolfpack.quest/privacy';
+export const EQMIMIC_FEEDBACK_PATH = '/eqmimic/feedback';   // the same form, on the Wolf Pack hosts
+// No PRIVACY_URL: the privacy page is Raid Mimic's own (web/app/raidmimic/privacy), at web/lib/legal.ts legalPaths(onHost).privacy.
 export const SELFHOST_NOTE_URL = `${EQMIMIC_ORIGIN}/#hive`;
 
 // ─── Status vocabulary ──────────────────────────────────────────────────────────────────────────────

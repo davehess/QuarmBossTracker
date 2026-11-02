@@ -451,6 +451,7 @@ describe('the invite server actions, run (web/app/guilds/[slug]/actions.ts)', ()
     vi.doMock('@/lib/lockout', async () => await import('../web/lib/lockout.ts'));
     vi.doMock('@/lib/hubRegistry', async () => await import('../web/lib/hubRegistry.ts'));
     vi.doMock('@/lib/hubGuilds', async () => await import('../web/lib/hubGuilds.ts'));
+    vi.doMock('@/lib/guildSites', async () => await import('../web/lib/guildSites.ts'));   // saveGuildSite's address check
     return await import('../web/app/guilds/[slug]/actions.ts');
   }
   const soon = (d = 3) => new Date(Date.now() + d * 864e5).toISOString();
@@ -576,6 +577,47 @@ describe('the invite server actions, run (web/app/guilds/[slug]/actions.ts)', ()
       setup({ hub_players: null }); as('d-owner');
       const { createInvite } = await load();
       expect(await createInvite('alpha')).toEqual({ ok: false, message: 'The guild registry is not open yet.' });
+    });
+  });
+
+  // The guild's own website and "redirect by default" (the guild lead, 2026-11-02). Same office check as the invites.
+  describe('saveGuildSite', () => {
+    it.each(['d-owner', 'd-off'])('an %s saves the address and the switch on THIS guild only', async (who) => {
+      setup(); as(who);
+      const { saveGuildSite } = await load();
+      const r = await saveGuildSite('alpha', ' https://alpha.example/ ', false);
+      expect(r).toEqual({ ok: true, message: 'Saved.', url: 'https://alpha.example' });
+      expect(store.tables.hub_guilds.find(g => g.guild_id === 'alpha')).toMatchObject({ website_url: 'https://alpha.example', redirect_members: false });
+      expect(store.tables.hub_guilds.find(g => g.guild_id === 'beta').website_url).toBeUndefined();
+      expect(revalidated).toEqual(['/guilds/alpha', '/guilds']);
+    });
+    it('an empty address clears the website', async () => {
+      setup(); as('d-owner');
+      const { saveGuildSite } = await load();
+      expect(await saveGuildSite('alpha', '', true)).toEqual({ ok: true, message: 'Saved. No website is set.', url: null });
+      expect(store.tables.hub_guilds.find(g => g.guild_id === 'alpha')).toMatchObject({ website_url: null, redirect_members: true });
+    });
+    it.each(['d-mem', 'd-guest', 'd-left', 'd-stranger', 'd-other'])('%s is refused and nothing is written', async (who) => {
+      setup(); as(who);
+      const { saveGuildSite } = await load();
+      expect(await saveGuildSite('alpha', 'https://evil.example', true)).toMatchObject({ ok: false });
+      expect(store.writes.filter(w => w.op === 'update')).toEqual([]);
+    });
+    it('a bad address (http, a Raid Mimic host) is refused before anything is written', async () => {
+      setup(); as('d-owner');
+      const { saveGuildSite } = await load();
+      for (const bad of ['http://alpha.example', 'https://raidmimic.com/guilds', 'javascript:alert(1)']) {
+        expect((await saveGuildSite('alpha', bad, true)).ok, bad).toBe(false);
+      }
+      expect(store.writes.filter(w => w.op === 'update')).toEqual([]);
+    });
+    it('signed out, a suspended guild and a malformed slug are refused', async () => {
+      setup(); as(null);
+      const { saveGuildSite } = await load();
+      expect(await saveGuildSite('alpha', 'https://alpha.example', true)).toEqual({ ok: false, message: 'Sign in first.' });
+      as('d-owner');
+      expect((await saveGuildSite('frozen', 'https://alpha.example', true)).ok).toBe(false);
+      expect((await saveGuildSite('Not A Slug', 'https://alpha.example', true)).ok).toBe(false);
     });
   });
 
@@ -754,8 +796,11 @@ describe('the /guilds page links', () => {
     expect(page).toMatch(/href=\{`\/guilds\/\$\{g\.guild_id\}`\}/);
     expect(page).not.toMatch(/own page is coming soon/);
   });
-  it('Wolf Pack stays the special case: its card still goes to wolfpack.quest, and no hub_guilds slug page is built for it', () => {
-    expect(page).toMatch(/href=\{`\$\{PROD_SITE_URL\}\/me`\}/);
+  it('Wolf Pack stays the special case: its card goes to the built-in guild\'s configured site, and no hub_guilds slug page is built for it', () => {
+    // 2026-11-02: nothing on raidmimic.com references wolfpack.quest, so the card no longer spells that address; the site is
+    // configuration (web/lib/guildSites.ts builtinGuildSite, default PROD_SITE_URL). test/raidmimic-no-wolfpack.test.js holds the rule.
+    expect(page).toMatch(/href=\{sitePage\(wolfSite\.url\)!\}/);
+    expect(page).not.toMatch(/PROD_SITE_URL/);
     expect(page).not.toMatch(/\/guilds\/wolfpack/);
   });
   it('the page itself still never writes, and still has its six reads', () => {

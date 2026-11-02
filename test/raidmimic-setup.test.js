@@ -144,7 +144,13 @@ describe('the page', () => {
     expect(guild.link.href).toBe('');                      // the page fills it: the address differs by host
     expect(page).toMatch(/guildHref=\{landing\}/);
     expect(page).toMatch(/LANDING_PATH_ON_HOST/);
-    expect(S.STEPS.find(s => s.id === 'privacy').link.href).toBe('https://wolfpack.quest/privacy');
+    // 2026-11-02: no Wolf Pack address on raidmimic.com. The privacy step links the Raid Mimic privacy page, whose address
+    // differs by host, so the content module leaves it '' (like the guild link) and the page fills it from legalPaths().
+    expect(S.STEPS.find(s => s.id === 'privacy').link.href).toBe('');
+    expect(S.PRIVACY_URL).toBeUndefined();
+    expect(page).toMatch(/const privacy = legalPaths\(onHost\)\.privacy;/);
+    expect(page).toMatch(/privacyHref=\{privacy\}/);
+    expect(page).toMatch(/<a href=\{privacy\}>Privacy<\/a>/);
   });
   it('troubleshooting: Zeal not found (install outside the EverQuest folder) and the compatibility-mode tick', () => {
     const fixes = Object.fromEntries(S.TROUBLESHOOTING.list.map(f => [f.id, f.fix]));
@@ -192,9 +198,9 @@ describe('the words', () => {
     expect((t.match(/Wolf Pack/gi) || []).length).toBe(1);   // the privacy link’s address is not a name
     expect(code(PAGE)).not.toMatch(/Wolf Pack/i);        // the page file names no product, only the content module's credit
   });
-  it('the only outbound addresses are the releases page, the privacy page and the source repo', () => {
+  it('the only outbound addresses are the releases page and the source repo (both built from REPO_URL); the privacy page is Raid Mimic\'s own, not a Wolf Pack address', () => {
     const urls = new Set([...code('web/lib/raidmimicSetup.ts').matchAll(/https?:\/\/[^\s'"`)<>]+/g)].map(m => m[0]));
-    expect([...urls].filter(u => !/\$\{/.test(u))).toEqual(['https://wolfpack.quest/privacy']);
+    expect([...urls].filter(u => !/\$\{/.test(u))).toEqual([]);
     expect(code(PAGE)).not.toMatch(/https?:\/\//);
   });
   it('is public-safe: no ids, tokens, addresses or invented people; no price', () => {
