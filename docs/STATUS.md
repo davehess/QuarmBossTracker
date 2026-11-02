@@ -169,6 +169,11 @@ next touch one rather than assuming a missing row means a missing doc.
   `encounter_threat_graph` is not archived on Tower and stays in Supabase; its watermark was not read (the RPC timed out), so the first
   nights may clear less than the backlog. Copy method for Tower's file: `docs/HANDOFF-tower-archive-catchup.md`.
 
+- **✅ Agent 4.0.53: a log a whole hour off the PC's clock is put back on the hour (beta + main, 2026-11-02, §512).** The first raid after
+  the clocks went back dropped about a third of the projection hails (log times exactly 1 h early or late, measured in `pop_flags`).
+  `_fixLogClock` in the live tail rewrites a log's timestamps once 5 live lines in a row sit on a 1–2 hour step. Test
+  `test/log-clock-shift.test.js`. Open: why some clocks were off (client left running across the change?); a bot-side fallback for
+  agents still on 4.0.52.
 - **✅ Mimic 3.0.6 stable (agent 4.0.52), 2026-11-01, on the guild lead's "let's push beta to main".** Graduated by file from beta:
   `apps/mimic/**`, `packages/wolfpack-logsync/**`, their tests, `scripts/sync-piper-voices.js`, a PoP-flags fixture and two `.gitignore`
   lines. Carries the per-character overlays, UI Studio compare-first restore / Keep in sync / This PC, slow-mode and split marks on the

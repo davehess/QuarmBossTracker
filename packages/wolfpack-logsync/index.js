@@ -501,6 +501,42 @@ function parseEqTimestamp(line) {
   return isNaN(d.getTime()) ? null : d;
 }
 
+// ── A log whose clock is a whole hour off this PC's (the guild lead, 2026-11-02, the first raid after the clocks went
+// back: "I think the timezone change is messing people up - the hails weren't coming through initially"). That night's
+// hails reached the bot on time, but a third of them carried a log time exactly one hour early or one hour late, so the
+// hail board (which credits a hail inside the projection's 20 minutes) dropped them. Some EverQuest client or this
+// process was still on summer time. A LIVE line is written seconds before we read it, so when a log's live lines keep
+// reading exactly 1 or 2 hours away from this PC's clock, its timestamps are rewritten by that many hours before
+// anything else sees the line. Only lines whose own time sits on that hour step are touched (a line read late, or a
+// second EverQuest that is in step, is left alone), and the correction ends once the log is back in step.
+const LOG_CLOCK_BAND_MS = 90 * 1000;   // how far from a whole hour still counts as "on the hour step"
+const LOG_CLOCK_CONFIRM = 5;           // live lines in a row before a shift is believed (or dropped)
+const _EQ_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const _EQ_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function _eqStamp(d) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${_EQ_DAYS[d.getDay()]} ${_EQ_MONTHS[d.getMonth()]} ${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())} ${d.getFullYear()}`;
+}
+// `st` is one log's state ({ shiftH, candH, offRun, okRun }); `say` reports a change. Returns the line, rewritten or not.
+function _fixLogClock(line, st, nowMs, say) {
+  const m = TS_RX.exec(line);
+  if (!m) return line;
+  const t = new Date(m[1]).getTime();
+  if (!Number.isFinite(t)) return line;
+  const d = t - nowMs, h = Math.round(d / 3600000);
+  if (Math.abs(d - h * 3600000) > LOG_CLOCK_BAND_MS || Math.abs(h) > 2) return line;   // read late, or not a clock step
+  if (h === 0) {
+    st.offRun = 0;
+    if (st.shiftH && ++st.okRun >= LOG_CLOCK_CONFIRM) { st.shiftH = 0; if (say) say(0); }
+    return line;
+  }
+  st.okRun = 0;
+  if (st.candH === h) st.offRun++; else { st.candH = h; st.offRun = 1; }
+  if (st.shiftH !== h && st.offRun >= LOG_CLOCK_CONFIRM) { st.shiftH = h; if (say) say(h); }
+  if (st.shiftH !== h) return line;
+  return '[' + _eqStamp(new Date(t - h * 3600000)) + ']' + line.slice(m[0].length);
+}
+
 // ── Filter (the privacy layer) ──────────────────────────────────────────────
 // Returns true if the line should be KEPT for further processing.
 // Order: priority keeps (override drops) → drop list → keep list.
@@ -64408,8 +64444,13 @@ async function main() {
       const HAIL_SELF_WINDOW_MS = 8000;
       let _hailFound = false;
       let _pendingSelfHail = null;   // #176 { target, atMs } — set on OUR own hail
+      const _logClock = { shiftH: 0, candH: 0, offRun: 0, okRun: 0 };
       await tailFile(b.logPath, line => {
         if (watched) { watched.lastSeen = Date.now(); }
+        // A log a whole hour off this PC's clock (the clocks changing): put its live lines back on the hour first.
+        line = _fixLogClock(line, _logClock, Date.now(), (h) => console.log(h
+          ? `[clock] ${b.character || path.basename(b.logPath)}: this log's times are ${Math.abs(h)} hour${Math.abs(h) === 1 ? '' : 's'} ${h > 0 ? 'ahead of' : 'behind'} this PC's clock; correcting them`
+          : `[clock] ${b.character || path.basename(b.logPath)}: this log's times match this PC's clock again`));
         // Your own timers pause while you are logged out: the earliest point every raw line passes, before any
         // privacy filter drops it, with the character known. Keeps "when did this log last speak" and spots the login.
         try { _noteOwnRawLine(line, b.character); } catch (e) { void e; }
