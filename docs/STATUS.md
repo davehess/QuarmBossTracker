@@ -189,8 +189,10 @@ next touch one rather than assuming a missing row means a missing doc.
   of every guild post a schedule and fill gaps from players (any guild) whose uploaded flags say they need the target;
   opt-in sharing into restricted tables; officer rights; the Raid Mimic bot with a role wizard. Research, proposed shape,
   phases, the privacy sentences that must change with it, and the eight open choices: `docs/DESIGN-flag-exchange.md`. Phase
-  1 is live: https://raidmimic.com/demo (web 2.1.97, `[beta]`, invented guild, no data); its two event boards are the
-  pictures for choice 8 (A `/demo/events`, B `/demo/events/needs`).
+  1 is live: https://raidmimic.com/demo (web 2.1.97, `[beta]`, invented guild, no data). Phase 2 started: option A was
+  picked (§522) and the real board is live for Wolf Pack at https://wolfpack.quest/pop/flag-events (web 2.1.99, `[beta]`;
+  officers post, everyone sees who still needs it; "Ping" waits on the bot). The Discord setup checklist is an artifact
+  (link in the private briefing).
 - **✅ PoP guide: what each character is missing, per gate, and the small paste box (web 2.1.94 `main`, 2026-11-02, FB-115).**
   On the guild lead's "looks right now, ship it": https://wolfpack.quest/pop/guide opens on the family table (every piece of the
   picked gate per character, and what is left); a character's name opens their piece-by-piece list (`?v=gate-a`). The paste box

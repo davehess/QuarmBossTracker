@@ -20,6 +20,8 @@
 import { POP_ZONE_BY_KEY } from './popFlags';
 import { GATES } from './popGatePieces';
 import { gateReport, type PieceStatus, type Verdict } from './popGateStatus';
+import { FLAG_TARGETS, flagTargetByKey, type FlagTarget } from './flagTargets';
+import { splitNeeds, type Needs } from './flagEventNeeds';
 
 export const GUILD = {
   name: 'Silverpine Vanguard',
@@ -128,40 +130,20 @@ export const DEMO_DEFAULT_GATE = 'solro';
 
 // ─── Flag targets (the pick list an event is made from) ─────────────────────────────────────────
 
-export type DemoTarget = {
-  key: string;
-  label: string;
-  /** The gate the target's pieces belong to (popGatePieces.ts), so "who needs it" is the real gate rule. */
-  gate: string;
-  /** Piece keys (popGatePieces.ts) that must be done; a character who lacks any of them needs the target. */
-  pieces: string[];
-  blurb: string;
-};
+// The list itself lives in web/lib/flagTargets.ts: the real board (wolfpack.quest/pop/flag-events) offers the same
+// choices. These names stay so the demo pages keep importing from here.
 
-export const TARGETS: DemoTarget[] = [
-  { key: 'marr-trials', label: 'Temple of Marr trials', gate: 'hohb', pieces: ['hoh_t1', 'hoh_t2', 'hoh_t3'], blurb: 'Three trials in the Halls of Honor' },
-  { key: 'saryrn', label: 'Saryrn', gate: 'solro', pieces: ['c_saryrn'], blurb: 'Half of the cipher' },
-  { key: 'marr', label: 'Mithaniel Marr', gate: 'solro', pieces: ['c_marr'], blurb: 'The other half of the cipher' },
-  { key: 'tallon-vallon', label: 'Tallon & Vallon', gate: 'solro', pieces: ['z_vallon', 'z_tallon'], blurb: 'Both sets of Zek notes' },
-  { key: 'terris', label: 'Terris Thule', gate: 'torment', pieces: ['t_terris'], blurb: 'Half of the Torment gate' },
-  { key: 'bertox', label: 'Bertoxxulous', gate: 'torment', pieces: ['f_bertox'], blurb: 'The other half of the Torment gate' },
-  { key: 'rallos', label: 'Rallos Zek', gate: 'fire', pieces: ['s_rallos'], blurb: 'Needed for Doomfire and the elemental planes' },
-];
-export const targetByKey = (key: string): DemoTarget | undefined => TARGETS.find(t => t.key === key);
+export type DemoTarget = FlagTarget;
+export const TARGETS: DemoTarget[] = FLAG_TARGETS;
+export const targetByKey = flagTargetByKey;
 
-export type Need = { need: DemoChar[]; unsure: DemoChar[]; done: DemoChar[] };
+export type Need = Needs<DemoChar>;
 
 /** Who still needs a target. `need` is a real "no" (their own full read lacks it); `unsure` is "not recorded either way";
- *  `done` holds it, a report included. A held Seer memory (⏳) counts as done: the kill is credited, no raid is owed. */
+ *  `done` holds it, a report included. A held Seer memory (⏳) counts as done: the kill is credited, no raid is owed.
+ *  The rule is web/lib/flagEventNeeds.ts, the one the real board uses. */
 export function needsFor(t: DemoTarget): Need {
-  const out: Need = { need: [], unsure: [], done: [] };
-  for (const c of CHARS) {
-    const states = reportFor(c, t.gate, 'planning').pieces.filter(p => t.pieces.includes(p.key)).map(p => p.state);
-    if (states.some(s => s === 'missing')) out.need.push(c);
-    else if (states.some(s => s === 'unknown')) out.unsure.push(c);
-    else out.done.push(c);
-  }
-  return out;
+  return splitNeeds(t, CHARS, c => ({ flags: flagsOf(c, 'planning'), fullRead: c.fullRead }));
 }
 
 // ─── Events ─────────────────────────────────────────────────────────────────────────────────────

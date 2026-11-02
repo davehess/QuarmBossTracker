@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-99-2026-11-02',
+    title: 'Web 2.1.99',
+    version: 'Web 2.1.99',
+    date: '2026-11-02',
+    headline: 'Flag events: officers post a flag raid, and everyone sees who still needs it.',
+    features: [
+      { name: 'Flag events (beta)', blurb: 'On the PoP pages, officers post what the guild is going for and when (Temple of Marr trials, Saryrn, Tallon and Vallon, and more). Each event lists the raiders who still need it, the ones we have no full flag read for yet, and who signed up when it is linked to a Raid-Helper event.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-2-1-98-2026-11-02',
     title: 'Web 2.1.98',
     version: 'Web 2.1.98',

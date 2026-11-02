@@ -140,6 +140,7 @@ export default async function GuildsPage({ searchParams }: { searchParams: { fin
             </p>
             <p className="mt-2 flex flex-wrap gap-x-5">
               <a href={`${PROD_SITE_URL}/me`} className={LINK}>Open the guild &rarr;</a>
+              <a href={`${PROD_SITE_URL}/pop/flag-events`} className={LINK}>Flag events &rarr;</a>
               <a href={`${PROD_SITE_URL}/auth/mimic-link`} className={LINK}>Link Mimic &rarr;</a>
             </p>
           </article>

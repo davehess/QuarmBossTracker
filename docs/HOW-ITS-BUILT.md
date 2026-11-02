@@ -97,6 +97,16 @@ writes.
 
 ## Identity & auth
 
+- **Flag events board, `/pop/flag-events` (web 2.1.99 on `main`, `[beta]`, 2026-11-02; DECISIONS §522 pick A).** Officers post
+  a target (catalog `web/lib/flagTargets.ts`, 12 targets, each a set of gate pieces from `popGatePieces.ts`; the demo shares it)
+  and an Eastern date/time, an optional note and an optional Raid-Helper event (`actions.ts`: session + `isOfficer` re-checked,
+  validated by `web/lib/flagEvents.ts`, the RH event must be the guild's). Each event card lists Still need it (no piece held
+  and a full read: `web/lib/flagEventNeeds.ts` through `gateReport`), Not recorded (no full read) and Signed
+  (`web/lib/flagEventSigned.ts`, the /pop/raid going rule). Characters: the guild's, level 46+, not traders, hidden or
+  `exclude_from_stats`; flags from `pop_flags_distinct` + `pop_guide_ticks` (not /who or loot yet), cached 5 minutes
+  (`load.ts`). Table `flag_events` (migration `20261102200000_flag_events.sql`): RLS on, no policies, service role only.
+  "Ping" is a disabled button until the bot can message. Linked from the /pop nav and from the Wolf Pack card on
+  raidmimic.com/guilds. `test/flag-events.test.js`.
 - **raidmimic.com/demo, a click-through guild (web 2.1.97 on `main`, `[beta]`, 2026-11-02; DECISIONS §516, §517).** The guild lead:
   "a demo clickthrough site for raidmimic.com … so they can see what it looks like for the guild, but without killing the
   resources". An invented guild ("Silverpine Vanguard", one fixture: `web/lib/demoGuild.ts`, run through the real
