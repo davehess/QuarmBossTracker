@@ -103,6 +103,15 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🔧 Officers can set a character's class; the OpenDKP sync no longer erases a known class with UNKNOWN (drafted, not yet released; the guild lead, 2026-11-03).**
+  A spells page read "Class: UNKNOWN … no spell list" because OpenDKP's literal `UNKNOWN` overwrote the stored class on every sync
+  (115 guild characters have a null/unknown class). Bot: `mergeKnownClassRace` in `utils/openDkpSync.js` keeps a stored real class/race
+  when OpenDKP's is empty or UNKNOWN; a real OpenDKP value still wins. Web: officers get a "Set class" control on
+  `https://wolfpack.quest/character/<name>/spells` (class + optional race, pre-selected from the most common non-anonymous /who sighting),
+  `setCharacterClass` re-checks the officer role and writes an `audit_log` row (`character_class_set`). Test: `test/character-class-set.test.js`.
+  **Open:** pushing the corrected class back to OpenDKP needs OpenDKP's "edit character" request captured first
+  (`docs/opendkp-capture-playbook.md` style); `utils/opendkp.js` has no such call and none is invented.
+
 - **✅ Guild separation is ON for parse uploads (2026-10-31 20:13 UTC; bot 4.0.42; DECISIONS §496, §496a, §496b).** Our own ES256 key was
   imported into Supabase and rotated to; Railway carries `SUPABASE_JWT_SIGNING_JWK`, `SUPABASE_ANON_KEY` (the `sb_publishable_` default key,
   sent as `apikey`) and `GUILD_RLS=1`. Slice-2 migration applied by hand in the SQL editor (the MCP approval prompt never reached the guild
