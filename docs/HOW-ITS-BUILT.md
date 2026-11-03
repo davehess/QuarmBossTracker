@@ -397,6 +397,15 @@ boundaries, `#if 0` C++ — the index above stays the map of intent. The
   `/me` uploads (`web/app/me/inventory-actions.ts`, `spellbook-actions.ts`) write the same stamps. The `/me?v=b` hub shows the
   same line under "Your main".
 
+### A character's class: OpenDKP sync guard + officer "Set class" (drafted 2026-11-03; the guild lead)
+- **Why:** `characters.class`/`race` come from OpenDKP, which sends the literal `UNKNOWN` for characters it has no class for, and the
+  roster sync overwrote anything stored. The spells page then had no class and no spell list.
+- **Where (bot):** `mergeKnownClassRace` / `isUnknownClassRace` in `utils/openDkpSync.js`, applied in `syncCharacters` after the
+  duplicate-name collapse and before the upsert (one paged read of the guild's name/class/race; fail-open).
+- **Where (web):** `web/app/character/[name]/spells/ClassSetter.tsx` (officers only), `setCharacterClass` in the same folder's
+  `actions.ts`, lists and validation in `web/lib/characterClass.ts`. Visible at `https://wolfpack.quest/character/<name>/spells`.
+- **Not done:** OpenDKP is not edited; its "edit character" request has not been captured. Test: `test/character-class-set.test.js`.
+
 ### Worn-set history: which gear a character is captured wearing (bot 4.0.39, 2026-10-31; DECISIONS §480 option B)
 - **What:** `character_gear` and `character_inventory` are replaced per upload, so nothing kept which combinations a character
   wears. Table `character_worn_sets` (migration `20261031130000_character_worn_sets.sql`, applied): one row per

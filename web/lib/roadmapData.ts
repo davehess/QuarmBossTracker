@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-104-2026-11-03',
+    title: 'Web 2.1.104 · Bot 4.0.51',
+    version: 'Web 2.1.104 · Bot 4.0.51',
+    date: '2026-11-03',
+    headline: 'Officers can fix a character whose class shows UNKNOWN.',
+    features: [
+      { name: 'Set class', blurb: "On a character's spells page, an officer can set the class (and race) when it is missing or wrong, with what /who has seen the character as already picked." },
+    ],
+    fixes: [
+      'A class fixed on the website no longer resets to UNKNOWN the next time the roster syncs from OpenDKP.',
+    ],
+  },
+  {
     key: 'web-2-1-100-2026-11-02',
     title: 'Web 2.1.100',
     version: 'Web 2.1.100',

@@ -28,6 +28,8 @@ import { classBit, normalizeClass } from '@/lib/class-titles';
 import { groupSources, vendorSpots, type ItemSources, type VendorSpots } from '@/lib/spellSources';
 import { fetchScrollSources } from '@/lib/capSafeReads';
 import MissingSpellsView from './MissingSpellsView';
+import ClassSetter from './ClassSetter';
+import { topSighting } from '@/lib/characterClass';
 import { poolTierByName, type PoolRow } from '@/lib/popSpells';
 import { GUILD_TAG } from '@/lib/guild';
 import UploadFreshness from '@/components/UploadFreshness';
@@ -69,12 +71,12 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
   const sb = supabaseAdmin();
   const { data: charRows } = await sb
     .from('characters')
-    .select('name, class, discord_id, show_inventory_publicly')
+    .select('name, class, race, discord_id, show_inventory_publicly')
     .eq('guild_id', GUILD_TAG)
     .ilike('name', decoded)
     .limit(1);
   const char = (charRows && charRows[0]) as
-    | { name: string; class: string | null; discord_id: string | null; show_inventory_publicly: boolean }
+    | { name: string; class: string | null; race: string | null; discord_id: string | null; show_inventory_publicly: boolean }
     | undefined;
   if (!char) notFound();
 
@@ -103,6 +105,19 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
 
   const bit = classBit(char.class);
   const baseClass = normalizeClass(char.class);
+
+  // Officers only: what /who has seen this character as (non-anonymous sightings), to pre-select the class.
+  let sighting: { cls: string; count: number } | null = null;
+  if (officer) {
+    const { data: seen } = await sb.from('who_observations')
+      .select('class')
+      .eq('guild_id', GUILD_TAG)
+      .ilike('character', char.name)
+      .eq('anonymous', false)
+      .not('class', 'is', null)
+      .limit(1000);
+    sighting = topSighting(((seen ?? []) as { class: string | null }[]).map(r => r.class));
+  }
 
   // Quest-script parchment pools for this class (pop_parchment_pools view) —
   // drives the "PoP · <parchment>" badges from what the trainer actually
@@ -209,7 +224,12 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
         </div>
         <UploadFreshness gear={gearStamps} inventory={invStamps} spells={spellStamps} />
         <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-dim">
-          <span>Class: <span className="text-text">{baseClass ?? '—'}</span></span>
+          <span>Class: <span className="text-text">{baseClass ?? '—'}</span>
+            {officer && bit > 0 && (
+              <> <ClassSetter character={char.name} currentClass={baseClass} currentRace={char.race}
+                unknown={false} suggestion={sighting} /></>
+            )}
+          </span>
           <span>Scribed: <span className="text-text">{scribedCount ?? 0}</span></span>
           <span>Missing: <span className="text-text">{missing.length}</span></span>
           <span>🛒 Buyable: <span className="text-orange">{buyableCount}</span></span>
@@ -230,6 +250,13 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
             ⚠ {decoded} has no recognized caster class on record
             ({char.class ?? 'unknown'}), so there&apos;s no spell list to diff.
           </p>
+        )}
+        {bit === 0 && officer && (
+          <div className="mt-3 text-xs text-text">
+            <span className="text-orange mr-2">Officer: set the class</span>
+            <ClassSetter character={char.name} currentClass={baseClass} currentRace={char.race}
+              unknown suggestion={sighting} />
+          </div>
         )}
         {rpcError && <p className="text-xs text-red mt-3">⚠ {rpcError}</p>}
       </section>
