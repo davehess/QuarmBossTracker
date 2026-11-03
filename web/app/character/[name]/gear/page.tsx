@@ -33,6 +33,8 @@ import { ownedCharacters } from '@/lib/ownedCharacters';
 import { isOptedOut, scoredClass } from '@/lib/gearUpgrades';
 import { parseAttrEnd, runUpgradeEval } from '@/lib/gearUpgradesRun';
 import GearSets from './GearSets';
+import InventoryWindow, { type WornSlot } from './InventoryWindow';
+import { normaliseSlot, type SlotId } from '@/lib/inventorySkins';
 import { loadGearSets } from '@/lib/gearSetsLoad';
 
 export async function generateMetadata({ params }: { params: Promise<{ name: string }> }): Promise<Metadata> {
@@ -295,10 +297,10 @@ function RaidKitCard({ kit, name }: { kit: RaidKitResult; name: string }) {
 }
 
 export default async function CharacterGearPage({ params, searchParams }: {
-  params: Promise<{ name: string }>; searchParams: Promise<{ try?: string }>;
+  params: Promise<{ name: string }>; searchParams: Promise<{ try?: string; skin?: string }>;
 }) {
   const { name } = await params;
-  const { try: tryRaw } = await searchParams;
+  const { try: tryRaw, skin: skinRaw } = await searchParams;
   const decoded = decodeURIComponent(name);
   if (!/^[A-Za-z]{2,}$/.test(decoded)) notFound();
 
@@ -521,6 +523,13 @@ export default async function CharacterGearPage({ params, searchParams }: {
     }
   }
 
+  // Inventory window: the equipped rows keyed by canonical slot (the data spells them Ear1 / Fingers1 / Wrist1).
+  const wornBySlot: Partial<Record<SlotId, WornSlot>> = {};
+  for (const g of equipped) {
+    const id = normaliseSlot(g.slot);
+    if (id && !wornBySlot[id]) wornBySlot[id] = { itemId: g.item_id, name: g.item_name, icon: items[g.item_id]?.icon ?? null };
+  }
+
   const trainedRanks = validAas.reduce((s, a) => s + a.rank, 0);
   const spentPoints = validAas.reduce((s, a) => {
     const cat = aaByMac.get(a.aa_index);
@@ -549,8 +558,17 @@ export default async function CharacterGearPage({ params, searchParams }: {
         <UploadFreshness gear={gearStamps} inventory={invStamps} spells={spellStamps} />
       </section>
 
-      <RaidKitCard kit={raidKit} name={decoded} />
+      {equipped.length > 0 && (
+        <InventoryWindow
+          charName={decoded}
+          className={char?.class ?? null}
+          worn={wornBySlot}
+          stats={{ ac: acSum, hp: hpSum, atk: atkCapped, attrs: gearStat, resists: gearResist }}
+          urlSkin={typeof skinRaw === 'string' ? skinRaw : null}
+        />
+      )}
 
+      <RaidKitCard kit={raidKit} name={decoded} />
       {clickyMacros.length > 0 && (
         <section className="bg-panel border border-border rounded-lg p-4">
           <h3 className="text-sm text-orange mb-1 flex items-center gap-2">

@@ -339,6 +339,12 @@ next touch one rather than assuming a missing row means a missing doc.
   OpenDKP standings mirror), raids with "Replay with you highlighted", and the upload controls. On the beta build a sign-in from the home page
   lands here. Preview: https://b.wolfpack.quest/me?v=b. Tests `test/me-hub.test.js`, `test/landing-after-sign-in.test.js`. Awaiting the pick
   (Decision Desk card, hub promote).
+- **🧪 Gear page: inventory window with four skins and a saved default (web beta, no version bump, 2026-11-03; the guild lead: "display of the item layouts towards the top and different skin layouts that people may be used to, and let them set a default").**
+  The equipped items drawn as icons in the slot positions of Classic, Inventory grid, Paper doll or Compact, near the top of
+  https://b.wolfpack.quest/character/<name>/gear, with a skin switcher and "Make default" (kept in the browser's localStorage, `wp.inventorySkin`;
+  `?skin=<id>` shows one for a single view). Stats beside it are the page's own worn-gear sums, labelled as such. No bag area: the page has no bag-top
+  rows, and no coin. The skin maps are a first pass from screenshots, to be refined. `web/lib/inventorySkins.ts`, `test/inventory-skins.test.js`.
+  Awaiting the guild lead's look and the skin-map corrections.
 - **🧪 Gear page: automatic sets and try-on (web beta `e16913ab`, no version bump, owner only, 2026-10-31; DECISIONS §480, C then A).** Three
   cards from what the character owns (most mitigation, most damage or mana/focus, best resists) compared with what is worn, and a try-on
   that swaps any slot and shows the change. Preview: https://b.wolfpack.quest/character/<name>/gear (signed in, your own character).
