@@ -215,6 +215,8 @@ next touch one rather than assuming a missing row means a missing doc.
   https://b.wolfpack.quest/raidmimic/setup?v=b (one short card) and https://b.wolfpack.quest/raidmimic/setup?v=c (free vs
   planned Pro table with why each costs money); the same on https://b.wolfpack.quest/guilds/new?v=b and `?v=c` (sign-in).
   No `?v=` = production. On a pick: graduate it to main, drop the other and the `?v=` switch.
+- **🧪 FB-116: "drop invis and hail again" (Mimic beta, agent 4.0.60, 2026-11-03).** Your own hail of a flag NPC while invisible
+  gets a local callout. HOW-ITS-BUILT: Hail while invisible.
 - **🧪 Tower of Solusek Ro brazier clicks in the Command Center (Mimic beta, agent 4.0.59, 2026-11-02, first draft, not yet tried in
   game).** The guild lead: "add in for the command center timers the clicks for the braziers for tower of solro after the mini
   bosses are completed." One row per wing boss killed: countdown to the 30-minute depop and clicked / not clicked for this

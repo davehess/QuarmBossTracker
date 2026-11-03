@@ -61606,6 +61606,38 @@ function _hailNpcWanted(npc) {
   const k = _hailNpcKey(npc);
   return !!k && _hailBoard.windows.some(w => _hailNpcKey(w.npc_name) === k);
 }
+// Hailing a flag NPC while invisible (FB-116, the guild lead, 2026-11-03: "When a person is invis and they hail and don't
+// get text you need to click off invis"). The NPC does not answer someone it cannot see, so the hail is silently wasted;
+// the log the report carried shows "You appear." and the flag one hail later. So YOUR hail of a flag NPC while you are
+// invisible puts up a local callout (this PC only: no upload, no relay, no Discord). Invisible = an invis buff in Zeal's
+// buff list (selfInvisState); when Zeal is not live, your own last "You vanish." / "You appear." line decides.
+const HAIL_INVIS_COOLDOWN_MS = 20_000;
+const HAIL_INVIS_LINE_TTL_MS = 30 * 60_000;   // an invis line older than this says nothing (most invis lasts less)
+const _hailInvisLastWarn = new Map();          // character (lower) → ms of the last callout
+const _hailInvisByLine = new Map();            // character (lower) → { invis, at } from your own vanish / appear lines
+function _hailInvisNoteLine(line, character, now) {
+  if (!line || !character) return null;
+  const cl = String(character).toLowerCase();
+  if (/\]\s+You vanish\.\s*$/.test(line)) { _hailInvisByLine.set(cl, { invis: true, at: now }); return null; }
+  if (/\]\s+You appear\.\s*$/.test(line)) { _hailInvisByLine.set(cl, { invis: false, at: now }); return null; }
+  if (line.indexOf('You say') === -1) return null;
+  const m = line.match(_HAIL_SELF_RX);
+  if (!m || !_hailNpcWanted(m[1])) return null;
+  let invis = selfInvisState(character, now);
+  if (invis == null) { const l = _hailInvisByLine.get(cl); invis = !!(l && l.invis && now - l.at <= HAIL_INVIS_LINE_TTL_MS); }
+  if (!invis) return null;
+  if (now - (_hailInvisLastWarn.get(cl) || 0) < HAIL_INVIS_COOLDOWN_MS) return null;
+  _hailInvisLastWarn.set(cl, now);
+  const npc = m[1].trim();
+  _pushOverlay({
+    text: `You're invisible: ${npc} can't see you. Drop invis and hail again.`,
+    tts: 'You are invisible. Drop invis and hail again.',
+    color: 'orange', duration_ms: 8000, shownAt: now, firedAt: now,
+    trigger: 'Hail while invisible', trigger_id: 'builtin:hail-invis', scope: 'personal', test: false,
+  });
+  scheduleRender();
+  return npc;
+}
 // The local port answers a browser that is not one of ours with 403: a web page can POST to 127.0.0.1
 // (the guild lead, 2026-10-17). `_localRequestGuard` is the one rule, applied to EVERY route by the router
 // (`_localGuardBlock`, top of startWebDashboard); `_localOriginOk` below asks the same question.
@@ -65039,6 +65071,8 @@ async function main() {
         // leaves the machine (_hailNpcWanted), the one /say exception docs/PRIVACY.md names. Every Mimic
         // in the zone sees the same line, so one install's two logs are collapsed here and the bot
         // collapses the rest.
+        // Your own flag-NPC hail while invisible: a local "drop invis" callout (FB-116; this PC only).
+        try { _hailInvisNoteLine(line, b.character, Date.now()); } catch { void 0; }
         if (!_sourceExcluded) {
           const hailEvt = parseWitnessedHail(line, b.character);
           if (hailEvt && _hailNpcWanted(hailEvt.npc)
