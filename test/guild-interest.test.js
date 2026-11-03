@@ -35,8 +35,29 @@ describe('validateInterest', () => {
     expect(r.ok).toBe(true);
     expect(r.row).toEqual({
       guild_name: 'Brackwyn Vanguard', game: 'quarm', server: null, raiders: 24, nights: ['sun', 'wed'],
+      tz: null, raid_start: null, raid_end: null, bid_mode: null,
       dkp: 'opendkp', heard: 'A friend told us', discord_contact: 'corvale',
     });
+  });
+  it('timezone, raid window and bid mode store when on-list and fall to null when not', () => {
+    const full = G.validateInterest({ ...GOOD, tz: 'et', raidStart: '20:00', raidEnd: '00:30', bidMode: 'dkp-sealed' });
+    expect(full.ok).toBe(true);
+    expect([full.row.tz, full.row.raid_start, full.row.raid_end, full.row.bid_mode])
+      .toEqual(['et', '20:00', '00:30', 'dkp-sealed']);
+    // Off-list values from a tampered request never error the lead away and never store raw text.
+    const junk = G.validateInterest({ ...GOOD, tz: 'Mars', raidStart: '20:15', raidEnd: 'late', bidMode: 'DROP TABLE' });
+    expect(junk.ok).toBe(true);
+    expect([junk.row.tz, junk.row.raid_start, junk.row.raid_end, junk.row.bid_mode]).toEqual([null, null, null, null]);
+  });
+  it('the closed lists carry the vocabulary the migration checks', () => {
+    expect(G.TIMEZONES).toEqual(['et', 'ct', 'mt', 'pt', 'gmt-uk', 'eu-central', 'oceania', 'other']);
+    expect(G.BID_MODES).toContain('dkp-sealed');
+    expect(G.RAID_TIMES).toHaveLength(48);
+    expect(G.RAID_TIMES).toContain('00:00');
+    expect(G.RAID_TIMES).toContain('23:30');
+    const mig = stripSql(read('supabase/migrations/20261103150000_guild_interest_detail.sql'));
+    for (const z of G.TIMEZONES) expect(mig).toContain(`'${z}'`);
+    for (const m of G.BID_MODES) expect(mig).toContain(`'${m}'`);
   });
   it('the guild name is required, and trimmed to 60', () => {
     for (const n of [undefined, null, '', '   ', 42, {}]) expect(G.validateInterest({ ...GOOD, guildName: n }).ok, String(n)).toBe(false);

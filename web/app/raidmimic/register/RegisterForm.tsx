@@ -5,12 +5,29 @@
 import { useState, useTransition } from 'react';
 import { submitGuildInterest } from './actions';
 import {
-  DKP_TOOLS, GAMES, GUILD_NAME_MAX, HEARD_MAX, NIGHTS, RAIDERS_MAX, RAIDERS_MIN, SERVER_MAX,
+  BID_MODES, DKP_TOOLS, GAMES, GUILD_NAME_MAX, HEARD_MAX, NIGHTS, RAIDERS_MAX, RAIDERS_MIN,
+  RAID_TIMES, SERVER_MAX, TIMEZONES,
 } from '@/lib/guildInterestFields';
 
 const GAME_LABEL: Record<(typeof GAMES)[number], string> = { quarm: 'Project Quarm', 'eq-live': 'EverQuest live', other: 'Other' };
 const DKP_LABEL: Record<(typeof DKP_TOOLS)[number], string> = { opendkp: 'OpenDKP', eqdkp: 'EQDKP', other: 'Other', none: 'None' };
 const NIGHT_LABEL: Record<(typeof NIGHTS)[number], string> = { sun: 'Sun', mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat' };
+const TZ_LABEL: Record<(typeof TIMEZONES)[number], string> = {
+  et: 'Eastern', ct: 'Central', mt: 'Mountain', pt: 'Pacific',
+  'gmt-uk': 'UK / GMT', 'eu-central': 'Central Europe', oceania: 'Oceania', other: 'Other',
+};
+// The loot-award styles guilds actually run (one line each, so a lead can pick without a glossary).
+const BID_MODE_LABEL: Record<(typeof BID_MODES)[number], { name: string; desc: string }> = {
+  'dkp-open':   { name: 'Open bid DKP',     desc: 'bids called out in chat, highest wins' },
+  'dkp-sealed': { name: 'Sealed bid DKP',   desc: 'bids stay hidden until the item is won' },
+  'dkp-timer':  { name: 'Timed auction DKP', desc: 'highest bid when the countdown ends' },
+  epgp:         { name: 'EPGP',             desc: 'priority from effort earned over gear taken' },
+  rolls:        { name: 'Rolls / tiers',    desc: '/random, upgrades before greed' },
+  council:      { name: 'Loot council',     desc: 'officers award by need' },
+  picks:        { name: 'Ranked picks',     desc: 'everyone ranks their wants, awards go by rank' },
+  other:        { name: 'Other',            desc: 'house rules of your own' },
+  none:         { name: 'None yet',         desc: 'still deciding' },
+};
 
 const INPUT = 'min-h-11 w-full rounded border border-border bg-bg px-3 text-sm text-text';
 const LEGEND = 'mb-2 block text-xs uppercase tracking-widest text-dim';
@@ -36,6 +53,10 @@ export default function RegisterForm({ downloadHref, setupHref }: { downloadHref
   const [server, setServer] = useState('');
   const [raiders, setRaiders] = useState(24);
   const [nights, setNights] = useState<string[]>([]);
+  const [tz, setTz] = useState<(typeof TIMEZONES)[number] | ''>('');
+  const [raidStart, setRaidStart] = useState('');
+  const [raidEnd, setRaidEnd] = useState('');
+  const [bidMode, setBidMode] = useState<(typeof BID_MODES)[number]>('none');
   const [dkp, setDkp] = useState<(typeof DKP_TOOLS)[number]>('none');
   const [heard, setHeard] = useState('');
   const [discord, setDiscord] = useState('');
@@ -52,7 +73,9 @@ export default function RegisterForm({ downloadHref, setupHref }: { downloadHref
     setError('');
     start(async () => {
       try {
-        const r = await submitGuildInterest({ guildName, game, server, raiders, nights, dkp, heard, discord, website });
+        const r = await submitGuildInterest({
+          guildName, game, server, raiders, nights, tz, raidStart, raidEnd, bidMode, dkp, heard, discord, website,
+        });
         if (r.ok) setDone(true); else setError(r.error || 'Something went wrong.');
       } catch {
         setError('Could not send. Please try again in a bit.');
@@ -110,6 +133,49 @@ export default function RegisterForm({ downloadHref, setupHref }: { downloadHref
         <div className="flex flex-wrap gap-2">
           {NIGHTS.map(n => (
             <Chip key={n} small type="checkbox" name="nights" value={n} checked={nights.includes(n)} onChange={() => toggleNight(n)}>{NIGHT_LABEL[n]}</Chip>
+          ))}
+        </div>
+      </fieldset>
+
+      <fieldset className="mt-5 min-w-0 border-0 p-0">
+        <legend className={LEGEND}>Timezone (optional)</legend>
+        <div className="flex flex-wrap gap-2">
+          {TIMEZONES.map(z => (
+            <Chip key={z} type="radio" name="tz" value={z} checked={tz === z} onChange={() => setTz(cur => (cur === z ? '' : z))}>{TZ_LABEL[z]}</Chip>
+          ))}
+        </div>
+      </fieldset>
+
+      <div className="mt-5">
+        <span className={LEGEND} id="ri-window-label">Raid time, in your timezone (optional)</span>
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-labelledby="ri-window-label">
+          <select aria-label="Raids usually start at" value={raidStart} onChange={e => setRaidStart(e.target.value)}
+            className={`${INPUT} w-auto min-w-[7rem]`}>
+            <option value="">Start…</option>
+            {RAID_TIMES.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+          <span className="text-sm text-dim">to</span>
+          <select aria-label="Raids usually end at" value={raidEnd} onChange={e => setRaidEnd(e.target.value)}
+            className={`${INPUT} w-auto min-w-[7rem]`}>
+            <option value="">End…</option>
+            {RAID_TIMES.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+        <p className="mt-1 text-xs text-dim">An end earlier than the start just means the raid runs past midnight.</p>
+      </div>
+
+      <fieldset className="mt-5 min-w-0 border-0 p-0">
+        <legend className={LEGEND}>How you award loot</legend>
+        <div className="flex flex-col gap-1">
+          {BID_MODES.map(m => (
+            <label key={m} className={`flex min-h-11 cursor-pointer items-center gap-3 rounded border px-3 py-1.5 text-sm ${
+              bidMode === m ? 'border-gold bg-gold/15' : 'border-border bg-bg hover:border-dim'
+            } focus-within:outline focus-within:outline-2 focus-within:outline-blue`}>
+              <input type="radio" name="bidMode" value={m} checked={bidMode === m} onChange={() => setBidMode(m)}
+                className="h-4 w-4 shrink-0 accent-gold" />
+              <span className="text-text">{BID_MODE_LABEL[m].name}</span>
+              <span className="min-w-0 text-xs text-dim">— {BID_MODE_LABEL[m].desc}</span>
+            </label>
           ))}
         </div>
       </fieldset>
