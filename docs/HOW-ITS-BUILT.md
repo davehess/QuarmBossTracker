@@ -1287,6 +1287,14 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   `test/relv-mephit-counter.test.js`. Agent 4.0.47 (§471): the row reads "Falto:", and a counter started after Falto was
   seen (a mid-fight start) counts nothing. A cross-client count through the bot is not built (open if the floor proves too low).
 
+### Hail while invisible (agent 4.0.60 beta, 2026-11-03, FB-116)
+- **What:** your own hail of a flag NPC while you are invisible puts up a local orange callout, spoken: "You are invisible.
+  Drop invis and hail again." A flag NPC does not answer someone it cannot see, so the hail is silently wasted (the report's log
+  shows "You appear." and the flag one hail later). This PC only: no upload, relay or Discord post. Once per 20 s per character.
+- **Where:** agent `_hailInvisNoteLine` (beside `_hailNpcWanted`), called from the live tail next to `parseWitnessedHail`.
+  Invisible = an invis buff in Zeal's list (`selfInvisState`), else your own last "You vanish." / "You appear." line (30 min).
+  Test: `test/hail-invis.test.js`.
+
 ### Tower of Solusek Ro brazier clicks (agent 4.0.59 beta, 2026-11-02, first draft)
 - **What:** a Command Center row per live brazier in the Tower of Solusek Ro (the game calls it a flaming cauldron, the raid says
   brazier): the wing, a countdown to its depop (30 minutes after the wing boss died), and whether THIS character has clicked it
