@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-105-2026-11-03',
+    title: 'Web 2.1.105',
+    version: 'Web 2.1.105',
+    date: '2026-11-03',
+    headline: "The PoP checklist shows each Tower of Solusek Ro wing on its own.",
+    features: [
+      { name: 'One column per wing', blurb: "For the Fire gate, the checklist's character table now has a column for each wing, named by its boss: Xuzl, Arlyxir, Dresolik, Rizlona and Jiva. \"What's left\" names the wings still to do, or says all five when none are done." },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-2-1-104-2026-11-03',
     title: 'Web 2.1.104 · Bot 4.0.51',
     version: 'Web 2.1.104 · Bot 4.0.51',
