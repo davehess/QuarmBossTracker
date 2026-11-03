@@ -4354,6 +4354,12 @@ crash card labels it "🐺 Wolf Pack Zeal" (`wpZealBuildTag`). Runbook: `docs/up
   `web/lib/landing.ts`: on the beta build a sign-in from the home page lands on `/me?v=b` (production unchanged; `safeNext` still
   runs first, `web/app/auth/callback/route.ts`). `/me` without `?v=` is unchanged. Tests: `test/me-hub.test.js`,
   `test/landing-after-sign-in.test.js`. Preview: https://b.wolfpack.quest/me?v=b.
+- **Gear page: inventory window with four skins (beta, 2026-11-03; the guild lead).** Equipped items as icons in the slot layout of
+  Classic, Inventory grid, Paper doll or Compact, above the totals. Skin maps are data in `web/lib/inventorySkins.ts` (a first pass from
+  screenshots) together with `normaliseSlot` (Ear1 / Ear 1 / Fingers1 / Finger 1 -> the 21 canonical slots); the client window is
+  `web/app/character/[name]/gear/InventoryWindow.tsx`, fed the page's own worn-gear sums. The viewer's default skin is in localStorage
+  `wp.inventorySkin` (no per-member preference store exists); `?skin=<id>` overrides for one view. Test: `test/inventory-skins.test.js`.
+  Preview: https://b.wolfpack.quest/character/<name>/gear.
 - **Gear page: automatic sets and try-on, owner only (beta preview, 2026-10-31; DECISIONS §480, picks C then A).**
   Option C: three cards built from what the character owns (bags and bank): Most mitigation, Most damage (melee) or Most
   mana/focus (casters), Best resists, each with the change versus worn, the swaps (with where the item is) and cap notes;
