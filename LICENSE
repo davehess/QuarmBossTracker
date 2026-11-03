@@ -1,35 +1,20 @@
 GNU AFFERO GENERAL PUBLIC LICENSE, version 3 or (at your option) any later version.
 
-The Wolf Pack EQ Platform - the Discord bot, the wolfpack.quest web application,
-the wolfpack-logsync agent and the Mimic desktop client, in the repository
-github.com/davehess/QuarmBossTracker.
+The Wolf Pack EQ Platform - the Discord bot, the wolfpack.quest web application, the wolfpack-logsync agent and the Mimic desktop client, in the repository github.com/davehess/QuarmBossTracker.
 
 Copyright (C) 2026  davehess (github.com/davehess), for the Wolf Pack guild
 
-This program is free software: you can redistribute it and/or modify it under
-the terms of the GNU Affero General Public License as published by the Free
-Software Foundation, either version 3 of the License, or (at your option) any
-later version.
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 
-This program is distributed in the hope that it will be useful, but WITHOUT ANY
-WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE.  See the GNU Affero General Public License for more details.
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Affero General Public License for more details.
 
-You should have received a copy of the GNU Affero General Public License along
-with this program.  If not, see <https://www.gnu.org/licenses/>.
+You should have received a copy of the GNU Affero General Public License along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-SECTION 13 IS THE ONE THAT MATTERS HERE.  This platform is run as a network
-service (a Discord bot and a website).  If you modify it and let other people
-use your modified version over a network, you must offer them its source.
-That is the share-back this project asks for, and under this license it is a
-term rather than a request.
+SECTION 13 IS THE ONE THAT MATTERS HERE.  This platform is run as a network service (a Discord bot and a website).  If you modify it and let other people use your modified version over a network, you must offer them its source.  That is the share-back this project asks for, and under this license it is a term rather than a request.
 
-Plain-language version, including what this means for a guild that wants to run
-it and what happens to a pull request: docs/LICENSING.md
+Plain-language version, including what this means for a guild that wants to run it and what happens to a pull request: docs/LICENSING.md
 
-Vendored third-party code keeps its own license: .claude/skills/impeccable is
-Apache-2.0 and .claude/skills/ponytail is MIT.  Nothing here relicenses anyone
-else's work.
+Vendored third-party code keeps its own license: .claude/skills/impeccable is Apache-2.0 and .claude/skills/ponytail is MIT.  Nothing here relicenses anyone else's work.
 
 -------------------------------------------------------------------------------
 
