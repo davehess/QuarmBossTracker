@@ -102,6 +102,24 @@ Discord's Manage Server permission on the sign-in's server list), then the wizar
 bot, never by the website holding the token) and the owner ticks which map to member / officer / which show on the guild's
 pages. Stored in `hub_guild_roles (guild_id, discord_role_id, name, maps_to)`.
 
+**Inclusion roles: what a Discord role can mean (the guild lead, 2026-11-03, DECISIONS §532).** *"we need a way to pull in
+inclusion roles from discords for who is a raider or regular member, applicant, recruit, guest, officer, or leader. maybe
+some other roles as well just in case someone has others in place for loot officer or otherwise."* So `maps_to` is a rank on
+one ladder, highest wins when a person holds several: **Leader > Officer > Raider > Member > Recruit > Applicant > Guest**,
+plus **Ignore** (a role that says nothing about the guild: Muted, Nitro, a game role). Separately, a role can carry **extra
+duties** (`hub_grants` capabilities, e.g. Loot, Schedule, Pulls, Recruiting, Bank) whatever rank it sets, which is how a
+"Loot Council" or "Raid Leader" role works: it adds duties and leaves the rank to the person's other roles. Leader is NOT
+the raidmimic.com owner (one per guild, `hub_memberships_one_owner`): it ranks like an officer with every duty. Members who
+came in by invite code keep that membership; a Discord-synced one is marked as such and ends when the role or the server
+membership goes. Needs: `hub_guild_roles.maps_to` widened to the ladder, a `rank` (or a wider `role` check) on
+`hub_memberships`, and the grants. **Open pick: how the roles are read** (mocks sent 2026-11-03):
+- **A — the Raid Mimic bot in their server** (the shared bot, §9 C): the wizard lists the server's roles by name, colour and
+  head count; Discord changes apply within a minute; leaving the server ends access. Needs the bot invited (Manage Server) and
+  the privileged members intent. Recommended.
+- **B — no bot, read at sign-in**: each member's roles come from `guilds.members.read` on the guild's linked server when THEY
+  sign in; the leader sets up by pasting role IDs (Discord Developer Mode), since a user token cannot list a server's roles.
+  Free and botless, but stale between sign-ins and clumsy to set up. Usable as the fallback for a guild that will not add a bot.
+
 **OpenDKP import.** A guild leader connects the guild's OpenDKP (its own client name and a read credential, stored sealed like
 the bid key: `utils/bidCrypto.js`-style, never readable back), and the roster read fills the guild's member list with characters
 not yet seen on Raid Mimic, marked "from OpenDKP, not signed in". Import only: nothing is written to OpenDKP. Needs the per-guild
