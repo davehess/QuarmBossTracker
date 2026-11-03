@@ -35,6 +35,7 @@ export type PieceStatus = {
   to: string | null;
   verified: boolean;
   note: string | null;
+  group?: { key: string; needs: string } | null;
 };
 
 export type Verdict = {
@@ -116,7 +117,7 @@ export function heldFor(input: GateInput): Set<string> {
 // ── One piece ────────────────────────────────────────────────────────────────
 
 export function pieceStatus(p: GatePiece, held: ReadonlySet<string>, fullRead: boolean): PieceStatus {
-  const base = { key: p.key, label: p.label, kind: p.kind, needs: p.needs, to: p.to ?? null, verified: p.verified, note: p.note ?? null };
+  const base = { key: p.key, label: p.label, kind: p.kind, needs: p.needs, to: p.to ?? null, verified: p.verified, note: p.note ?? null, group: p.group ?? null };
   const have = p.proof.filter(k => held.has(k)).length;
   if (p.all ? have === p.proof.length : have > 0) return { ...base, state: 'done', detail: null, killOnly: false };
   if (p.pending && held.has(p.pending)) {
@@ -134,6 +135,20 @@ export function pieceStatus(p: GatePiece, held: ReadonlySet<string>, fullRead: b
 const list = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
 const uniq = <T,>(xs: T[]) => [...new Set(xs)];
 
+// What the owed pieces need, in order: a group whose every part is owed (all five Sol Ro wings) says its own `needs`
+// once; a group only partly owed lists just the parts still owed.
+export function owedNeeds(owed: PieceStatus[], statuses: PieceStatus[]): string[] {
+  const out: string[] = [];
+  for (const s of owed) {
+    const g = s.group;
+    if (!g) { out.push(s.needs); continue; }
+    const parts = statuses.filter(x => x.group?.key === g.key);
+    const allOwed = parts.every(x => owed.includes(x));
+    out.push(allOwed ? g.needs : s.needs);
+  }
+  return uniq(out);
+}
+
 /** "Only the Seer and Maelin left", "needs a Marr kill, then the Seer and Maelin", or what is not recorded. */
 export function verdictFor(statuses: PieceStatus[]): Verdict {
   const left = statuses.filter(s => s.state !== 'done');
@@ -149,7 +164,7 @@ export function verdictFor(statuses: PieceStatus[]): Verdict {
   ];
   if (owed.length) {
     const tail = [after.length ? `then ${list(after)}` : '', unknown.length ? `${unknown.length} not recorded` : ''].filter(Boolean);
-    return { tone: 'blocked', text: `No, needs ${list(owed.map(s => s.needs))}${tail.length ? `, ${tail.join(', ')}` : ''}` };
+    return { tone: 'blocked', text: `No, needs ${list(owedNeeds(owed, statuses))}${tail.length ? `, ${tail.join(', ')}` : ''}` };
   }
   if (unknown.length) {
     return {

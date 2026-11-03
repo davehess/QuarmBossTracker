@@ -129,13 +129,23 @@ describe('missing vs not recorded', () => {
     expect(states({ flags, fullRead: false }).c_saryrn).toBe('done');
   });
 
-  it('counts the wings it has of the five', () => {
+  it('shows each Sol Ro wing by its boss (the guild lead, 2026-11-03)', () => {
+    const WINGS = ['s_wing_xuzl', 's_wing_arlyxir', 's_wing_dresolik', 's_wing_rizlona', 's_wing_jiva'];
     const rep = gateReport(POP_ZONE_BY_KEY.fire, { flags: ['sol_room_1', 'sol_room_2'], fullRead: true });
-    const wings = rep.pieces.find(p => p.key === 's_wings');
-    expect(wings.state).toBe('missing');
-    expect(wings.detail).toBe('2 of 5');
+    const st = Object.fromEntries(rep.pieces.map(p => [p.key, p.state]));
+    expect(WINGS.map(k => st[k])).toEqual(['done', 'done', 'missing', 'missing', 'missing']);
+    expect(rep.pieces.find(p => p.key === 's_wing_xuzl').label).toBe("Xuzl's wing");
     const all = gateReport(POP_ZONE_BY_KEY.fire, { flags: ['solro_minis'], fullRead: true });
-    expect(all.pieces.find(p => p.key === 's_wings').state).toBe('done');
+    expect(WINGS.every(k => all.pieces.find(p => p.key === k).state === 'done')).toBe(true);
+  });
+
+  it('"What\'s left" says "all five cauldron wings" once when every wing is owed, and names the rest otherwise', () => {
+    const none = gateReport(POP_ZONE_BY_KEY.fire, { flags: ['pofire_1'], fullRead: true });
+    expect(none.verdict.text).toMatch(/needs all five cauldron wings/);
+    expect(none.verdict.text).not.toMatch(/Xuzl's wing/);
+    const some = gateReport(POP_ZONE_BY_KEY.fire, { flags: ['pofire_1', 'sol_room_1', 'sol_room_2', 'sol_room_5'], fullRead: true });
+    expect(some.verdict.text).toMatch(/needs Dresolik's wing, Rizlona's wing/);
+    expect(some.verdict.text).not.toMatch(/all five/);
   });
 });
 
