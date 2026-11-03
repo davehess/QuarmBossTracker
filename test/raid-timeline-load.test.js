@@ -96,7 +96,7 @@ describe('who asks for guest raids', () => {
   const read = (p) => stripJs(fs.readFileSync(path.join(ROOT, p), 'utf8'));
 
   it('the share route does, with the row\'s own guild; the members\' routes do not', () => {
-    expect(read('web/app/api/share/raid/[token]/timeline/route.ts')).toMatch(/share\.row\.guild_id,\s*\{\s*guestRaids:\s*true\s*\}/);
+    expect(read('web/app/api/share/raid/[token]/timeline/route.ts')).toMatch(/share\.row\.guild_id,\s*\{\s*guestRaids:\s*true(,\s*only)?\s*\}/);
     expect(read('web/app/api/spectator/timeline/route.ts')).not.toMatch(/guestRaids/);
     expect(read('web/lib/liveRaidLoad.ts')).not.toMatch(/guestRaids/);
   });

@@ -14,6 +14,8 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { inWindow, shareTag, SHARE_CACHE_S, windowIso } from '@/lib/raidShare';
 import { resolveShare } from '@/lib/raidShareLookup';
 import { loadSpawnBosses } from '@/lib/replayBossesLoad';
+import { loadGroupFightIds } from '@/lib/raidSessionLoad';
+import { shareGroupKey } from '@/lib/sessionGroups';
 import { ceilingApi, guardApi } from '@/lib/shareGuard';
 
 export const dynamic = 'force-dynamic';
@@ -31,9 +33,14 @@ export async function GET(req: Request, { params }: { params: { token: string } 
     if (over) return over;
     const { from, to } = windowIso(share.win);
     const win = share.win;
+    // A link limited to chosen raids (raid_shares.group_ids) lists only the bosses those raids killed.
+    const groups = shareGroupKey(share.row);
     const bosses = await unstable_cache(
-      async () => (await loadSpawnBosses(supabaseAdmin(), from, to)).filter(b => inWindow(win, b.to)),
-      ['raid-share', share.row.id, 'bosses', String(win.fromMs), String(win.toMs)],   // the window's end is in the key: an extended share never serves the old one
+      async () => {
+        const only = groups === null ? undefined : await loadGroupFightIds(supabaseAdmin(), win, groups);
+        return (await loadSpawnBosses(supabaseAdmin(), from, to, only)).filter(b => inWindow(win, b.to));
+      },
+      ['raid-share', share.row.id, 'bosses', String(win.fromMs), String(win.toMs), groups ?? ''],   // the window's end is in the key: an extended share never serves the old one
       { revalidate: SHARE_CACHE_S, tags: [shareTag(share.row.id)] },
     )();
     return NextResponse.json({ bosses }, { headers: HEADERS });

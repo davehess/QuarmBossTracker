@@ -16,7 +16,7 @@ import { makeWindow, replaySlice, windowIso } from '@/lib/raidShare';
 import { loadAnon } from '@/lib/raidShareLookup';
 import { scrubMinuteData } from '@/lib/raidSession';
 import { loadGroupIndex } from '@/lib/raidSessionLoad';
-import { narrowRows } from '@/lib/sessionGroups';
+import { groupKey, narrowRows, parseGroupIds } from '@/lib/sessionGroups';
 
 export const dynamic = 'force-dynamic';
 
@@ -46,8 +46,8 @@ export async function GET(req: Request) {
     let got = (data ?? []) as { minute_at: string; zones: string[] | null; data: string }[];
     // `group` narrows the dots to one raid of the window (lib/sessionGroups.ts). Cut on the recorded names, BEFORE the
     // opt-out scrub below renames anyone. An id the window does not hold narrows to nothing: never to everyone.
-    const group = q.get('group');
-    if (group && /^[a-z0-9-]{3,40}$/.test(group)) {
+    const group = groupKey(parseGroupIds(q.get('group')));   // one id, or several (`a,b`): the union of the raids
+    if (group) {
       // A part of a larger window is cut by the raids counted in the larger one (gf, gt): lib/sessionGroups.ts groupQuery.
       const parent = makeWindow(Date.parse(q.get('gf') ?? ''), Date.parse(q.get('gt') ?? '')) ?? win;
       got = narrowRows(got, await loadGroupIndex(db, parent, anon), group);

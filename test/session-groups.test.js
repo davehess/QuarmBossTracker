@@ -341,9 +341,12 @@ describe('the recorder stamps the raid', () => {
 
 describe('source', () => {
   const read = p => fs.readFileSync(path.join(ROOT, p), 'utf8');
-  it('the members page and the replay route both narrow by the same index; the share page never takes a group', () => {
+  it('the members page and the replay route both narrow by the same index; a share takes its raids from its row, never from the request', () => {
     expect(stripJs(read('web/lib/raidSessionLoad.ts'))).toMatch(/narrowRows\(/);
     expect(stripJs(read('web/app/api/raid/session/replay/route.ts'))).toMatch(/narrowRows\(/);
-    expect(stripJs(read('web/app/api/share/raid/[token]/replay/route.ts'))).not.toMatch(/group/i);
+    // (2026-11-03: a link can be limited to chosen raids, read from raid_shares.group_ids: test/raid-share-groups.test.js.)
+    const share = stripJs(read('web/app/api/share/raid/[token]/replay/route.ts'));
+    expect(share).not.toMatch(/searchParams\.get\('(group|gf|gt)'\)/);
+    expect(share).toMatch(/shareGroupKey\(share\.row\)/);
   });
 });

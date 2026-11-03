@@ -15,14 +15,16 @@ import { isOfficer } from '@/lib/officer';
 import { GUILD_TAG } from '@/lib/guild';
 import {
   expiryDays, hashToken, isOpenShare, makeWindow, newToken, openWindow, sharePath, shareStatus, SHARE_ORIGIN, windowIso,
-  type ShareRow,
+  windowOfShare, type ShareRow,
 } from '@/lib/raidShare';
+import { loadGroupIndex } from '@/lib/raidSessionLoad';
+import { checkShareGroups, groupLabels } from '@/lib/sessionGroups';
 
 export const dynamic = 'force-dynamic';
 
 const NO_STORE = { 'Cache-Control': 'no-store' };
 const fail = (status: number, error: string) => NextResponse.json({ error }, { status, headers: NO_STORE });
-const COLUMNS = 'id, guild_id, from_at, to_at, title, created_at, expires_at, revoked_at, view_count';
+const COLUMNS = 'id, guild_id, from_at, to_at, title, created_at, expires_at, revoked_at, view_count, group_ids';
 
 /** Same-origin check for the cookie-authenticated write: a form on another site cannot make an officer's browser create a link. */
 function sameOrigin(req: Request): boolean {
@@ -55,7 +57,16 @@ export async function GET(req: Request) {
     .order('created_at', { ascending: false })
     .limit(50);
   if (error) return fail(502, 'shares unavailable');
-  return NextResponse.json({ shares: ((data ?? []) as ShareRow[]).map(view) }, { headers: NO_STORE });
+  // A link limited to chosen raids says which (officers only, like the rest of this route): the raids are named from the
+  // recording of the LINK's own window, which is the window they were counted in.
+  const shares = await Promise.all(((data ?? []) as ShareRow[]).map(async r => {
+    const v = view(r);
+    if (!r.group_ids?.length) return v;
+    const w = windowOfShare(r);
+    const labels = w ? await loadGroupIndex(supabaseAdmin(), w).then(ix => groupLabels(ix.groups, r.group_ids ?? [])).catch(() => null) : null;
+    return { ...v, group_labels: labels ?? r.group_ids.map(() => 'a chosen raid') };
+  }));
+  return NextResponse.json({ shares }, { headers: NO_STORE });
 }
 
 export async function POST(req: Request) {
@@ -63,7 +74,7 @@ export async function POST(req: Request) {
   const who = await officerId();
   if (!('id' in who)) return fail(who.status, who.error);
 
-  let body: { from?: unknown; to?: unknown; title?: unknown; days?: unknown; open?: unknown };
+  let body: { from?: unknown; to?: unknown; title?: unknown; days?: unknown; open?: unknown; group_ids?: unknown };
   try { body = await req.json(); } catch { return fail(400, 'bad request'); }
   // `open: true` = follow the raid (see isOpenShare): only the start matters; the end is stored as the open marker.
   const fromMs = Date.parse(String(body.from ?? ''));
@@ -74,6 +85,18 @@ export async function POST(req: Request) {
   const title = String(body.title ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
   const days = expiryDays(body.days);
 
+  // `group_ids`: the raids of this window the link is limited to (lib/sessionGroups.ts), checked against the raids the
+  // recording holds in THE LINK'S window, so an id from another window (or invented) is refused rather than stored.
+  // Absent = the whole window, as every older link.
+  let groupIds: string[] | null = null;
+  if (body.group_ids !== undefined && body.group_ids !== null) {
+    let present: Set<string>;
+    try { present = new Set((await loadGroupIndex(supabaseAdmin(), win)).groups.map(g => g.id)); } catch { return fail(502, 'raids unavailable'); }
+    const checked = checkShareGroups(body.group_ids, present);
+    if ('error' in checked) return fail(400, checked.error);
+    groupIds = checked.ids;
+  }
+
   const token = newToken();
   const { from, to } = windowIso(win);
   const { data, error } = await supabaseAdmin().from('raid_shares')
@@ -83,6 +106,7 @@ export async function POST(req: Request) {
       from_at: from,
       to_at: to,
       title,
+      group_ids: groupIds,
       created_by: who.id,
       expires_at: new Date(Date.now() + days * 86_400_000).toISOString(),
     })
