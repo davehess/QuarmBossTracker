@@ -7859,6 +7859,9 @@ function _makeFocusDebouncer(onFlip, ms) {
 }
 const _focusDeb = _makeFocusDebouncer((ok) => {
   _focusOk = ok;
+  // Another app came to the front, or EverQuest came back: no overlay may stay armed (a lost "pointer left" report
+  // is what kept clicks from reaching the game after an alt-tab). A pointer still on a control re-arms on its next move.
+  try { _disarmAllHover(); } catch (e) { void e; }
   let hides = false;
   try { hides = _focusGateOn(loadConfig(), process.platform); } catch (e) { void e; }
   if (hides) {
@@ -12518,6 +12521,61 @@ ipcMain.handle('overlay-resize-preset', (e, preset) => {
 // momentarily make ITS window interactive while the cursor is over it, then
 // restore the click-through state on mouseleave. Standard Electron recipe.
 const _hoverArmFrames = new Set();
+// The safety net under the handshake (the guild lead, 2026-11-03: "often when i alt tab and open a different window
+// and switch back to everquest, sometimes clicks (right and left) dont make it to the game until i hide all
+// overlays"). Disarming used to rest on the page alone reporting that the pointer left a control. A lost report
+// (alt-tab while pointing at one is the usual way) left that window catching clicks; for the screen-sized Canvas
+// (or the Map in Full mode) that is the whole screen, and moving the mouse could never heal it, because the pointer
+// cannot leave a window that covers the screen. So main keeps its own list of armed windows and puts one back to
+// click-through when: another app comes to the front or EverQuest comes back (_focusDeb below); the pointer is
+// off a normal overlay; or a screen-covering one stopped being re-armed (the preload re-arms every 150 ms while the
+// pointer moves over a control) and the pointer has moved since its last arm.
+const HOVER_ARM_RENEW_MS = 1500;
+const _hoverArmed = new Map();      // armed window -> { at, x, y } of its last arm
+let _hoverArmWatch = null;
+// Pure: should an armed window go back to click-through now? `cursor` = screen point or null, `insideBounds` = the
+// pointer is within the window's rectangle.
+function _hoverArmStale(rec, now, cursor, coversScreen, insideBounds) {
+  if (!rec) return true;
+  if (!coversScreen) return !insideBounds;
+  if (now - rec.at <= HOVER_ARM_RENEW_MS) return false;
+  return !(cursor && cursor.x === rec.x && cursor.y === rec.y);   // a parked pointer keeps it; a moved one without a re-arm drops it
+}
+// What the lock state says this overlay should be when nothing is hovered.
+function _restoreClickThrough(win) {
+  if (!win || win.isDestroyed()) return;
+  // A window in SINGLE-overlay setup mode stays interactive (its Done button and resize edges).
+  if (_inSingleSetup(win)) { win.setIgnoreMouseEvents(false); return; }
+  // The Timers canvas (and the Map in Full mode) is screen-sized: back to click-through, unlocked or not.
+  if (win === canvasWindow || (win === mapWindow && _mapFull)) { win.setIgnoreMouseEvents(true, { forward: true }); return; }
+  const cfg = loadConfig();
+  const locked = !setupMode && cfg.overlaysLocked !== false;
+  if (locked) win.setIgnoreMouseEvents(true, { forward: true });
+  else        win.setIgnoreMouseEvents(false);
+}
+function _disarmHover(win) {
+  _hoverArmed.delete(win);
+  try { _restoreClickThrough(win); } catch (e) { void e; }
+  if (!_hoverArmed.size && _hoverArmWatch) { clearInterval(_hoverArmWatch); _hoverArmWatch = null; }
+}
+function _disarmAllHover() {
+  for (const w of [..._hoverArmed.keys()]) _disarmHover(w);
+}
+function _watchHoverArms() {
+  if (_hoverArmWatch) return;
+  _hoverArmWatch = setInterval(() => {
+    let p = null;
+    try { p = screen.getCursorScreenPoint(); } catch (e) { void e; }
+    const now = Date.now();
+    for (const [w, rec] of [..._hoverArmed]) {
+      if (!w || w.isDestroyed()) { _hoverArmed.delete(w); continue; }
+      const hit = _overlayEntries().find(([, x]) => x === w);
+      const covers = !!(hit && _coversScreen(hit[0]));
+      if (_hoverArmStale(rec, now, p, covers, _cursorInsideWindow(w))) _disarmHover(w);
+    }
+    if (!_hoverArmed.size && _hoverArmWatch) { clearInterval(_hoverArmWatch); _hoverArmWatch = null; }
+  }, 250);
+}
 ipcMain.handle('overlay-hover-interactive', (e, wantInteractive) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
@@ -12541,18 +12599,14 @@ ipcMain.handle('overlay-hover-interactive', (e, wantInteractive) => {
         }
       } catch { /* a log line is never worth the handshake */ }
       win.setIgnoreMouseEvents(false);
+      let at = { x: null, y: null };
+      try { at = screen.getCursorScreenPoint(); } catch (err) { void err; }
+      _hoverArmed.set(win, { at: Date.now(), x: at.x, y: at.y });
+      _watchHoverArms();
     } else {
-      // Restore whatever the lock state dictates for this window. A window
-      // in SINGLE-overlay setup mode stays interactive — this restore path
-      // is exactly what used to re-lock it on the first mouseleave, making
-      // its Done button and resize edges unclickable.
-      if (_inSingleSetup(win)) { win.setIgnoreMouseEvents(false); return true; }
-      // The Timers canvas is screen-sized: back to click-through, unlocked or not.
-      if (win === canvasWindow || (win === mapWindow && _mapFull)) { win.setIgnoreMouseEvents(true, { forward: true }); return true; }
-      const cfg = loadConfig();
-      const locked = !setupMode && cfg.overlaysLocked !== false;
-      if (locked) win.setIgnoreMouseEvents(true, { forward: true });
-      else        win.setIgnoreMouseEvents(false);
+      // Restore whatever the lock state dictates for this window (_restoreClickThrough: single-overlay setup stays
+      // interactive, which is exactly what used to re-lock on the first mouseleave; the Canvas goes click-through).
+      _disarmHover(win);
     }
   } catch {}
   return true;
