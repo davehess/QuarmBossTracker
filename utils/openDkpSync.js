@@ -1822,6 +1822,17 @@ async function syncCharacters() {
     console.log(`[opendkp-sync] characters: collapsed ${droppedDupes} duplicate-name row(s) before upsert`);
   }
 
+  // Never downgrade a known class/race to unknown (the guild lead, 2026-11-03): OpenDKP's literal 'UNKNOWN'
+  // used to overwrite an officer's correction on every sync. Fail-open: if the read fails, upsert as before.
+  try {
+    const stored = await supabase.selectAllPaged('characters',
+      `select=name,class,race&guild_id=eq.${encodeURIComponent(guildId)}`, 'name');
+    if (Array.isArray(stored)) {
+      const keptC = mergeKnownClassRace(deduped, stored);
+      if (keptC > 0) console.log(`[opendkp-sync] characters: kept ${keptC} stored class/race value(s) OpenDKP reports as unknown`);
+    }
+  } catch { /* stored values unavailable — upsert as before */ }
+
   // Batch in chunks so a huge guild roster doesn't single-shot a big PostgREST
   // payload. 200/batch is well under PostgREST's limit and matches our other
   // upsert helpers' implicit batching. supabase.upsert returns null (not a
@@ -2041,7 +2052,34 @@ async function foldLootObservations(opts = {}) {
            raids_pending: raidsPending };
 }
 
+// A class or race value that carries no information: empty, or OpenDKP's literal 'UNKNOWN' (any case).
+function isUnknownClassRace(v) {
+  const s = String(v == null ? '' : v).trim().toLowerCase();
+  return s === '' || s === 'unknown';
+}
+
+// Merge for the characters upsert: where OpenDKP's class/race is unknown and the stored row holds a real
+// value, keep the stored one. A real OpenDKP value always wins; a stored unknown stays as OpenDKP sent it.
+// Mutates `rows` (objects with name/class/race); `stored` is [{name,class,race}]. Names match case-insensitively.
+// Returns how many fields were kept.
+function mergeKnownClassRace(rows, stored) {
+  const byName = new Map();
+  for (const s of Array.isArray(stored) ? stored : []) {
+    if (s && s.name) byName.set(String(s.name).toLowerCase(), s);
+  }
+  let kept = 0;
+  for (const r of Array.isArray(rows) ? rows : []) {
+    const s = r && r.name ? byName.get(String(r.name).toLowerCase()) : null;
+    if (!s) continue;
+    for (const f of ['class', 'race']) {
+      if (isUnknownClassRace(r[f]) && !isUnknownClassRace(s[f])) { r[f] = s[f]; kept++; }
+    }
+  }
+  return kept;
+}
+
 module.exports = {
+  mergeKnownClassRace, isUnknownClassRace,
   runSync, syncRaidsList, syncRaidDetail, syncCharacters, syncAuctions, syncAuctionBids, syncPendingAuctionBids, syncAudits, syncAdjustments,
   reconcileRecentLoot, classifyAuditAction, lootDiffRemovals, dedupByConflictKey,
   foldLootObservations, resolveCatalogItemId, selectAllPaged,
