@@ -266,6 +266,11 @@ next touch one rather than assuming a missing row means a missing doc.
   cleaners and the one-day salted ip hash, 3 an hour. Officers read `https://wolfpack.quest/admin/interest` (plain text; it is untrusted, AFB rule), a card on the
   admin landing. Every "Register interest" link points at the form. `b.raidmimic.com` is a raidmimic host (noindex, robots Disallow all, canonical stays
   `https://raidmimic.com`). Test: `test/guild-interest.test.js`, `test/raidmimic-beta-host.test.js`.
+  **🧪 More detail on beta (the guild lead, 2026-11-03: "timezone and timeframe, other bidding modes with a description"):** timezone chips (ET…Oceania, a
+  raid-planning zone not an IANA list), a start–end raid window in half-hour steps (end before start = past midnight), and a "How you award loot" list — the
+  modes from `DESIGN-loot-systems.md` §2, one described line each (open/sealed/timed DKP, EPGP, rolls, council, ranked picks) — all optional, DKP *tool* kept
+  as its own field. Columns + checks: `20261103150000_guild_interest_detail.sql` (applied); `/admin/interest` folds them into Schedule and Loot columns.
+  Preview `https://b.raidmimic.com/register`; graduates with the guild lead's OK.
 - **✅ Departed-member pop-up and the lock-out-a-former-member fix (web 2.1.87, `main`; migration `20261101060000_end_member_web_sessions.sql` applied).** The guild
   lead, after a member was banned from the Discord: *"i can't kick him from the guild or invalidate his session"*. `/admin/access` can lock a member who has left
   (the dropdown gains "Left the Discord recently"), locking ends their website sign-ins (`end_member_web_sessions`, service role only), and officers get a
