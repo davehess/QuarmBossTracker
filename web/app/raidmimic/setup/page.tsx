@@ -120,6 +120,12 @@ export default function RaidmimicSetupPage({ searchParams }: { searchParams?: { 
             <li key={f.id} id={f.id} className="scroll-mt-4 rounded-md border border-border bg-panel p-4">
               <h3 className="text-base leading-snug text-[#f2ede1]">{f.problem}</h3>
               <p className="mt-2 max-w-[66ch] text-sm leading-6 text-text">{f.fix}</p>
+              {f.code && (
+                <>
+                  <p className="mt-3 text-xs text-dim">{f.code.label}</p>
+                  <pre className="mt-1 max-w-full overflow-x-auto rounded border border-border bg-black/30 p-3 text-xs leading-5 text-text">{f.code.text}</pre>
+                </>
+              )}
               {f.note && <p className={NOTE}>{f.note}</p>}
             </li>
           ))}

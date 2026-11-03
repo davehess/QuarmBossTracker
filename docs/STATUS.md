@@ -7627,3 +7627,13 @@ Mithaniel's notes (:37) and the second reading needs zeks **7** (:57), not 6. Th
   `nightmareb/Terris_Thule.lua:35-56, 64-98` @ `d4625cdd`; the slideshow had 75% / ~35%, the web plan "every name on the hate
   list" and "slow and miss". Test `test/pop-raids-terris.test.js`.
 - **FB-106** (rolls typed as a number in chat): researched, two options with a mockup sent; waiting on the guild lead's pick.
+
+### 🧾 2026-11-03 — EQ file-date fix for the time-zone start-up problem (Mimic beta draft; web TROUBLESHOOTING entry)
+- The guild lead asked for the community fix for "EverQuest only starts after I change my Windows time zone" to be built into
+  Mimic. `apps/mimic/eqFileDates.js` + Settings card `#eqdates` + tray Help item + `eq-file-dates-scan` / `-fix` handlers;
+  details in `HOW-ITS-BUILT.md` (Mimic features). Changes only file creation dates. Windows only.
+- ⏳ Unverified on a real Windows PC: that Node's `birthtimeMs` for a file with a broken creation date is outside 1980..2100
+  (or fails to stat) rather than a plausible-looking value; the first tester who has the problem should press Check and
+  report the count. If Check says "No broken dates found" for someone the community script helps, the bounds need widening.
+- ⏳ Only the first EQ folder Mimic resolves is checked; a second install needs its own pass.
+- `test/tray-menu-layout.test.js` is quarantined in `vitest.config.js`; its expectations were updated by hand for the new tray item.
