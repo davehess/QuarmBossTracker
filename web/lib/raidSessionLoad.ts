@@ -35,6 +35,8 @@ import {
   type ObservedIn, type PlayerIn, type SessionBundle,
 } from './raidSession';
 import { buildGroups, groupOfFight, inGroupAt, inSet, narrowRows, outsideRaids, resolveGroupKey, setMembers, type GroupIndex, type RaidGroup } from './sessionGroups';
+import { buildHailEvents, type HailEvent, type HailRow } from './raidHails';
+import { zoneLabel } from './popLatestFlags';
 import { detectRaidChange, whoSeries, type RaidChange } from './raidSplit';
 import { rosterCuts } from './liveRaidWindow';
 import type { NightSummary, NightMinute } from './raidReplay';
@@ -128,6 +130,24 @@ async function readAll(sb: SupabaseClient, win: ShareWindow) {
       .range(from, to)),
   ]);
   return { minutes, encounters, looted, observed, rollRows, overrides, captured, raids };
+}
+
+/**
+ * The witnessed hails of the flag NPCs inside `win` (pop_flags: flag_key 'hail'), as events (lib/raidHails.ts). One
+ * windowed select of four columns, paged. `keep` narrows to a raid set; opted-out characters come out as their label.
+ */
+export async function loadWindowHails(
+  sb: SupabaseClient, win: ShareWindow, anon: AnonMap, keep?: (nk: string, ms: number) => boolean,
+): Promise<HailEvent[]> {
+  const { from: lo, to: hi } = windowIso(win);
+  const rows = await selectAll<HailRow & { id: number }>((from, to) => sb.from('pop_flags')
+    .select('id, character, npc, zone, earned_at')
+    .eq('guild_id', GUILD_TAG)
+    .eq('flag_key', 'hail')
+    .gte('earned_at', lo).lt('earned_at', hi)
+    .order('id')
+    .range(from, to));
+  return buildHailEvents(rows, anon, { keep, zoneName: z => (z ? zoneLabel(z)?.name ?? null : null) });
 }
 
 // The raids of a window, kept five minutes per window so the replay route (15 minutes of rows a request) does not
@@ -290,7 +310,12 @@ export async function loadSessionReview(sb: SupabaseClient, win: ShareWindow, op
     for (const z of (data ?? []) as { zone_id: number; short_name: string | null }[]) if (z.short_name) zoneNames.set(z.zone_id, z.short_name);
   }
 
+  // Who hailed a flag NPC in the window. Narrowed to a raid set, only hailers standing in it at the hail's minute; a
+  // closed (isolated, nothing resolved) review shows none. Read after the raids are known, so the filter can use them.
+  const hails = closed ? [] : await loadWindowHails(sb, win, anon, index && group ? (nk, ms) => inGroupAt(index, group, nk, ms) : undefined);
+
   const bundle: SessionBundle = {
+    hails,
     fromMs: win.fromMs,
     toMs: win.toMs,
     minutesRecorded: minutes.length,

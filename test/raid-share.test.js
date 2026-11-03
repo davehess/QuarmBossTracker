@@ -218,6 +218,7 @@ describe('the session loader bounds every read to the window', () => {
     raid_track_minutes: 'minute_at', encounters: 'ended_at', looted_items: 'looted_at', loot_observations: 'posted_at',
     roll_sets: 'started_at', roll_set_overrides: 'started_at', raid_attendance_ticks: 'scheduled_for', opendkp_raids: 'ts',
     opendkp_auctions: 'end_at',   // the bid winners (lib/raidSessionBids.ts)
+    pop_flags: 'earned_at',       // who hailed a flag NPC (lib/raidHails.ts, loadWindowHails)
   };
   for (const [table, col] of Object.entries(TIMED)) {
     it(`${table} is read with ${col} >= from and < to, exactly the window`, () => {
