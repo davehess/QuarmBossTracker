@@ -133,7 +133,26 @@ export const STEPS: Step[] = [
 ];
 
 // ─── Troubleshooting ────────────────────────────────────────────────────────────────────────────────
-export interface Fix { id: string; problem: string; fix: string; note?: string }
+export interface Fix { id: string; problem: string; fix: string; note?: string; code?: { label: string; text: string } }
+
+// A community fix from players on the Project Quarm Discord, quoted as it was shared (the folder is a placeholder).
+const EQ_DATES_SCRIPT = String.raw`$game = 'C:\Path\To\Quarm'
+if (-not (Test-Path -LiteralPath "$game\eqgame.exe")) {
+  "eqgame.exe not found in $game"
+} else {
+  Set-Location -LiteralPath $game
+  $dir = ""
+  cmd /c "dir /t:c /s /a-d 2>nul" | ForEach-Object {
+    if ($_ -match '^ Directory of (.+)$') { $dir = $Matches[1] }
+    elseif ($_ -match '^(?!\d)\S*\s+\d\d:\d\d(\s?[AP]M)?\s+[\d,]+\s+(.+)$') {
+      $path = Join-Path $dir $Matches[2]
+      try {
+        [IO.File]::SetCreationTimeUtc($path, [DateTime]::UtcNow)
+        "fixed:  $path"
+      } catch { "FAILED: $path - $_" }
+    }
+  }
+}`;
 export const TROUBLESHOOTING = {
   title: 'If something does not work',
   list: [
@@ -153,6 +172,13 @@ export const TROUBLESHOOTING = {
       id: 'no-logs',
       problem: 'Mimic sees no character.',
       fix: 'In the game type /log on, then zone or send yourself a tell so the log gets a new line. Mimic reads eqlog files in your EverQuest Logs folder.',
+    },
+    {
+      id: 'eq-time-zone',
+      problem: 'EverQuest only starts after I change my Windows time zone.',
+      fix: 'In Mimic, open Settings and find “EverQuest won’t start unless you change your time zone?”. Close the game, press Check my EQ files, then Fix them. After that you can set Windows back to your normal time zone. Without Mimic, close the game and run the script below in PowerShell, with your own EverQuest folder on the first line.',
+      note: 'This is a community fix from players on the Project Quarm Discord. Some game files end up with a broken creation date, and that is what trips the game up. The fix changes only those file dates, never what is inside a file. Mimic’s button works on any Windows language; the script below needs English Windows.',
+      code: { label: 'PowerShell script (English Windows only)', text: EQ_DATES_SCRIPT },
     },
   ] as Fix[],
 };

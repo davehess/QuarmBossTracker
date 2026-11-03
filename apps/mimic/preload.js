@@ -1534,6 +1534,9 @@ contextBridge.exposeInMainWorld('mimic', {
   parserRetire:          () => ipcRenderer.invoke('parser-retire'),
   defenderStatus:        () => ipcRenderer.invoke('defender-status'),
   defenderAddExclusions: () => ipcRenderer.invoke('defender-add-exclusions'),
+  // EverQuest file creation dates (the "only starts after I change my time zone" fix): check, then fix.
+  eqFileDatesScan:       () => ipcRenderer.invoke('eq-file-dates-scan'),
+  eqFileDatesFix:        () => ipcRenderer.invoke('eq-file-dates-fix'),
   // Windows clock: read the w32time service state, and (elevated) fix it.
   clockStatus:           () => ipcRenderer.invoke('clock-status'),
   clockResync:           () => ipcRenderer.invoke('clock-resync'),

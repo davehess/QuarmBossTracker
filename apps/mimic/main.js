@@ -32,6 +32,7 @@ const { spawn } = require('child_process');
 const { startZealWatch, chatLineOf } = require('./zealPipe');
 const zealUpdater = require('./zealUpdater');
 const uiPacks = require('./uiPacks');
+const eqFileDates = require('./eqFileDates');
 const { applyIniKeyEdits } = require('./iniKeyEdits');
 const { visibleUiRects, zealAreas, applyPicks, cleanPicks } = require('./uiClearRects');
 const uiLayouts = require('./uiLayouts');
@@ -11446,6 +11447,10 @@ function buildTrayMenu() {
     // to load, so the old browser route stays as the fallback.
     { label: 'Send feedback — bug or idea',
       click: () => { if (!openFeedback()) shell.openExternal(`http://127.0.0.1:${agentPort}/#feedback`); } },
+    // Tray ↔ dashboard parity: the card lives in Settings (next to the Windows Defender and clock repairs);
+    // this opens Settings scrolled to it, so the tray and Settings drive the same two IPC handlers.
+    { label: 'Fix EQ file dates (time-zone crash)…', visible: process.platform === 'win32',
+      click: () => { try { openSettings('eqdates'); } catch { /* */ } } },
     { label: 'Restart agent', click: async () => {
         appendAgentLog('[mimic] tray "Restart agent" clicked\n');
         if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
@@ -15495,6 +15500,39 @@ ipcMain.handle('defender-add-exclusions', async () => {
   appendAgentLog(`[defender] added ${done.length} exclusion(s)`
     + (failed.length ? `, ${failed.length} failed` : '') + `: ${done.join(', ')}\n`);
   return { ok: failed.length === 0, added: done, failed };
+});
+
+// ── EverQuest file creation dates (the "only starts after I change my time zone" fix) ──
+// Players on the Project Quarm Discord found that some game files have an invalid creation date, and that
+// the game then only starts after the Windows time zone is changed. Scan finds those files; Fix gives each
+// a valid creation date. Only dates change, never file contents. The fix re-scans on its own, so the
+// renderer cannot hand over a path list: nothing but what the scan found ever reaches PowerShell.
+// Settings → "EverQuest won't start…" and the tray's Help item are the two doors to the same two handlers.
+async function _eqDatesPrecheck() {
+  if (process.platform !== 'win32') return { ok: false, error: 'Windows only.' };
+  const dir = _zealEqDir();
+  if (!dir) return { ok: false, error: 'Mimic could not find your EverQuest folder. Set it in Settings first.' };
+  if (await _isEqRunning()) return { ok: false, error: 'Close EverQuest first.' };
+  return { ok: true, dir };
+}
+ipcMain.handle('eq-file-dates-scan', async () => {
+  const pre = await _eqDatesPrecheck();
+  if (!pre.ok) return pre;
+  const r = await eqFileDates.scanEqFileDates(pre.dir);
+  if (r.error) return { ok: false, error: r.error };
+  appendAgentLog(`[eqdates] scan: ${r.scanned} files, ${r.bad.length} with a broken creation date`
+    + (r.errors ? `, ${r.errors} unreadable` : '') + (r.truncated ? ', stopped at the file limit' : '') + '\n');
+  return { ok: true, scanned: r.scanned, bad: r.bad.length, errors: r.errors, truncated: !!r.truncated };
+});
+ipcMain.handle('eq-file-dates-fix', async () => {
+  const pre = await _eqDatesPrecheck();
+  if (!pre.ok) return pre;
+  const r = await eqFileDates.scanEqFileDates(pre.dir);
+  if (r.error) return { ok: false, error: r.error };
+  if (!r.bad.length) return { ok: true, fixed: 0, failed: 0, remaining: 0 };
+  const out = await eqFileDates.fixEqFileDates(pre.dir, r.bad);
+  appendAgentLog(`[eqdates] fix: ${out.fixed} fixed, ${out.failed.length} failed, ${out.remaining} still broken\n`);
+  return { ok: out.failed.length === 0 && !out.remaining, fixed: out.fixed, failed: out.failed.length, remaining: out.remaining };
 });
 
 // ── Windows clock sync ──────────────────────────────────────────────────────

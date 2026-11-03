@@ -3386,6 +3386,19 @@ parity checklist in `CLAUDE.md` (✕ hide, ✥ move + context menu,
 hover-interact handshake, dashboard toggle row, visibility fn) — most beta
 bugs were a missing item from that list.
 
+- **"EverQuest won't start unless you change your time zone?" — fix EQ file creation dates (Mimic beta draft, 2026-11-03,
+  the guild lead):** players on the Project Quarm Discord found that a few game files carry an invalid creation date, and the
+  game then only starts after the Windows time zone is changed. `apps/mimic/eqFileDates.js` (zero deps; file system and
+  PowerShell passed in) scans the EQ folder with Node's own stat calls (so it works on any Windows language, unlike the
+  community script, which reads English `dir` output), treats a creation time before 1980 or from 2100 on as broken, and
+  `fixEqFileDates` gives each such file a fresh creation date through a hidden PowerShell that reads the paths from a temp
+  list file (no path is ever in the script). Only dates change, never contents. `main.js` handlers `eq-file-dates-scan` /
+  `eq-file-dates-fix` (Windows only; refuse with "Close EverQuest first." while `eqgame.exe` runs; the fix re-scans itself, the
+  page sends no paths; the agent log gets counts only). Surfaces: the Settings card `#eqdates` (Check my EQ files, Fix them) and
+  the tray item Help › "Fix EQ file dates (time-zone crash)…", which opens that card. Web: the "EverQuest only starts after I
+  change my Windows time zone" entry in `web/lib/raidmimicSetup.ts` `TROUBLESHOOTING` (carries the community script for
+  people without Mimic; English Windows only). Tests `test/eq-file-dates.test.js`.
+
 - **Overlay motion, just-in-time overlays, pet and chat attached to EQ's own windows (DRAFT design, 2026-10-24, nothing built):**
   `docs/DESIGN-overlay-motion.md`. It maps what exists to build on (Canvas show-when rules in `canvas.html`, Charm's
   "When charming" idle, `_eqWindowGeometry` / `_parseUiWindowRects` / `uiClearRects.js`, chat groups as tabs) and
