@@ -1296,6 +1296,16 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   `test/relv-mephit-counter.test.js`. Agent 4.0.47 (§471): the row reads "Falto:", and a counter started after Falto was
   seen (a mid-fight start) counts nothing. A cross-client count through the bot is not built (open if the floor proves too low).
 
+### Overlays never stay clickable after an alt-tab (Mimic beta, 2026-11-03)
+- **What:** an overlay is made clickable while the pointer is on one of its controls (the hover handshake). Main now
+  keeps its own list of armed windows and puts each back to click-through when another app comes to the front or
+  EverQuest comes back, when the pointer is off a normal overlay, or when a screen-sized one (the Canvas, the Map in
+  Full mode) stopped being re-armed and the pointer has moved. Before, only the page's own "pointer left" report
+  disarmed it, and a lost report (alt-tab while pointing at a control) left the window eating clicks meant for EQ,
+  the whole screen in the Canvas's case, until "hide all overlays" reset it.
+- **Where:** `apps/mimic/main.js` `_hoverArmed`, `_hoverArmStale`, `_watchHoverArms`, `_disarmAllHover` (beside the
+  `overlay-hover-interactive` handler) and one call in `_focusDeb`. Test: `test/mimic-hover-arm-watch.test.js`.
+
 ### Hail while invisible (agent 4.0.60 beta, 2026-11-03, FB-116)
 - **What:** your own hail of a flag NPC while you are invisible puts up a local orange callout, spoken: "You are invisible.
   Drop invis and hail again." A flag NPC does not answer someone it cannot see, so the hail is silently wasted (the report's log

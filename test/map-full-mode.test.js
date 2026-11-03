@@ -392,7 +392,7 @@ describe('main.js: Full mode is a screen-sized, click-through cover like the Can
   });
   it('click-through always: unlocking and the hover handshake leave a Full-mode Map click-through, as the Canvas', () => {
     expect(js).toMatch(/if \(_coversScreen\(key\)\) \{\s*win\.setIgnoreMouseEvents\(true, \{ forward: true \}\);\s*\} else if \(locked\)|if \(_coversScreen\(key\)\) \{[\s\S]{0,200}?win\.setIgnoreMouseEvents\(true, \{ forward: true \}\);/);
-    expect(js).toMatch(/if \(win === canvasWindow \|\| \(win === mapWindow && _mapFull\)\) \{ win\.setIgnoreMouseEvents\(true, \{ forward: true \}\); return true; \}/);
+    expect(js).toMatch(/if \(win === canvasWindow \|\| \(win === mapWindow && _mapFull\)\) \{ win\.setIgnoreMouseEvents\(true, \{ forward: true \}\); return(?: true)?; \}/);   // _restoreClickThrough (2026-11-03)
   });
   it('setup / unlock do not conjure a Full-mode Map that is switched off, and the EQ gate still applies', () => {
     expect(js).toMatch(/if \(e\.key === 'map' && _mapFull\) \{\s*return !!cfg\.showMap && \(setupMode \|\| cfg\.overlaysLocked === false \|\| \(!cfg\.hideOverlays && _eqGateOk\(cfg\)\)\);/);

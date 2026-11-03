@@ -224,6 +224,9 @@ next touch one rather than assuming a missing row means a missing doc.
   https://b.wolfpack.quest/raidmimic/setup?v=b (one short card) and https://b.wolfpack.quest/raidmimic/setup?v=c (free vs
   planned Pro table with why each costs money); the same on https://b.wolfpack.quest/guilds/new?v=b and `?v=c` (sign-in).
   No `?v=` = production. On a pick: graduate it to main, drop the other and the `?v=` switch.
+- **🧪 Clicks reach EverQuest after an alt-tab (Mimic beta, 2026-11-03).** An overlay left clickable by a lost hover
+  report (the Canvas: the whole screen) is put back to click-through by main itself. HOW-ITS-BUILT: Overlays never stay
+  clickable after an alt-tab. Not yet tried in game.
 - **🧪 FB-116: "drop invis and hail again" (Mimic beta, agent 4.0.60, 2026-11-03).** Your own hail of a flag NPC while invisible
   gets a local callout. HOW-ITS-BUILT: Hail while invisible.
 - **🧪 Tower of Solusek Ro brazier clicks in the Command Center (Mimic beta, agent 4.0.59, 2026-11-02, first draft, not yet tried in
