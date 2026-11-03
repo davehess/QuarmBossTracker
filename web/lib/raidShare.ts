@@ -58,6 +58,8 @@ export type ShareRow = {
   expires_at: string;
   revoked_at: string | null;
   view_count: number;
+  /** The raids of the window this link shows (lib/sessionGroups.ts ids); null / absent = the whole window. */
+  group_ids?: string[] | null;
 };
 
 export type ShareStatus = 'ok' | 'expired' | 'revoked';

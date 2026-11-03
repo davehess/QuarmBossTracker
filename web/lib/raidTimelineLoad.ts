@@ -23,7 +23,7 @@ import { chunk, displayMobName } from './replayBosses';
 const CHUNK = 100;
 
 type EncRaw = {
-  npc_id: number; ended_at: string; classification: string | null; is_wipe: boolean | null;
+  id: string; npc_id: number; ended_at: string; classification: string | null; is_wipe: boolean | null;
   eqemu_npc_types: { name: string | null } | { name: string | null }[] | null;
 };
 export type TimelineKill = { npc_id: number; name: string; at: number; other?: true };
@@ -32,9 +32,11 @@ export type TimelineKill = { npc_id: number; name: string; at: number; other?: t
 const GUEST_MARKS = new Set(['live', 'foreign']);
 
 export async function loadTimelineKills(
-  admin: SupabaseClient, sinceIso: string, untilIso: string, guild: string = GUILD_TAG, opts: { guestRaids?: boolean } = {},
+  admin: SupabaseClient, sinceIso: string, untilIso: string, guild: string = GUILD_TAG,
+  // `only`: a share limited to chosen raids keeps just their fights (ids from raidSessionLoad.ts loadGroupFightIds).
+  opts: { guestRaids?: boolean; only?: ReadonlySet<string> } = {},
 ): Promise<TimelineKill[]> {
-  const keep = (r: EncRaw) => r.classification == null || (!!opts.guestRaids && GUEST_MARKS.has(r.classification) && !r.is_wipe);
+  const keep = (r: EncRaw) => (!opts.only || opts.only.has(r.id)) && (r.classification == null || (!!opts.guestRaids && GUEST_MARKS.has(r.classification) && !r.is_wipe));
   // The marks are judged here, not in the query: one read for both callers, and a window holds a few dozen fights.
   const all = await selectAll<EncRaw>((from, to) => admin.from('encounters')
     .select('id, npc_id, ended_at, classification, is_wipe, eqemu_npc_types(name)')

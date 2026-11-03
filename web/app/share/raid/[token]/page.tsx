@@ -23,6 +23,7 @@ import { resolveShare, noteView } from '@/lib/raidShareLookup';
 import { shareIsFollowing } from '@/lib/raidShare';
 import { BUSY_MESSAGE, ceilingPage, clientIp, guardPage } from '@/lib/shareGuard';
 import { loadSessionReview } from '@/lib/raidSessionLoad';
+import { groupIdsOf, shareGroupKey } from '@/lib/sessionGroups';
 import SessionReview from '@/app/raid/session/SessionReview';
 import RaidTimeline from '@/components/RaidTimeline';
 
@@ -54,7 +55,14 @@ export default async function SharedRaidSession({ params }: { params: { token: s
   if (!share) notFound();
   if (!ceilingPage(share.row.id).ok) return <Busy />;
 
-  const [review] = await Promise.all([loadSessionReview(sb, share.win), noteView(sb, share.row, clientIp(h))]);
+  // A link limited to chosen raids (raid_shares.group_ids; lib/sessionGroups.ts) is the union of those raids, counted in
+  // the SHARE's window, and fails closed (isolate): an id the window no longer holds shows nothing, never the whole window.
+  const groups = shareGroupKey(share.row);
+  const [review] = await Promise.all([
+    loadSessionReview(sb, share.win, groups === null ? {} : { group: groups, isolate: true }),
+    noteView(sb, share.row, clientIp(h)),
+  ]);
+  const chosen = groups === null ? 0 : groupIdsOf(groups).filter(id => review.groupIndex?.members.has(id)).length;
   // A link that follows the raid redraws itself about once a minute (the review does that, holding still for a viewer who
   // is scrubbing: lib/shareFollow.ts). The flag comes from the row on every render, so it ends when the share is closed.
   const follow = shareIsFollowing(share.row);
@@ -74,8 +82,19 @@ export default async function SharedRaidSession({ params }: { params: { token: s
         Characters who opted out of stats appear as their class and a number, unless they won an item here.
       </p>
       {follow && <p className="mb-3 text-xs text-dim">This link follows the raid, so it updates by itself about once a minute.</p>}
-      <RaidTimeline src={`/api/share/raid/${params.token}/timeline`} />
-      <SessionReview bundle={review.bundle} night={review.night} mode={{ kind: 'share', token: params.token }} follow={follow} />
+      {groups !== null && (
+        <p className="mb-3 text-xs text-dim">
+          {chosen > 0
+            ? `This link shows ${chosen === 1 ? 'one chosen raid' : `${chosen} chosen raids`} from the recording, and nothing from the others. Ticks, rolls and bids are left out.`
+            : 'The raids this link was made for are not in its window any more, so there is nothing to show.'}
+        </p>
+      )}
+      {(groups === null || chosen > 0) && (
+        <>
+          <RaidTimeline src={`/api/share/raid/${params.token}/timeline`} />
+          <SessionReview bundle={review.bundle} night={review.night} mode={{ kind: 'share', token: params.token }} follow={follow} />
+        </>
+      )}
     </div>
   );
 }

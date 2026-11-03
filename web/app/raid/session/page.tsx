@@ -31,6 +31,7 @@ import { liveAvailable, sessionLabel, summarizeNights, type NightMinute } from '
 import { loadRaidCuts } from '@/lib/raidCuts';
 import { loadNightMarks, loadSlices } from '@/lib/nightSlicesLoad';
 import { slicesIn } from '@/lib/nightSlices';
+import { groupIdsOf, groupKey, groupLabels, parseGroupIds } from '@/lib/sessionGroups';
 import NewPageTag from '@/components/NewPageTag';
 import SessionReview from './SessionReview';
 import ShareControls from './ShareControls';
@@ -51,8 +52,9 @@ const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) 
 export default async function RaidSessionPage({ searchParams }: { searchParams: { from?: string | string[]; to?: string | string[]; group?: string | string[]; gf?: string | string[]; gt?: string | string[] } }) {
   const from = one(searchParams.from);
   const to = one(searchParams.to);
-  // `group` narrows the review to one raid of the window (lib/sessionGroups.ts); anything but a plausible id is ignored.
-  const wanted = /^[a-z0-9-]{3,40}$/.test(one(searchParams.group)) ? one(searchParams.group) : null;
+  // `group` narrows the review to one raid of the window, or to several (`group=<id1>,<id2>`, the union of their raiders;
+  // lib/sessionGroups.ts parseGroupIds: at most 12). Anything but a plausible id is ignored.
+  const wanted = groupKey(parseGroupIds(one(searchParams.group))) || null;
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=' + encodeURIComponent('/raid/session' + (from && to ? `?from=${from}&to=${to}${wanted ? `&group=${wanted}` : ''}` : '')));
 
@@ -102,6 +104,11 @@ export default async function RaidSessionPage({ searchParams }: { searchParams: 
   const marks = await loadNightMarks(admin, win, review.bundle.kills, raid).catch(() => ({ fights: [], deaths: [], mass: [] }));
   const groups = review.groups ?? [];
   const { from: fromIso, to: toIso } = windowIso(win);
+  // The raids a "Share…" made from this view would be limited to: the narrowed set, named. The window the ids were counted
+  // in must be the share's own window, so a view that is a part of a larger one (gf/gt) offers no limited link.
+  const shareGroups = review.group && (!parent || (parent.fromMs === win.fromMs && parent.toMs === win.toMs))
+    ? { ids: groupIdsOf(review.group), labels: groupLabels(groups, groupIdsOf(review.group)) }
+    : null;
 
   return (
     <div className="mx-auto max-w-6xl py-2">
@@ -114,7 +121,7 @@ export default async function RaidSessionPage({ searchParams }: { searchParams: 
         bundle={review.bundle}
         night={review.night}
         mode={{ kind: 'member' }}
-        extras={officer ? <ShareControls fromIso={fromIso} toIso={toIso} defaultTitle={`Raid session, ${etDay.format(win.fromMs)}`} splitAtMs={review.change?.atMs ?? null} /> : undefined}
+        extras={officer ? <ShareControls fromIso={fromIso} toIso={toIso} defaultTitle={`Raid session, ${etDay.format(win.fromMs)}`} splitAtMs={review.change?.atMs ?? null} groups={shareGroups} /> : undefined}
         split={{ change: review.change, live: liveAvailable(win.toMs, Date.now()), canShare: officer }}
         nightPanel={{
           fromMs: win.fromMs, toMs: win.toMs, spans: review.night?.spans ?? [],

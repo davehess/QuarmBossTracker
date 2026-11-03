@@ -18,7 +18,7 @@ import { GUILD_TAG } from './guild';
 import { chunk, displayMobName } from './replayBosses';
 import { windowIso, type ShareWindow } from './raidShare';
 import { nameKey, type KillRow } from './raidSession';
-import { groupOfFight, inGroupAt, type GroupIndex } from './sessionGroups';
+import { groupOfFight, inGroupAt, inSet, type GroupIndex } from './sessionGroups';
 import { dedupEncounterDeaths, dedupNightDeaths, type RawDeath } from './raidReview';
 import {
   massDeaths, markFights, parseSliceStore, planSliceWrite, playerDeathName, slicesKey,
@@ -136,7 +136,7 @@ async function readMarks(sb: SupabaseClient, win: ShareWindow, kills: readonly K
     }
     extras = extras.filter(e => {
       const at = Date.parse(e.ended_at ?? e.started_at);
-      return Number.isFinite(at) && groupOfFight(raid.index, at, names.get(e.id) ?? []) === raid.id;
+      return Number.isFinite(at) && inSet(raid.id, groupOfFight(raid.index, at, names.get(e.id) ?? []));
     });
   }
 

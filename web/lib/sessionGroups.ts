@@ -215,6 +215,89 @@ export function groupQuery(group: string | null | undefined, parent?: { fromMs: 
   return `&group=${encodeURIComponent(group)}${p}`;
 }
 
+// A CHOSEN SET OF RAIDS (the guild lead, 2026-11-03: "the selection should be multi-select" — one guild's raid can be
+// several groups when the leader hand-off splits it, and a public link must show only the ones picked). A set travels as
+// ONE string, the ids sorted and joined by a comma (`groupKey`), so every function below that took a group id takes a set
+// the same way: an id is a set of one, and a window's members for a set are the union of its groups', minute by minute.
+export const GROUP_ID_RE = /^[a-z0-9-]{3,40}$/;
+export const MAX_GROUP_SET = 12;
+
+/** The valid, distinct ids in `raw` (a comma-joined string or a list), the first MAX_GROUP_SET of them; anything else is dropped. */
+export function parseGroupIds(raw: unknown): string[] {
+  const parts = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(',') : [];
+  const out: string[] = [];
+  for (const p of parts) if (typeof p === 'string' && GROUP_ID_RE.test(p) && !out.includes(p)) out.push(p);
+  return out.slice(0, MAX_GROUP_SET);
+}
+
+/** The canonical key of a set: sorted, comma-joined. Empty for no ids. */
+export const groupKey = (ids: readonly string[]): string => [...ids].sort().join(',');
+
+/** The ids a key names. */
+export const groupIdsOf = (key: string | null | undefined): string[] => (key ? key.split(',').filter(Boolean) : []);
+
+/** Is `id` one of the set's raids? (`id` null is in no set.) */
+export const inSet = (key: string | null | undefined, id: string | null | undefined): boolean => !!id && groupIdsOf(key).includes(id);
+
+/** The key of the raids in `raw` that the window actually holds, or null when it holds none of them. */
+export function resolveGroupKey(index: GroupIndex, raw: unknown): string | null {
+  const ids = parseGroupIds(raw).filter(id => index.members.has(id));
+  return ids.length ? groupKey(ids) : null;
+}
+
+const unions = new WeakMap<GroupIndex, Map<string, Map<number, Set<string>>>>();
+
+/** Who stood in the set, minute by minute: the union of its groups'. A single id is that group's own map. */
+export function setMembers(index: GroupIndex, key: string): Map<number, Set<string>> | undefined {
+  const ids = groupIdsOf(key);
+  if (ids.length <= 1) return index.members.get(ids[0] ?? key);
+  let per = unions.get(index);
+  if (!per) { per = new Map(); unions.set(index, per); }
+  const hit = per.get(key);
+  if (hit) return hit;
+  const out = new Map<number, Set<string>>();
+  for (const id of ids) {
+    for (const [m, names] of index.members.get(id) ?? []) {
+      let set = out.get(m);
+      if (!set) { set = new Set(); out.set(m, set); }
+      for (const n of names) set.add(n);
+    }
+  }
+  per.set(key, out);
+  return out;
+}
+
+/**
+ * What a share may be made of: `raw` (the request's group_ids) checked against the raids the share's window holds.
+ * undefined / null = the whole window (ids null). Otherwise 1 to MAX_GROUP_SET well-formed, distinct ids, every one of
+ * them a raid in `present`; anything else is an error and the share is not made.
+ */
+export function checkShareGroups(raw: unknown, present: ReadonlySet<string>): { ids: string[] | null } | { error: string } {
+  if (raw === undefined || raw === null) return { ids: null };
+  if (!Array.isArray(raw) || raw.length < 1 || raw.length > MAX_GROUP_SET) return { error: `choose 1 to ${MAX_GROUP_SET} raids` };
+  const ids: string[] = [];
+  for (const v of raw) {
+    if (typeof v !== 'string' || !GROUP_ID_RE.test(v)) return { error: 'bad raid id' };
+    if (!present.has(v)) return { error: 'a chosen raid is not in this window' };
+    if (!ids.includes(v)) ids.push(v);
+  }
+  return { ids: ids.sort() };
+}
+
+/**
+ * The set a share row is limited to: null when the row has none (the whole window, as every older link), otherwise the
+ * key of its ids. A row that HAS a list but no usable id gives '' (a set that matches nobody), never null: a damaged
+ * list must show nothing, not everything.
+ */
+export function shareGroupKey(row: { group_ids?: unknown }): string | null {
+  return row.group_ids == null ? null : groupKey(parseGroupIds(row.group_ids));
+}
+
+/** The raids' names for a panel: "Raid of 52 · led by …, Raid of 7 · in …". Ids the window no longer holds are counted, not named. */
+export function groupLabels(groups: readonly Pick<RaidGroup, 'id' | 'size' | 'leader' | 'zones'>[], ids: readonly string[]): string[] {
+  return ids.map(id => { const g = groups.find(x => x.id === id); return g ? groupLabel(g) : 'a raid no longer in this window'; });
+}
+
 /** "Raid of 31 · led by <leader>" (or "· in codecay" when the recorder named no leader). */
 export function groupLabel(g: Pick<RaidGroup, 'size' | 'leader' | 'zones'>): string {
   const tail = g.leader ? ` · led by ${g.leader}` : g.zones.length ? ` · in ${g.zones[0]}` : '';
@@ -223,7 +306,7 @@ export function groupLabel(g: Pick<RaidGroup, 'size' | 'leader' | 'zones'>): str
 
 /** Is `nk` (a nameKey) listed in the group in the minute of `ms` or the minute either side of it? */
 export function inGroupAt(index: GroupIndex, id: string, nk: string, ms: number): boolean {
-  const per = index.members.get(id);
+  const per = setMembers(index, id);
   if (!per) return false;
   const m = Math.floor(ms / MINUTE);
   for (let k = m - 1; k <= m + 1; k++) if (per.get(k)?.has(nk)) return true;
@@ -232,7 +315,7 @@ export function inGroupAt(index: GroupIndex, id: string, nk: string, ms: number)
 
 /** Is `nk` in the group at any time? */
 export function inGroupEver(index: GroupIndex, id: string, nk: string): boolean {
-  for (const set of index.members.get(id)?.values() ?? []) if (set.has(nk)) return true;
+  for (const set of setMembers(index, id)?.values() ?? []) if (set.has(nk)) return true;
   return false;
 }
 
@@ -294,7 +377,7 @@ export function filterMinuteData(data: string, keep: ReadonlySet<string> | undef
 
 /** Rows (any shape with minute_at + data) narrowed to one group; rows the group is absent from are dropped. */
 export function narrowRows<T extends { minute_at: string; data: string }>(rows: readonly T[], index: GroupIndex, id: string): T[] {
-  const per = index.members.get(id);
+  const per = setMembers(index, id);
   const out: T[] = [];
   for (const r of rows) {
     const t = Date.parse(r.minute_at);

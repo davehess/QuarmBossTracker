@@ -9,7 +9,7 @@ import { anonLabels, exemptWinners, type AnonMap, type CharFlags } from './raidS
 import { loadWinnerKeys } from './raidSessionBids';
 import { selectAll } from './selectAll';
 
-const COLUMNS = 'id, guild_id, from_at, to_at, title, created_at, expires_at, revoked_at, view_count';
+const COLUMNS = 'id, guild_id, from_at, to_at, title, created_at, expires_at, revoked_at, view_count, group_ids';
 
 export type ResolvedShare = { row: ShareRow; win: ShareWindow };
 
