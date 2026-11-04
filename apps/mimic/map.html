@@ -3015,7 +3015,9 @@
           ctx.beginPath(); ctx.arc(vis[j + 2], vis[j + 3], facingOn ? rad * 1.2 : rad, 0, 6.2832); ctx.fillStyle = col; ctx.fill();
           ctx.lineWidth = facingOn ? 1.5 : 1; ctx.strokeStyle = facingOn ? 'rgba(8,11,16,0.95)' : '#0d1117'; ctx.stroke();
         }
-        if (names && v.scale >= 0.4) {
+        // FB-119 (2026-11-04): raider names were gated on zoom (scale >= 0.4), so a whole-zone fit of a big zone (Plane of Fire)
+        // drew every dot and no name while the Raiders button still read on. The button is the switch; names follow it at every zoom.
+        if (names) {
           var nameGap = (arrowsOn ? Math.max(rad, arrowSz.len * 0.6) : rad) + 3;   // clear of an arrow's tip when it points at the name
           for (j = 0; j < vis.length; j += 4) halo(vis[j].name, vis[j + 2] + nameGap, vis[j + 3], fontSmall, color);
         }
