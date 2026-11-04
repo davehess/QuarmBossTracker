@@ -632,6 +632,20 @@
     if (!(n > 0 && n < 100)) return '';
     return '<span class="chip imm" title="This mob resists '+n+'% of any slow: a slow lands at only '+(100-n)+'% of its strength. The game does not tell you.">Slow \u2212'+n+'%</span>';
   }
+  // FB-118 (a raider, 2026-11-04: "Social aggro will call another mob ... Quazlith came from flame mephit"): the
+  // kinds in this zone that come to this mob's aid, on the Stats tab beside the other pre-pull chips. The bot's
+  // faction_assisted_by (capped at 12, + faction_assisted_by_more) is the same list the F/Q/V Faction tab shows.
+  // Catalog only: it says who CAN come, not who is close enough to.
+  function socialChip(mob){
+    var by = mob && Array.isArray(mob.faction_assisted_by) ? mob.faction_assisted_by : [];
+    var n = by.length + (Number(mob && mob.faction_assisted_by_more) || 0);
+    if (!(n > 0)) return '';
+    var names = [], seen = {};
+    by.forEach(function(x){ var s = x && x.name ? String(x.name) : ''; if (s && !seen[s]) { seen[s] = 1; names.push(s); } });
+    var more = n - names.length;
+    return '<span class="chip warn" title="Pull this and others can come to its aid: '+esc(names.join(', '))+(more > 0 ? ' and '+more+' more' : '')
+      +'. Any of these kinds in this zone may join if they are close enough. Full list: F/Q/V, Faction.">Social \u00d7'+n+'</span>';
+  }
   // The order the chips are drawn in (FB-104: Summon sat last because the catalog lists codes numerically and a
   // same-name sibling row's extras are appended after the primary's). What the mob DOES to you first, then what
   // it is immune to (damage, then control), then the notes. A label not listed keeps its place after all of these.
@@ -1849,6 +1863,7 @@
         for (var j=0;j<orderedSpecs.length;j++){ var lab=orderedSpecs[j]; chips += specChip(lab); }
       }
       chips += slowMitChip(mob);
+      chips += socialChip(mob);
       chips += hitsChip(mi.target_hits);   // after the specials: seen in the fight, not catalogued
       if (chips) spec = '<div class="spec">'+chips+'</div>';
       // FB-95: "no catalog stats" used to stand for six different situations. The agent now says which
