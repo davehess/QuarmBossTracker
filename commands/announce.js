@@ -35,6 +35,22 @@ const EASTER_EGG_CHAIN = [
   },
 ];
 
+// The zone picker: every zone in zones.json plus every zone a boss lives in. zones.json missed five Planes of Power
+// raid zones that have bosses (Crypt of Decay, Plane of Valor, Halls of Honor, Temple of Marr, Tower of Solusek Ro),
+// so they could not be announced (the guild lead, 2026-11-04: "our discord /announce command is missing pop zones").
+function announceZoneNames(zones, bosses) {
+  const names = new Set();
+  for (const z of zones || []) if (z && z.name) names.add(z.name);
+  for (const b of bosses || []) if (b && b.zone) names.add(b.zone);
+  return [...names].sort();
+}
+
+// "Preclear: Tower of Solusek Ro — Xuzl", or just the zone or just the boss's zone and name when one is missing.
+function preclearName(zone, boss) {
+  const where = zone || (boss ? boss.zone : '');
+  return boss ? `${where} — ${boss.name}` : where;
+}
+
 function getBosses() {
   delete require.cache[require.resolve('../data/bosses.json')];
   return require('../data/bosses.json');
@@ -218,7 +234,8 @@ module.exports = {
     .addStringOption(opt => opt.setName('boss').setDescription('Specific boss target').setRequired(false).setAutocomplete(true))
     .addStringOption(opt => opt.setName('time').setDescription('When? e.g. "8:30 PM", "Thursday 8:30pm", "tomorrow 9pm"').setRequired(false))
     .addStringOption(opt => opt.setName('zone').setDescription('Zone/area for a multi-target announcement').setRequired(false).setAutocomplete(true))
-    .addStringOption(opt => opt.setName('note').setDescription('Optional extra info').setRequired(false)),
+    .addStringOption(opt => opt.setName('note').setDescription('Optional extra info').setRequired(false))
+    .addBooleanOption(opt => opt.setName('preclear').setDescription('A preclear: clearing the way to the boss (give the zone and the boss)').setRequired(false)),
 
   async autocomplete(interaction) {
     const bosses  = getBosses();
@@ -237,7 +254,7 @@ module.exports = {
       );
     } else if (option.name === 'zone') {
       delete require.cache[require.resolve('../data/zones.json')];
-      const allZones = require('../data/zones.json').map(z => z.name).sort();
+      const allZones = announceZoneNames(require('../data/zones.json'), bosses);
       await interaction.respond(
         allZones.filter(z => !focused || z.toLowerCase().includes(focused))
           .slice(0, 25).map(z => ({ name: z, value: z }))
@@ -254,6 +271,7 @@ module.exports = {
     const zone    = interaction.options.getString('zone');
     const timeStr = interaction.options.getString('time');
     const note    = interaction.options.getString('note');
+    const preclear = interaction.options.getBoolean('preclear') === true;
 
     if (!bossId && !zone)
       return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Provide a `boss` or `zone`.' });
@@ -268,9 +286,13 @@ module.exports = {
     // not a boss raid — don't expand the zone into its bosses, so none of the
     // zone's bosses get added as targets / kill buttons / PQDI cards.
     const isTrashRun = !bossId && !!note && /\btrash\b/i.test(note);
-    const zoneBosses = (zone && !isTrashRun) ? bosses.filter(b => b.zone === zone) : (boss ? [boss] : []);
-    const announceName = boss ? boss.name : zone;
+    // A preclear (the guild lead, 2026-11-04: "we should be able to name a zone and boss as 'Preclear'") clears the
+    // way to one boss: like a trash run it never expands the zone into its bosses; the boss, when given, stays the
+    // one kill target.
+    const zoneBosses = (zone && !isTrashRun && !preclear) ? bosses.filter(b => b.zone === zone) : (boss ? [boss] : []);
+    const announceName = preclear ? preclearName(zone, boss) : (boss ? boss.name : zone);
     const announceZone = boss ? boss.zone : zone;
+    const kindLabel = preclear ? 'Preclear' : 'Pack Takedown';
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -333,7 +355,7 @@ const targets = boss ? [boss.id] : zoneBosses.map(b => b.id);
     let eventUrl = null, eventId = null;
     try {
       const event = await interaction.guild.scheduledEvents.create({
-        name: `Pack Takedown: ${announceName}`,
+        name: `${kindLabel}: ${announceName}`,
         scheduledStartTime: eventStart,
         scheduledEndTime:   eventEnd,
         privacyLevel: 2,
@@ -351,7 +373,7 @@ const targets = boss ? [boss.id] : zoneBosses.map(b => b.id);
       .filter(Boolean).join(' ');
 
     const descLines = [
-      `**${interaction.member?.displayName || interaction.user.username}** is planning a pack takedown on **${announceName}** at **${plannedTimeStr}**.`,
+      `**${interaction.member?.displayName || interaction.user.username}** is planning a ${kindLabel.toLowerCase()} on **${announceName}** at **${plannedTimeStr}**.`,
       `**Zone:** ${announceZone}`,
     ];
     if (note) descLines.push(`**Note:** ${note}`);
@@ -361,7 +383,7 @@ const targets = boss ? [boss.id] : zoneBosses.map(b => b.id);
 
     const announceEmbed = new EmbedBuilder()
       .setColor(0xf5a623)
-      .setTitle(`📣 Pack Takedown: ${announceName}`)
+      .setTitle(`📣 ${kindLabel}: ${announceName}`)
       .setDescription(descLines.join('\n'))
       .setTimestamp()
       .setFooter({ text: 'Archived at midnight • Use Cancel to archive early' });
@@ -457,4 +479,6 @@ const zoneSiblings = boss ? bosses.filter(b => b.zone === boss.zone && !targets.
   fetchUrl,
   scrapePqdiDetails,
   EASTER_EGG_CHAIN,
+  announceZoneNames,
+  preclearName,
 };
