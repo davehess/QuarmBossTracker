@@ -43,12 +43,15 @@
   @keyframes flash{from{box-shadow:0 0 8px rgba(248,113,113,0.9)}to{box-shadow:0 0 16px rgba(248,113,113,0.4)}}
   .dt{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(107,33,168,0.5);
     border:1px solid #c084fc;border-radius:5px;margin-bottom:4px;font-size:11px}
-  .dt.crit,.solro.crit{background:rgba(220,38,38,0.5);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
+  .dt.crit,.solro.crit,.coirnav.crit{background:rgba(220,38,38,0.5);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
   .dt .sec{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
-  .relv,.solro{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(180,83,9,0.5);
+  .relv,.solro,.coirnav{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(180,83,9,0.5);
     border:1px solid #fb923c;border-radius:5px;margin-bottom:4px;font-size:11px}
-  .relv .n,.solro .n{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
-  .relv .sub,.solro .sub{margin-left:auto;font-size:9px;color:#d0d7de}
+  .relv .n,.solro .n,.coirnav .n{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
+  .relv .sub,.solro .sub,.coirnav .sub{margin-left:auto;font-size:9px;color:#d0d7de}
+  .coirnav{background:rgba(3,105,161,0.5);border-color:rgba(56,189,248,0.9)}
+  .coirnav.done{background:rgba(22,101,52,0.5);border-color:rgba(86,211,100,0.9)}
+  .coirnav.bad{background:rgba(127,29,29,0.5);border-color:rgba(248,113,113,0.9)}
   .solro.done{background:rgba(22,101,52,0.5);border-color:rgba(86,211,100,0.9)}
   .solro.gone{opacity:0.5}
   .ramp{display:flex;flex-direction:column;gap:4px;padding:4px 7px;background:rgba(180,32,32,0.55);
@@ -713,6 +716,36 @@
     return '<div class="relv"><span>🔥 Falto: ' + main + '</span>'
          +   '<span class="sub">mepheekas killed ' + (Number(v.mepheekas) || 0) + '</span></div>';
   }
+  // Coirnav's event in Plane of Water (the guild lead, 2026-11-04): fiends this client has seen die, of the 75, and the
+  // 15:00 clock from the Guardian. The agent sends s.coirnav only while the event runs (and a few minutes after); the count
+  // is a floor (a far death line never prints here). The waves come on the CLOCK (3:00, 5:00), never from kills, so the
+  // row counts down to the next one from started_at and flashes in the last 30 seconds; killing faster does not bring it.
+  // Everything that ticks is worked out here from started_at / deadline_at / retry_at (ms) on each poll.
+  function coirnavHtml(v, nowMs){
+    function mmss(sec){ sec = Math.max(0, sec); return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'); }
+    var startedAt = Number(v.started_at) || 0, elapsed = Math.floor((nowMs - startedAt) / 1000);
+    var leftTxt = mmss(Math.round((Number(v.deadline_at) - nowMs) / 1000));
+    var kills = Math.min(75, Number(v.kills) || 0), wave = Number(v.wave) || 1;
+    if (elapsed >= 180 && wave < 2) wave = 2;
+    if (elapsed >= 300 && wave < 3) wave = 3;
+    if (v.state === 'done') return '<div class="coirnav done"><span>🌊 Coirnav has fallen</span></div>';
+    if (v.state === 'banished') {
+      var rt = new Date(Number(v.retry_at) || nowMs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      return '<div class="coirnav bad"><span>🌊 Banished · retry at ' + rt + '</span></div>';
+    }
+    if (v.state === 'burn') {
+      return '<div class="coirnav"><span>🌊 Coirnav: all 75 down · burn Coirnav · <span class="n">' + leftTxt + '</span> left</span>'
+           +   '<span class="sub">15:00 clock from the Guardian</span></div>';
+    }
+    var nextIn = wave < 3 ? Math.round((startedAt + (wave === 1 ? 180000 : 300000) - nowMs) / 1000) : 0;
+    var soon = wave < 3 && nextIn <= 30;
+    var mid = wave < 3 ? (soon ? 'wave ' + (wave + 1) + ' soon (' + mmss(nextIn) + ')' : 'wave ' + (wave + 1) + ' in ' + mmss(nextIn)) : 'wave 3';
+    var note = wave < 3 && kills >= (wave === 1 ? 20 : 45)
+             ? 'wave ' + wave + ' nearly down — wave ' + (wave + 1) + ' arrives on the clock at ' + (wave === 1 ? '3:00' : '5:00')
+             : '15:00 clock from the Guardian';
+    return '<div class="coirnav' + (soon ? ' crit' : '') + '"><span>🌊 Coirnav: fiends <span class="n">' + kills + '/75</span> · ' + mid + ' · ' + leftTxt + ' left</span>'
+         +   '<span class="sub">' + note + '</span></div>';
+  }
   // Tower of Solusek Ro braziers (the guild lead, 2026-11-02; the game calls it a flaming cauldron, the raid calls it a
   // brazier, and the row says brazier): one row per wing boss killed, counting down to the brazier's depop (30 minutes after it spawned) and saying whether THIS character has clicked it. The agent sends
   // s.solro_cauldrons only while one is up; the countdown is worked out here from expires_at on each poll.
@@ -855,6 +888,7 @@
     var rampRows = (s.rampages && s.rampages.length > 1) ? s.rampages : (s.rampage && s.rampage.target ? [s.rampage] : []);
     for (var ri = 0; ri < rampRows.length; ri++) html += rampHtml(rampRows[ri], rampRows.length > 1);
     if (s.relv) html += relvHtml(s.relv);
+    if (s.coirnav) html += coirnavHtml(s.coirnav, Date.now());
     if (s.solro_cauldrons && s.solro_cauldrons.length) html += solroHtml(s.solro_cauldrons, Date.now());
 
     // PoP hail board — straight under the fight cluster (target, enrage, Death Touch, Main Tank, rampage),

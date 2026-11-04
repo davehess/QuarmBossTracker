@@ -18243,6 +18243,7 @@ function _serializeCommandCenterState() {
     rampage:       tank.rampage,
     rampages:      tank.rampages,
     relv:          _relvSnapshot(activeChar, Date.now()),   // null unless the Relv event is running
+    coirnav:       _coirnavSnapshot(activeChar, Date.now()),   // null unless the Coirnav event is running
     solro_cauldrons: _solroSnapshot(activeChar, Date.now()),   // null unless a Tower of Solusek Ro cauldron is up
     enrage:        tank.enrage,
     deathtouch:    tank.deathtouch,
@@ -35399,12 +35400,15 @@ const COMMAND_HTML = `<!doctype html>
   @keyframes flash{from{box-shadow:0 0 8px rgba(248,113,113,0.9)}to{box-shadow:0 0 16px rgba(248,113,113,0.4)}}
   .dt{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(107,33,168,0.5);
     border:1px solid #c084fc;border-radius:5px;margin-bottom:4px;font-size:11px}
-  .dt.crit,.solro.crit{background:rgba(220,38,38,0.5);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
+  .dt.crit,.solro.crit,.coirnav.crit{background:rgba(220,38,38,0.5);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
   .dt .sec{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
-  .relv,.solro{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(180,83,9,0.5);
+  .relv,.solro,.coirnav{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(180,83,9,0.5);
     border:1px solid #fb923c;border-radius:5px;margin-bottom:4px;font-size:11px}
-  .relv .n,.solro .n{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
-  .relv .sub,.solro .sub{margin-left:auto;font-size:9px;color:#d0d7de}
+  .relv .n,.solro .n,.coirnav .n{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
+  .relv .sub,.solro .sub,.coirnav .sub{margin-left:auto;font-size:9px;color:#d0d7de}
+  .coirnav{background:rgba(3,105,161,0.5);border-color:rgba(56,189,248,0.9)}
+  .coirnav.done{background:rgba(22,101,52,0.5);border-color:rgba(86,211,100,0.9)}
+  .coirnav.bad{background:rgba(127,29,29,0.5);border-color:rgba(248,113,113,0.9)}
   .solro.done{background:rgba(22,101,52,0.5);border-color:rgba(86,211,100,0.9)}
   .solro.gone{opacity:0.5}
   .ramp{display:flex;flex-direction:column;gap:4px;padding:4px 7px;background:rgba(180,32,32,0.55);
@@ -36069,6 +36073,36 @@ const COMMAND_HTML = `<!doctype html>
     return '<div class="relv"><span>🔥 Falto: ' + main + '</span>'
          +   '<span class="sub">mepheekas killed ' + (Number(v.mepheekas) || 0) + '</span></div>';
   }
+  // Coirnav's event in Plane of Water (the guild lead, 2026-11-04): fiends this client has seen die, of the 75, and the
+  // 15:00 clock from the Guardian. The agent sends s.coirnav only while the event runs (and a few minutes after); the count
+  // is a floor (a far death line never prints here). The waves come on the CLOCK (3:00, 5:00), never from kills, so the
+  // row counts down to the next one from started_at and flashes in the last 30 seconds; killing faster does not bring it.
+  // Everything that ticks is worked out here from started_at / deadline_at / retry_at (ms) on each poll.
+  function coirnavHtml(v, nowMs){
+    function mmss(sec){ sec = Math.max(0, sec); return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'); }
+    var startedAt = Number(v.started_at) || 0, elapsed = Math.floor((nowMs - startedAt) / 1000);
+    var leftTxt = mmss(Math.round((Number(v.deadline_at) - nowMs) / 1000));
+    var kills = Math.min(75, Number(v.kills) || 0), wave = Number(v.wave) || 1;
+    if (elapsed >= 180 && wave < 2) wave = 2;
+    if (elapsed >= 300 && wave < 3) wave = 3;
+    if (v.state === 'done') return '<div class="coirnav done"><span>🌊 Coirnav has fallen</span></div>';
+    if (v.state === 'banished') {
+      var rt = new Date(Number(v.retry_at) || nowMs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      return '<div class="coirnav bad"><span>🌊 Banished · retry at ' + rt + '</span></div>';
+    }
+    if (v.state === 'burn') {
+      return '<div class="coirnav"><span>🌊 Coirnav: all 75 down · burn Coirnav · <span class="n">' + leftTxt + '</span> left</span>'
+           +   '<span class="sub">15:00 clock from the Guardian</span></div>';
+    }
+    var nextIn = wave < 3 ? Math.round((startedAt + (wave === 1 ? 180000 : 300000) - nowMs) / 1000) : 0;
+    var soon = wave < 3 && nextIn <= 30;
+    var mid = wave < 3 ? (soon ? 'wave ' + (wave + 1) + ' soon (' + mmss(nextIn) + ')' : 'wave ' + (wave + 1) + ' in ' + mmss(nextIn)) : 'wave 3';
+    var note = wave < 3 && kills >= (wave === 1 ? 20 : 45)
+             ? 'wave ' + wave + ' nearly down — wave ' + (wave + 1) + ' arrives on the clock at ' + (wave === 1 ? '3:00' : '5:00')
+             : '15:00 clock from the Guardian';
+    return '<div class="coirnav' + (soon ? ' crit' : '') + '"><span>🌊 Coirnav: fiends <span class="n">' + kills + '/75</span> · ' + mid + ' · ' + leftTxt + ' left</span>'
+         +   '<span class="sub">' + note + '</span></div>';
+  }
   // Tower of Solusek Ro braziers (the guild lead, 2026-11-02; the game calls it a flaming cauldron, the raid calls it a
   // brazier, and the row says brazier): one row per wing boss killed, counting down to the brazier's depop (30 minutes after it spawned) and saying whether THIS character has clicked it. The agent sends
   // s.solro_cauldrons only while one is up; the countdown is worked out here from expires_at on each poll.
@@ -36211,6 +36245,7 @@ const COMMAND_HTML = `<!doctype html>
     var rampRows = (s.rampages && s.rampages.length > 1) ? s.rampages : (s.rampage && s.rampage.target ? [s.rampage] : []);
     for (var ri = 0; ri < rampRows.length; ri++) html += rampHtml(rampRows[ri], rampRows.length > 1);
     if (s.relv) html += relvHtml(s.relv);
+    if (s.coirnav) html += coirnavHtml(s.coirnav, Date.now());
     if (s.solro_cauldrons && s.solro_cauldrons.length) html += solroHtml(s.solro_cauldrons, Date.now());
 
     // PoP hail board — straight under the fight cluster (target, enrage, Death Touch, Main Tank, rampage),
@@ -60230,6 +60265,100 @@ function _relvSnapshot(character, now) {
   return { mephits: st.mephits, total: RELV_MEPHITS, mepheekas: st.mepheekas, falto_up: !!st.faltoUp, falto_slain: !!st.faltoSlainAt, started_at: st.startedAt };
 }
 // ── end Relv mephit counter ────────────────────────────────────────────────────────────────────────────────────
+// ── Coirnav the Avatar of Water (Plane of Water): the Command Center's fiend counter ─────────────────────────
+// The guild lead, 2026-11-04: "Do we have a fiend counter for the 75 for command center?" Modelled on the Relv
+// counter above. Quarm's script (powater/encounters/Coirnav.lua) starts a 900 s clock when `Guardian of Coirnav`
+// dies, spawns 25 fiends at 0:00, 3:00 and 5:00 (the waves are CLOCK-driven, never kill-driven; Coirnav's shouts name
+// Povar, then E`ci, then Tarew Marr), and at 75 fiend deaths makes Coirnav attackable with three minibosses
+// ("We will permit no further advance"). Success is "Coirnav, the Avatar of Water, has fallen!"; the deadline is
+// "The Triumvirate has spoken! These waters reject you", and the retry opens 1200 s later. The lings
+// (`a triloun vaporling` and kin) are the after-miniboss adds and never count.
+// ⚠ The count is what THIS client saw. EverQuest prints a death line only to players near it, so a fiend dying far
+// across the reef can be missed: the number is a floor, never exact, and never above 75. Nothing is shared.
+// The RP() emotes arrive as plain log lines; the matches below use stable substrings, not the full sentences. Raw
+// lines, the same stream the Relv counter reads. Live tail only (the caller is the live loop), so it takes now.
+const COIRNAV_FIENDS     = 75;
+const COIRNAV_EVENT_MS   = 900 * 1000;
+const COIRNAV_RETRY_MS   = 1200 * 1000;
+const COIRNAV_DONE_MS    = 5 * 60 * 1000;
+const COIRNAV_GRACE_MS   = 2 * 60 * 1000;   // a clock that ran out with no verdict line stays this long, then goes
+const COIRNAV_WAVE_AT_MS = [0, 180 * 1000, 300 * 1000];
+const _COIRNAV_GUARD_RX  = /^Guardian of Coirnav$/i;
+const _COIRNAV_FIEND_RX  = /^an? (?:triloun vaporfiend|hraquis icefiend|regrua waterfiend)$/i;
+const _COIRNAV_SHOUT_RX  = /Coirnav the Avatar of Water shouts.*power imbued to me by (Povar|E.ci|Tarew Marr)/;
+const _COIRNAV_BURN_RX   = /We will permit no further advance/;
+const _COIRNAV_WON_RX    = /Coirnav, the Avatar of Water, has fallen!/;
+const _COIRNAV_LOST_RX   = /The Triumvirate has spoken! These waters reject you/;
+const _coirnavState   = new Map();   // character (lower) → { state, kills, wave, startedAt, endedAt }
+const _coirnavLogZone = new Map();   // character (lower) → last zone a zone-change line named (lower)
+function _coirnavInWater(cl) {
+  for (const ch of Object.keys(_zealState || {})) {
+    if (ch.toLowerCase() !== cl) continue;
+    const z = _mapZoneShort(_zealState[ch] && _zealState[ch].zone);
+    if (z) return z === 'powater';
+  }
+  return _coirnavLogZone.get(cl) === 'plane of water';
+}
+function _coirnavLive(cl, now) {
+  const st = _coirnavState.get(cl);
+  if (!st) return null;
+  const over = (st.state === 'waves' || st.state === 'burn') ? now > st.startedAt + COIRNAV_EVENT_MS + COIRNAV_GRACE_MS
+             : st.state === 'done' ? now > st.endedAt + COIRNAV_DONE_MS
+             : now > st.endedAt + COIRNAV_RETRY_MS;
+  if (over) { _coirnavState.delete(cl); return null; }
+  return st;
+}
+function _coirnavBegin(cl, now, wave) {
+  _coirnavState.set(cl, { state: 'waves', kills: 0, wave, startedAt: now - COIRNAV_WAVE_AT_MS[wave - 1], endedAt: 0 });
+}
+function _coirnavNoteLine(line, character, now) {
+  if (!line || !character) return;
+  const cl = String(character).toLowerCase();
+  const zm = line.indexOf(' have entered ') !== -1 ? CHAT_ZONE_RX.exec(line) : null;
+  if (zm) {
+    const z = zm[1].trim().toLowerCase();
+    _coirnavLogZone.set(cl, z);
+    if (z !== 'plane of water') _coirnavState.delete(cl);
+    return;
+  }
+  if (line.indexOf('Coirnav') === -1 && line.indexOf('Triumvirate') === -1 && line.indexOf('fiend') === -1) return;
+  const st = _coirnavLive(cl, now);
+  const running = !!st && (st.state === 'waves' || st.state === 'burn');
+  const sm = _COIRNAV_SHOUT_RX.exec(line);
+  if (sm) {
+    const wave = sm[1] === 'Povar' ? 1 : (sm[1] === 'Tarew Marr' ? 3 : 2);
+    if (!running) _coirnavBegin(cl, now, wave);              // joined late: the shout fixes the clock
+    else if (wave > st.wave) st.wave = wave;
+    return;
+  }
+  if (_COIRNAV_WON_RX.test(line)) { _coirnavState.set(cl, { state: 'done', kills: COIRNAV_FIENDS, wave: 3, startedAt: st ? st.startedAt : now, endedAt: now }); return; }
+  if (_COIRNAV_LOST_RX.test(line)) { _coirnavState.set(cl, { state: 'banished', kills: st ? st.kills : 0, wave: st ? st.wave : 1, startedAt: st ? st.startedAt : now, endedAt: now }); return; }
+  if (running && _COIRNAV_BURN_RX.test(line)) { st.state = 'burn'; st.kills = COIRNAV_FIENDS; return; }
+  const dead = _deadMobNameFromLine(line);
+  if (!dead) return;
+  if (_COIRNAV_GUARD_RX.test(dead)) {
+    if (!running && _coirnavInWater(cl)) _coirnavBegin(cl, now, 1);
+    return;
+  }
+  if (running && st.state === 'waves' && _COIRNAV_FIEND_RX.test(dead)) {
+    st.kills++;
+    if (st.kills >= COIRNAV_FIENDS) { st.kills = COIRNAV_FIENDS; st.state = 'burn'; }
+  }
+}
+// The Command Center row: null unless the event is running (or just ended) for this character. The wave is the later of
+// what Coirnav's shouts said and what the clock says; the clock is the authority on Quarm, so a missed shout cannot stall it.
+function _coirnavSnapshot(character, now) {
+  const st = _coirnavLive(String(character || '').toLowerCase(), now);
+  if (!st) return null;
+  let wave = st.wave;
+  for (let i = 0; i < COIRNAV_WAVE_AT_MS.length; i++) if (now - st.startedAt >= COIRNAV_WAVE_AT_MS[i] && i + 1 > wave) wave = i + 1;
+  return {
+    state: st.state, kills: st.kills, total: COIRNAV_FIENDS, wave: Math.min(3, wave),
+    started_at: st.startedAt, deadline_at: st.startedAt + COIRNAV_EVENT_MS,
+    retry_at: st.state === 'banished' ? st.endedAt + COIRNAV_RETRY_MS : 0,
+  };
+}
+// ── end Coirnav fiend counter ────────────────────────────────────────────────────────────────────────────────
 // ── Tower of Solusek Ro cauldrons (the guild lead, 2026-11-02: "add in for the command center timers the clicks for
 // the braziers for tower of solro after the mini bosses are completed") ─────────────────────────────────────────────
 // The game calls it a flaming cauldron, the raid calls it a brazier (the Command Center row says brazier; the
@@ -65426,6 +65555,8 @@ async function main() {
         try { _xpNoteRawLine(line, b.character, Date.now()); } catch { void 0; }
         // Relv event (Plane of Storms): the Command Center's mephit counter (live tail only).
         try { _relvNoteLine(line, b.character, Date.now()); } catch { void 0; }
+        // Coirnav event (Plane of Water): the Command Center's fiend counter (live tail only).
+        try { _coirnavNoteLine(line, b.character, Date.now()); } catch { void 0; }
         // Tower of Solusek Ro cauldrons: wing boss deaths and your clicks (live tail only).
         try { _solroNoteLine(line, b.character, Date.now()); } catch { void 0; }
         // Corpse DM: your own death, with where the corpse lies (live tail only, so a backfill of an old
