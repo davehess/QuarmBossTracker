@@ -103,6 +103,11 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 Command Center counts Coirnav's 75 fiends and his 15-minute clock (agent 4.0.62 on beta `4b4aa264`, 2026-11-04).** The guild
+  lead: *"Do we have a fiend counter for the 75 for command center?"* … *"wave soon when we're at 20 and 45"*. Modelled on the
+  Relv counter. Quarm's waves come on the clock only (3:00, 5:00), so "wave soon" is the last 30 s of the countdown, and at 20/45
+  kills the row says the next wave still waits for the clock. Emote substrings come from the script; check on the first attempt.
+
 - **🧪 Mob Info tags a partially slowable mob, "Slow −N%" (bot 4.0.53 on main `969605f7`; agent 4.0.61 on beta `c3c4ee8b`;
   2026-11-04).** The guild lead: *"Obsidian Tree Spider Queen is only partially slowable apparently. look for those tags"*. Quarm's
   server cuts every slow on an NPC by `npc_types.slow_mitigation` percent and tells the client nothing (EQMacEmu
