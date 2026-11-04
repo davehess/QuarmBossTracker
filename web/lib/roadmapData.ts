@@ -37,6 +37,28 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-3-0-7-2026-11-04',
+    title: 'Mimic 3.0.7',
+    version: 'Mimic 3.0.7 · Agent 4.0.62',
+    date: '2026-11-04',
+    headline: "The Plane of Water's fiend count, partly slowable mobs, and Sol Ro's brazier timers.",
+    features: [
+      { name: 'Coirnav fiend counter', blurb: "In the Plane of Water, the Command Center counts the fiends toward Coirnav's 75, runs his 15-minute clock, and warns at 20 and 45 that a wave is coming." },
+      { name: 'Slow −N% on Target Info', blurb: 'A mob that shrugs off part of a slow says by how much, so you know a slow is only partly landing.' },
+      { name: 'Tower of Solusek Ro braziers', blurb: 'The Command Center times the braziers in the Tower of Solusek Ro.' },
+      { name: 'Drop invis and hail again', blurb: 'Hail a flag NPC while invisible and Mimic tells you to drop invisibility and hail again, because the flag does not take.' },
+      { name: 'Just sync my PoP flags', blurb: 'Someone with no guild can still use Mimic to sync their PoP flags.' },
+      { name: 'DPS History', blurb: 'A Raid list sits beside your own fights.' },
+    ],
+    fixes: [
+      'The Map names raiders at every zoom again; a whole-zone view of a big zone showed the dots with no names.',
+      'Clicks reach EverQuest again after you alt-tab back to the game.',
+      'EverQuest files with a broken creation date no longer make the game ask for a time-zone change.',
+      'A log written an hour off after the clocks changed is put back on the hour, so hails count.',
+      "Target Info trusts the debuffer's own landing over another raider's.",
+    ],
+  },
+  {
     key: 'web-2-1-105-2026-11-03',
     title: 'Web 2.1.105',
     version: 'Web 2.1.105',
