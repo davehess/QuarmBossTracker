@@ -628,6 +628,7 @@ isolated. Know which one a change targets before you push:
 | **Windows stable** | `main` | `release-mimic.yml` | plain `X.Y.Z` → `latest.yml` | whole Windows fleet |
 | **Windows beta** | `beta` | `release-mimic.yml` | auto `X.Y.Z-beta.N` → `beta.yml` | Windows beta testers |
 | **Windows alpha — Mimic 3.0** (2026-09-29) | `alpha` | `release-mimic.yml` | `<park>-alpha.<run_number>` → `alpha.yml` on ONE rolling release, tag `mimic-alpha` | 3.0 overlay-builder testers (opt in: tray or the dashboard's α alpha) |
+| **Windows 7** (2026-11-04, DECISIONS §533) | `beta`; **follows every beta push** | `build-mimic-win7.yml` (Electron 22, the agent on Node 16 + `node16-shim.js`) | `<beta version>-win7.<run_number>` → `win7.yml` on ONE rolling release, tag `mimic-win7` | Windows 7 / 8 / 8.1 members only; the build never takes a normal update |
 | **Linux / Steam Deck** (#156, EXPERIMENTAL) | `claude/**` working branch; **follows every Windows beta/stable cut** (`linux-follow-windows.yml`, 2026-10-08) | `build-mimic-linux.yml` | `<Windows base>-linux.<run_number>` → `linux.yml` | Deck testers only |
 
 **The alpha is built to stay out of everyone else's way** (the guild lead, 2026-09-29: *"can we make an

@@ -5783,6 +5783,10 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   Tests: `test/crash-reanalysis-watermark.test.js`.
 
 ### Mimic (`apps/mimic/`, beta)
+- **Windows 7 build (mimic, 2026-11-04; DECISIONS §533)** — Electron 22 via `.github/workflows/build-mimic-win7.yml`
+  (follows every beta push; one rolling release, tag `mimic-win7`, `win7.yml`). `main.js` `_node16ShimArgs` loads
+  `node16-shim.js` ahead of the agent when its Node is < 18; `_IS_WIN7_BUILD` pins the updater to the `mimic-win7` feed.
+  Test: `test/mimic-win7-build.test.js`.
 - **Injected chrome is dashboard-only (mimic, 2026-08-13)** — `preload.js` adds a
   ⚙ (and a ✕ on panel windows) to pages loaded over `http:`. That was a safe
   proxy for "this is the dashboard" until #65 started serving real overlays from

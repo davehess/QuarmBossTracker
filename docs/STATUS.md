@@ -103,6 +103,13 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 A Windows 7 build of Mimic (beta `a26291bf`, first build 2026-11-04; DECISIONS §533).** For a member on Windows 7 who
+  needs the charm tracker. Electron 22 (the last that starts on Windows 7) with the agent on its Node 16 plus
+  `apps/mimic/node16-shim.js` (fetch, `AbortSignal.timeout`). `build-mimic-win7.yml` rebuilds it on every beta push into ONE
+  rolling prerelease, tag `mimic-win7`, which the build alone updates from. **Open:** untested on real Windows 7 until the
+  member installs it from `https://github.com/davehess/QuarmBossTracker/releases/tag/mimic-win7`; no download button on
+  wolfpack.quest yet.
+
 - **🔧 Officers can set a character's class; the OpenDKP sync no longer erases a known class with UNKNOWN (drafted, not yet released; the guild lead, 2026-11-03).**
   A spells page read "Class: UNKNOWN … no spell list" because OpenDKP's literal `UNKNOWN` overwrote the stored class on every sync
   (115 guild characters have a null/unknown class). Bot: `mergeKnownClassRace` in `utils/openDkpSync.js` keeps a stored real class/race
