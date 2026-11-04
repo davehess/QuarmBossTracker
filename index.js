@@ -17548,7 +17548,7 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
     // Vius showed as L1/16k HP "Immune Melee + Immune Magic". 200 is a hard
     // ceiling over the catalog's largest real-name cluster (34 rows; only the
     // junk "_" names go higher) so the payload stays bounded.
-    const _nameSel = `select=id,name,class,level,maxlevel,hp,mana,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,runspeed,npcspecialattks,special_abilities,raid_target,bodytype,npc_spells_id,see_invis,see_invis_undead,see_hide,see_improved_hide,race,size,gender&limit=200`;
+    const _nameSel = `select=id,name,class,level,maxlevel,hp,mana,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,runspeed,npcspecialattks,special_abilities,raid_target,bodytype,npc_spells_id,see_invis,see_invis_undead,see_hide,see_improved_hide,race,size,gender,slow_mitigation&limit=200`;
     const rows = await supabase.select('eqemu_npc_types',
       `or=(name.ilike.${encPlain},name.ilike.${encHashed})&${_nameSel}`);
     // Pick-and-merge (docs/audit-mob-specials.md §"The fix"). The requester's
@@ -17877,6 +17877,10 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
         level:    r.level ?? null,
         maxlevel: (r.maxlevel != null && r.maxlevel !== r.level) ? r.maxlevel : null,
         hp:      r.hp ?? null,
+        // Percent of a slow this NPC shrugs off (npc_types.slow_mitigation; the server does real_slow -= real_slow * pct / 100).
+        // Separate from the Unslowable special: a partial slow gives the client no message, so raiders cannot tell
+        // (Obsidian Tree Spider Queen, 80). 0 for most of the catalog.
+        slow_mitigation: Math.max(0, Math.min(100, Math.round(Number(r.slow_mitigation) || 0))),
         // The NPC's mana pool. Only ~21% of the catalog has one (3,741 of
         // 18,033), and 3,384 have both a pool and a spell list — so the
         // overlay draws no bar at all when this is null rather than an empty
@@ -17980,7 +17984,8 @@ const _MOB_PACK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 //   8 (2026-10-16): "Silences" / "Silences (AoE)" in specials, from the mob's spell list
 //   9 (2026-10-19): raid_target also true for the curated PoP bosses (data/named-bosses.json)
 //  10 (2026-10-22): level_bodies, the level bands of a name that is two bodies in one zone (FB-80)
-const _MOB_PACK_VERSION = 10;
+//  11 (2026-11-04): slow_mitigation, percent of a slow the mob resists (partial slow, e.g. Obsidian Tree Spider Queen 80)
+const _MOB_PACK_VERSION = 11;
 const _MOB_PACK_PINNED = Array.from({ length: 24 }, (_, i) => 200 + i);
 const _mobPacks = new Map();          // zoneId → { etag, builtAt, body, gz, version }
 const _mobPackQueue = [];             // zone ids waiting to build

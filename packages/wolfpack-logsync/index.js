@@ -17164,6 +17164,8 @@ function _meTargetExtras(st, active, now) {
     // default; a mob's own setting can move it, which the catalog row doesn't carry).
     summon: specials ? specials.includes('Summon') : null,
     unslowable: specials ? specials.includes('Unslowable') : null,
+    // Percent of a slow it shrugs off (bot mob-info slow_mitigation); 0 = none, null = no catalog row. Unslowable and Reverse Slow stay as they were.
+    slow_mitigation: mob ? (Number(mob.slow_mitigation) || 0) : null,
     // FB-54: a slow on it HASTES it (and beats Unslowable) — the HUD says so, in red.
     reverse_slow: specials ? specials.some(s => /^Reverse Slow/.test(s)) : null,
     enraged: !!(until && until > now),

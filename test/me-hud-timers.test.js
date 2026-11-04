@@ -351,6 +351,18 @@ describe('target read-outs', () => {
     expect(h._meTargetExtras(st({ target_name: 'a gnoll shaman' }), 'Aldenmar', clock).reverse_slow).toBeNull();   // no row yet: unknown, not "no"
   });
 
+  // The guild lead, 2026-11-04: a partial slow (npc_types.slow_mitigation) rides to the HUD beside unslowable.
+  it('slow_mitigation comes from the mob-info row; no row is null, a row without it is 0', () => {
+    const h = load();
+    h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: [], slow_mitigation: 80 } });
+    expect(h._meTargetExtras(st(), 'Aldenmar', clock).slow_mitigation).toBe(80);
+    h._mobInfoByName.set('a gnoll shaman|12', { at: clock, mob: { specials: ['Unslowable'] } });
+    const t = h._meTargetExtras(st({ target_name: 'a gnoll shaman' }), 'Aldenmar', clock);
+    expect(t.slow_mitigation).toBe(0);
+    expect(t.unslowable).toBe(true);
+    expect(h._meTargetExtras(st({ target_name: 'a gnoll scout' }), 'Aldenmar', clock).slow_mitigation).toBeNull();
+  });
+
   it('enrage and unslowable come from the mob-info row; ENRAGED from the server\'s own lines', () => {
     const h = load();
     h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: ['Enrage', 'Unslowable'] } });
