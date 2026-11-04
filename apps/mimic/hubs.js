@@ -23,6 +23,19 @@ const WOLFPACK_HUB = Object.freeze({
   site: 'https://wolfpack.quest',
 });
 
+// "No guild — just sync my PoP flags" (DECISIONS §526): the free link for a player who is in no hosted guild. It talks to the
+// hosted bot (the same address the commons guilds use), finishes on raidmimic.com, and mints a 'player' session that may only
+// sync flags and check for updates. Its slug '~' cannot be a real guild's (the bot's slug shape forbids it), so it never
+// collides with one, and a directory row can never claim it (sanitizeDirectory).
+const PLAYER_SLUG = '~player';
+const PLAYER_HUB = Object.freeze({
+  slug: PLAYER_SLUG,
+  display_name: 'Raid Mimic (flag sync)',   // reads in "Switched to …" and "Could not reach the … server"
+  url: WOLFPACK_HUB.url,
+  site: 'https://raidmimic.com',
+});
+function isPlayerHub(h) { return !!h && h.slug === PLAYER_SLUG; }
+
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,30}[a-z0-9]$/;
 
 // An https origin (http only for a machine's own loopback, so a guild's server can be tried before it has a certificate).
@@ -40,6 +53,7 @@ function originOf(u) {
 function normalizeHub(h) {
   if (!h || typeof h !== 'object') return null;
   const slug = typeof h.slug === 'string' ? h.slug.trim().toLowerCase() : '';
+  if (slug === PLAYER_SLUG) return { ...PLAYER_HUB };   // the saved form of the no-guild choice: fixed here, nothing it carries is trusted
   if (!SLUG_RE.test(slug)) return null;
   const url = originOf(h.url);
   if (!url) return null;
@@ -72,7 +86,9 @@ function hubOf(cfg) {
   return { slug: 'custom', display_name: new URL(base).hostname, url: base, site: '' };
 }
 
-function sameHub(a, b) { return !!a && !!b && a.url === b.url; }
+// The no-guild choice shares the hosted bot's address with Wolf Pack and the commons guilds but is a different session, so
+// moving to or from it is a switch (the session goes with it).
+function sameHub(a, b) { return !!a && !!b && a.url === b.url && isPlayerHub(a) === isPlayerHub(b); }
 
 // Point a config at a hub. A session belongs to one hub's bot, so it goes with the switch (the caller revokes it on the old
 // bot first). Mutates and returns cfg.
@@ -88,7 +104,7 @@ function applyHub(cfg, hub) {
 function sanitizeDirectory(raw) {
   const rows = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.hubs) ? raw.hubs : []);
   const out = [{ ...WOLFPACK_HUB }];
-  const seen = new Set([WOLFPACK_HUB.slug]);
+  const seen = new Set([WOLFPACK_HUB.slug, PLAYER_SLUG]);
   for (const r of rows.slice(0, HUB_DIRECTORY_MAX)) {
     const h = normalizeHub(r);
     if (!h || seen.has(h.slug)) continue;
@@ -114,7 +130,7 @@ function linkUrls(hub, resp) {
   const first = originOf(r.verification_url) ? String(r.verification_url) : '';
   const complete = originOf(r.verification_url_complete) ? String(r.verification_url_complete) : '';
   if (!first && !complete) return null;
-  const botChoseSite = typeof r.hub === 'string' && r.hub !== '';
+  const botChoseSite = (typeof r.hub === 'string' && r.hub !== '') || r.player === true;
   const rehome = !botChoseSite && hub && hub.site && hub.slug !== WOLFPACK_HUB.slug;
   const move = (u) => { if (!u || !rehome) return u; const x = new URL(u); return hub.site + x.pathname + x.search; };
   const verification_url = move(first || complete.split('?')[0]);
@@ -124,9 +140,11 @@ function linkUrls(hub, resp) {
 // The body of POST /api/mimic-link/start. Only a listed guild other than Wolf Pack names itself: Wolf Pack's body (and a
 // pasted self-host's, whose slug is the placeholder 'custom' and whose bot answers for exactly one guild) stays
 // byte-identical to what every earlier Mimic sent.
+// The no-guild choice sends { player: true } and no hub (the bot refuses both together).
 function linkStartBody(hub, agentVersion) {
   const body = { agent_version: agentVersion };
-  if (hub && hub.slug && hub.slug !== WOLFPACK_HUB.slug && hub.slug !== 'custom') body.hub = hub.slug;
+  if (isPlayerHub(hub)) body.player = true;
+  else if (hub && hub.slug && hub.slug !== WOLFPACK_HUB.slug && hub.slug !== 'custom') body.hub = hub.slug;
   return body;
 }
 
@@ -148,8 +166,14 @@ function identityFromPoll(body) {
     const role = typeof b.hub_role === 'string' ? b.hub_role.trim().toLowerCase() : '';
     if (/^[a-z]{1,16}$/.test(role)) id.hub_role = role;
   }
+  // A flag-sync-only session (no guild) keeps its scope: the status shows it, and the agent reads it to stop queueing
+  // streams the bot would refuse. Only this one value is kept, never the text as sent.
+  if (b.scope === 'player') id.scope = 'player';
   return id;
 }
+
+// True for a stored identity from a flag-sync-only (no guild) link.
+function isPlayerSession(identity) { return !!identity && identity.scope === 'player'; }
 
 // What Settings and the welcome page say about a signed-in session's guild: null for a Wolf Pack session (their copy stays
 // as it was), else { slug, display_name, role } with role 'officer' or 'member'. The name is the hub Mimic points at when it
@@ -162,7 +186,7 @@ function sessionGuild(identity, hub) {
 }
 
 module.exports = {
-  HUB_DIRECTORY_URL, HUB_BOT_PATH, HUB_DIRECTORY_TTL_MS, WOLFPACK_HUB,
+  HUB_DIRECTORY_URL, HUB_BOT_PATH, HUB_DIRECTORY_TTL_MS, WOLFPACK_HUB, PLAYER_HUB, PLAYER_SLUG, isPlayerHub, isPlayerSession,
   originOf, normalizeHub, parseGuildAddress, botUrlOf, hubOf, sameHub, applyHub,
   sanitizeDirectory, directoryFresh, linkUrls, linkStartBody, identityFromPoll, sessionGuild,
 };

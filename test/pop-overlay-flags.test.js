@@ -384,6 +384,29 @@ describe('Flags mode on the page', () => {
     expect(h.rec.posts.length).toBe(1);
   });
 
+  // The agent rests the read while you fight (status.run.paused) and reports how far along it is (run.progress, 0..1).
+  const capturing = async (run) => {
+    const h = await inFlags({ rescan: { status: { running: true, run } } });
+    h.click(target('button', { attrs: {}, id: 'flagsCapture' }));
+    await h.flush();
+    await h.api.pollFlags();
+    await h.flush();
+    return h;
+  };
+  it('Capture now says it is paused while you fight, not "reading" for minutes', async () => {
+    const h = await capturing({ state: 'running', character: 'Brackwyn', paused: true, progress: 0.4 });
+    expect(h.byId.flagsCapNote.textContent).toBe('paused while you fight — picks up between pulls');
+    expect(h.byId.flagsCapture.disabled).toBe(true);               // still one at a time
+  });
+  it('Capture now shows the percent once the agent has one, and never claims 100 until it is done', async () => {
+    expect((await capturing({ state: 'running', character: 'Brackwyn', paused: false, progress: 0.42 })).byId.flagsCapNote.textContent).toBe('reading Brackwyn\'s log… 42%');
+    expect((await capturing({ state: 'running', character: 'Brackwyn', paused: false, progress: 0.999 })).byId.flagsCapNote.textContent).toBe('reading Brackwyn\'s log… 99%');
+  });
+  it('Capture now with no progress yet (an older agent, or nothing read) is the plain "reading…" line', async () => {
+    expect((await capturing({ state: 'running', character: 'Brackwyn' })).byId.flagsCapNote.textContent).toBe('reading Brackwyn\'s log…');
+    expect((await capturing({ state: 'running', character: 'Brackwyn', paused: false, progress: 0 })).byId.flagsCapNote.textContent).toBe('reading Brackwyn\'s log…');
+  });
+
   it('Capture now says what the agent says when it cannot (a scan already running)', async () => {
     const h = await inFlags({ rescan: { start: { status: 409, body: { error: 'a rescan is already running' } } } });
     h.click(target('button', { attrs: {}, id: 'flagsCapture' }));

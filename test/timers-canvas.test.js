@@ -187,7 +187,7 @@ describe('Mimic wiring (the overlay checklist)', () => {
   it('stays click-through while unlocked, and back to click-through on hover-out', () => {
     const inter = sliceBlock(m, 'function applyOverlayInteractivity() {', '\n}');
     expect(inter).toMatch(/if \(_coversScreen\(key\)\) \{\s*win\.setIgnoreMouseEvents\(true, \{ forward: true \}\);\s*\} else if \(locked\)/);   // the Canvas, and the Map in Full mode
-    expect(m).toMatch(/if \(win === canvasWindow \|\| \(win === mapWindow && _mapFull\)\) \{ win\.setIgnoreMouseEvents\(true, \{ forward: true \}\); return true; \}/);
+    expect(m).toMatch(/if \(win === canvasWindow \|\| \(win === mapWindow && _mapFull\)\) \{ win\.setIgnoreMouseEvents\(true, \{ forward: true \}\); return(?: true)?; \}/);   // _restoreClickThrough (2026-11-03)
   });
   it('is never parked or packed as a rect', () => {
     expect(sliceBlock(m, 'function _rescueOverlays() {', '\n}')).toMatch(/if \(_coversScreen\(key\)\) continue;/);

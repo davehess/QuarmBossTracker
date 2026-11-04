@@ -45,13 +45,17 @@ function makeZip(files) {
 const TEST_URL = 'https://api.github.com/repos/davehess/Zeal/releases/tags/test-all-build';
 const OFFICIAL_URL = 'https://api.github.com/repos/CoastalRedwood/Zeal/releases/latest';
 const ZIP_URL = 'https://github.com/davehess/Zeal/releases/download/test-all-build/zeal_test-all.zip';
-let calls = [], testRelease, zu;
+const WP_URL = 'https://api.github.com/repos/davehess/Zeal/releases/tags/wolfpack-beta';
+const WP_ZIP_URL = 'https://github.com/davehess/Zeal/releases/download/wolfpack-beta/zeal_v1.4.8-wolfpack.12.zip';
+let calls = [], testRelease, wpRelease, zu;
 
 beforeAll(() => {
   const gh = require(GH);
   gh.httpsGet = async (url) => {
     calls.push(url);
     if (url === TEST_URL) return testRelease;
+    if (url === WP_URL) return wpRelease;
+    if (url === WP_ZIP_URL) return makeZip({ 'Zeal.asi': 'ASI-WP', 'uifiles/zeal/x.tga': 'TGA' });
     if (url === OFFICIAL_URL) return { tag_name: 'v1.4.8', name: 'v1.4.8', assets: [{ name: 'zeal_v1.4.8_50dc9a4.zip', browser_download_url: 'https://example/official.zip' }] };
     if (url === ZIP_URL) return makeZip({ 'Zeal.asi': 'ASI-TEST', 'Zeal.pdb': 'PDB', 'uifiles/zeal/targetrings/WolfPack.tga': 'TGA', 'Zeal_README.md': '#' });
     throw new Error('unexpected url ' + url);
@@ -104,6 +108,50 @@ describe('where Zeal comes from', () => {
   });
 });
 
+const wolfpack = (over = {}) => ({
+  tag_name: 'wolfpack-beta', name: 'Wolf Pack Zeal beta (wolfpack-12-0a2e25d)', prerelease: true,
+  assets: [{ name: 'zeal_v1.4.8-wolfpack.12.zip', browser_download_url: WP_ZIP_URL, id: 7, updated_at: '2026-10-27T01:00:00Z' }], ...over,
+});
+
+describe('the Wolf Pack build', () => {
+  it('reads the wolfpack-beta release and is named from the release name, as /zeal version prints it', async () => {
+    wpRelease = wolfpack();
+    const r = await zu.checkLatest('wolfpack');
+    expect(calls).toEqual([WP_URL]);
+    expect(r).toMatchObject({ source: 'wolfpack', tag: 'wolfpack-12-0a2e25d', assetUrl: WP_ZIP_URL });
+  });
+
+  it('a new run is a new tag, so Mimic offers it', async () => {
+    wpRelease = wolfpack({ name: 'Wolf Pack Zeal beta (wolfpack-13-b7c91e2)' });
+    expect((await zu.checkLatest('wolfpack')).tag).toBe('wolfpack-13-b7c91e2');
+  });
+
+  it('without the parentheses it falls back to the upload time', async () => {
+    wpRelease = wolfpack({ name: 'Wolf Pack Zeal beta' });
+    expect((await zu.checkLatest('wolfpack')).tag).toBe('wolfpack-2026-10-27T01:00:00Z');
+  });
+
+  it('a release with no zip yet says so', async () => {
+    wpRelease = wolfpack({ assets: [] });
+    await expect(zu.checkLatest('wolfpack')).rejects.toThrow(/Wolf Pack Zeal build has no \.zip/);
+  });
+
+  it('leaves the test build\'s naming alone', () => {
+    expect(zu._testBuildTag(release(), release().assets[0])).toBe('testall-0a2e25d');
+    expect(zu._testBuildTag(wolfpack(), wolfpack().assets[0])).toMatch(/^testall-/);
+  });
+
+  it('installs Zeal.asi and reports the wolfpack tag', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wp-zeal-wp-'));
+    try {
+      wpRelease = wolfpack();
+      const res = await zu.install(dir, { source: 'wolfpack' });
+      expect(res.tag).toBe('wolfpack-12-0a2e25d');
+      expect(fs.readFileSync(path.join(dir, 'Zeal.asi'), 'utf8')).toBe('ASI-WP');
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
 describe('installing the test build', () => {
   let dir;
   afterEach(() => { if (dir) fs.rmSync(dir, { recursive: true, force: true }); });
@@ -138,7 +186,15 @@ describe('the wiring', () => {
     expect(pre).toMatch(/zealSetSource:\s*\(s\)\s*=>\s*ipcRenderer\.invoke\('zeal-set-source', s\)/);
   });
 
-  it('Settings: two choices that save at once and re-check', () => {
+  it('main.js: the Wolf Pack source gets its own notification wording', () => {
+    const bg = sliceBlock(main, 'async function checkZealUpdate(', '\n}');
+    expect(bg).toMatch(/latest\.source === 'wolfpack'/);
+    expect(bg).toMatch(/New Wolf Pack Zeal build/);
+  });
+
+  it('Settings: three choices that save at once and re-check', () => {
+    expect(settings).toMatch(/<input type="radio" name="zealSource" value="wolfpack" id="zealSrcWolfpack">/);
+    expect(stripJs(sliceBlock(settings, 'async function _renderZealStatus(){', '\n  }\n'))).toMatch(/'zealSrcWolfpack'/);
     expect(settings).toMatch(/<input type="radio" name="zealSource" value="official" id="zealSrcOfficial">/);
     expect(settings).toMatch(/<input type="radio" name="zealSource" value="test" id="zealSrcTest">/);
     const js = stripJs(sliceBlock(settings, "document.querySelectorAll('input[name=zealSource]')", 'checkBtn.addEventListener('));

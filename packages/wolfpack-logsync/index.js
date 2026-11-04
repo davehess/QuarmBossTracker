@@ -4346,7 +4346,10 @@ function targetBuffsFor(targetLower, wantId) {
       unproven: wantId != null && b.target_id == null && typeof _GENERIC_MOB_RX !== 'undefined'
         && _GENERIC_MOB_RX.test(String(b.target_name || targetLower)),
       tick_snapped: !!(fade && fade.snapped),
-      owner: (b && b.owner) ? b.owner : null });
+      owner: (b && b.owner) ? b.owner : null,
+      // Our own cast, proven by our own log (cast_by): a caster landing, which outranks a bystander's
+      // landing of the same effect when Target Info merges the relay in (_applyDebufferPrecedence).
+      ...((b && b.cast_by) ? { by_caster: true, caster: b.cast_by } : {}) });
   }
   if (mp.size === 0) _buffLandingsByTarget.delete(targetLower);
   return out;
@@ -8441,6 +8444,11 @@ function _slowShortName(name) {
 // by the same spell are two entries. `targetId` null = the id is unknown (a bystander
 // line names no spawn); readers that know their spawn id use it (_bestSlowForTarget).
 const _slowsByTarget = new Map();
+// Slows other raiders' agents reported as cast BY THEM (the bot's target-buffs relay, `by_caster`), per target
+// NAME: targetLower → [{ name, magnitude, caster, targetId, landedAtMs, expiresAtMs, remote: true }]. Replaced
+// whole on every relay read (noteRemoteCasterSlows), so it never outlives what the bot last said; read by
+// _bestSlowForTarget beside _slowsByTarget. A bystander emote can never name the spell; this can.
+const _remoteSlowsByTarget = new Map();
 const SLOW_TARGET_CAP     = 200;
 const SLOW_PRUNE_GRACE_MS = 3000;
 // Per-target last-ANNOUNCED best slow (targetLower → { name, magnitude }) — edge
@@ -8468,6 +8476,55 @@ function _pickBestActiveSlow(entries, nowMs) {
   }
   return best;
 }
+// Are `casterName` (a spell some raider's own agent reported casting) and `row` (a landing someone else saw)
+// the same effect for precedence's sake? The same spell, a spell the row's own ambiguous crown listed as a
+// possibility (`row.family`), or two members of one shared-emote family (SLOW_AMBIG_FAMILIES: every "yawns."
+// slow prints the same line, so a bystander's crowned "Turgur's Insects" is a guess at whichever of them landed).
+function _slowSameFamily(casterName, row) {
+  const norm = (s) => String(s || '').toLowerCase().replace(/`/g, "'").trim();
+  const c = norm(casterName), r = norm(row && row.name);
+  if (!c || !r) return false;
+  if (c === r) return true;
+  if (row && Array.isArray(row.family) && row.family.some(f => norm(f) === c)) return true;
+  return SLOW_AMBIG_FAMILIES.some(f => f.family.has(c) && f.family.has(r));
+}
+// The debuffer's landing takes precedence: while a live, named, caster-reported slow is in the pool, every
+// bystander entry of the same family is dropped (it can only be the same land, seen without a spell name).
+// Caster entries all stay (two raiders' different slows are both real); bystanders of another family stay.
+function _dropSupersededBystanders(entries, nowMs) {
+  const casters = entries.filter(e => e && e.caster && !e.ambiguous && e.name && e.magnitude > 0
+    && !(e.expiresAtMs > 0 && e.expiresAtMs <= nowMs));
+  if (casters.length === 0) return entries;
+  return entries.filter(e => (e && e.caster && !e.ambiguous) || !casters.some(c => _slowSameFamily(c.name, e)));
+}
+// Record the caster-reported slows the bot's target-buffs relay carried for `targetName` (rows already through
+// _sanitizeRemoteBuffs: clock-corrected, wrong-spawn rows gone). Replaces whatever the last read stored; an
+// empty answer clears it. A slow on a reverse-slow mob is never recorded, as in _noteSlowForTarget.
+function _noteRemoteCasterSlows(targetName, remoteBuffs) {
+  const targetLower = String(targetName || '').toLowerCase();
+  if (!targetLower) return;
+  const out = [];
+  if (_reverseSlowKnown(targetName) !== true) {
+    for (const b of Array.isArray(remoteBuffs) ? remoteBuffs : []) {
+      if (!b || !b.name || !b.by_caster || !_isSlowSpell(b.name)) continue;
+      const magnitude = _slowMagnitude(b.name);
+      const landedAtMs = Number(b.observed_at_ms) || 0;
+      const total = Number(b.total_secs) > 0 ? Number(b.total_secs) : 0;
+      if (!(magnitude > 0) || !landedAtMs || !total) continue;   // a slow always has a catalog length
+      out.push({ name: b.name, magnitude, caster: b.caster || b.owner || null,
+                 targetId: Number(b.target_id) > 0 ? Number(b.target_id) : null,
+                 ambiguous: false, family: null, remote: true,
+                 landedAtMs, expiresAtMs: landedAtMs + total * 1000 });
+    }
+  }
+  if (out.length) {
+    _remoteSlowsByTarget.delete(targetLower);   // re-insert at the tail so the cap evicts the stalest
+    _remoteSlowsByTarget.set(targetLower, out);
+    if (_remoteSlowsByTarget.size > SLOW_TARGET_CAP) _remoteSlowsByTarget.delete(_remoteSlowsByTarget.keys().next().value);
+  } else {
+    _remoteSlowsByTarget.delete(targetLower);
+  }
+}
 // Best active slow on a target for DISPLAY — { name, magnitude, caster,
 // remaining_secs, total_secs, uncertain } or null. Prunes long-expired entries as it reads.
 // FB-83: `wantId` is the spawn id of the mob the reader is showing, when it knows one
@@ -8475,22 +8532,32 @@ function _pickBestActiveSlow(entries, nowMs) {
 // certain, an entry tied to a DIFFERENT id is some other mob of the same name and is
 // left out, and an id-less entry (a bystander line) may or may not be this mob: it is
 // returned with `uncertain: true`, and only when no certain entry exists.
+// CASTER PRECEDENCE (the guild lead, 2026-11-01: "The debuffer should always be the one whose buff landing takes
+// precedence"): an entry with a known `caster` (our own cast, or another raider's agent reporting its own cast)
+// names the spell exactly; a bystander emote ("<mob> yawns.") cannot. A caster entry that carries no spawn id
+// still counts as THIS mob for a reader that has one (shown certain, no "?"); only a caster entry tied to a
+// DIFFERENT spawn is left out. See _dropSupersededBystanders for what the caster entry replaces.
 function _bestSlowForTarget(targetLower, nowMs, wantId) {
   const mp = _slowsByTarget.get(targetLower);
-  if (!mp || mp.size === 0) return null;
   const now = nowMs || Date.now();
   const entries = [];
-  for (const [k, e] of mp) {
-    if (e && e.expiresAtMs > 0 && e.expiresAtMs <= now - SLOW_PRUNE_GRACE_MS) { mp.delete(k); continue; }
-    if (e) entries.push(e);
+  if (mp) {
+    for (const [k, e] of mp) {
+      if (e && e.expiresAtMs > 0 && e.expiresAtMs <= now - SLOW_PRUNE_GRACE_MS) { mp.delete(k); continue; }
+      if (e) entries.push(e);
+    }
+    if (mp.size === 0) _slowsByTarget.delete(targetLower);
   }
-  if (mp.size === 0) { _slowsByTarget.delete(targetLower); return null; }
+  const remote = _remoteSlowsByTarget.get(targetLower);
+  if (remote) for (const e of remote) if (!(e.expiresAtMs > 0 && e.expiresAtMs <= now)) entries.push(e);
+  if (entries.length === 0) return null;
   let pool = entries, uncertain = false;
   if (wantId > 0) {
-    const certain = entries.filter(e => e.targetId === wantId);
+    const certain = entries.filter(e => e.targetId === wantId || (e.caster && !e.ambiguous && !(e.targetId > 0)));
     if (_pickBestActiveSlow(certain, now)) pool = certain;
     else { pool = entries.filter(e => !(e.targetId > 0)); uncertain = true; }
   }
+  pool = _dropSupersededBystanders(pool, now);
   const best = _pickBestActiveSlow(pool, now);
   if (!best) return null;
   const remaining = best.expiresAtMs > 0 ? Math.max(0, Math.round((best.expiresAtMs - now) / 1000)) : null;
@@ -13446,9 +13513,18 @@ function _primaryCharacter() {
 // machine). Null-safe before main() runs, so a test that never starts the agent is unaffected.
 function _localOnly() { return !!(_uploadOpts && !_uploadOpts.token); }
 
+// A flag-sync-only link (Mimic's "No guild — just sync my PoP flags", DECISIONS §526): the bot gives that session the poll,
+// the version check and the PoP flag upload, and answers 403 to every other route. The durable queue drops a 4xx as
+// permanent, so without this every stream would log a refusal per upload. The identity is the bot's reply (or Mimic's
+// push of it) and carries scope 'player'.
+const _PLAYER_SCOPE_KINDS = new Set(['pop_flag']);
+function _playerScope() { return !!(_mimicSessionToken && _mimicIdentity && _mimicIdentity.scope === 'player'); }
+
 function enqueueUpload(kind, payload) {
   // Local mode: nothing is queued, so nothing can be sent.
   if (_localOnly()) return null;
+  // A player session (no guild) sends PoP flags only; the rest of the streams would be refused.
+  if (_playerScope() && !_PLAYER_SCOPE_KINDS.has(kind)) return null;
   // A raid code is active (this PC is in someone else's raid): the record / DKP streams stay on this PC.
   if (_raidCodeHolds(kind, payload)) return null;
   // A payload that names a character on a server that is not the guild's never leaves (eqServerForLog).
@@ -17088,6 +17164,8 @@ function _meTargetExtras(st, active, now) {
     // default; a mob's own setting can move it, which the catalog row doesn't carry).
     summon: specials ? specials.includes('Summon') : null,
     unslowable: specials ? specials.includes('Unslowable') : null,
+    // Percent of a slow it shrugs off (bot mob-info slow_mitigation); 0 = none, null = no catalog row. Unslowable and Reverse Slow stay as they were.
+    slow_mitigation: mob ? (Number(mob.slow_mitigation) || 0) : null,
     // FB-54: a slow on it HASTES it (and beats Unslowable) — the HUD says so, in red.
     reverse_slow: specials ? specials.some(s => /^Reverse Slow/.test(s)) : null,
     enraged: !!(until && until > now),
@@ -18165,6 +18243,8 @@ function _serializeCommandCenterState() {
     rampage:       tank.rampage,
     rampages:      tank.rampages,
     relv:          _relvSnapshot(activeChar, Date.now()),   // null unless the Relv event is running
+    coirnav:       _coirnavSnapshot(activeChar, Date.now()),   // null unless the Coirnav event is running
+    solro_cauldrons: _solroSnapshot(activeChar, Date.now()),   // null unless a Tower of Solusek Ro cauldron is up
     enrage:        tank.enrage,
     deathtouch:    tank.deathtouch,
     needs_rez:     _rezBoardSnapshot(),
@@ -35320,12 +35400,17 @@ const COMMAND_HTML = `<!doctype html>
   @keyframes flash{from{box-shadow:0 0 8px rgba(248,113,113,0.9)}to{box-shadow:0 0 16px rgba(248,113,113,0.4)}}
   .dt{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(107,33,168,0.5);
     border:1px solid #c084fc;border-radius:5px;margin-bottom:4px;font-size:11px}
-  .dt.crit{background:rgba(220,38,38,0.5);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
+  .dt.crit,.solro.crit,.coirnav.crit{background:rgba(220,38,38,0.5);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
   .dt .sec{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
-  .relv{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(180,83,9,0.5);
+  .relv,.solro,.coirnav{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(180,83,9,0.5);
     border:1px solid #fb923c;border-radius:5px;margin-bottom:4px;font-size:11px}
-  .relv .n{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
-  .relv .sub{margin-left:auto;font-size:9px;color:#d0d7de}
+  .relv .n,.solro .n,.coirnav .n{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
+  .relv .sub,.solro .sub,.coirnav .sub{margin-left:auto;font-size:9px;color:#d0d7de}
+  .coirnav{background:rgba(3,105,161,0.5);border-color:rgba(56,189,248,0.9)}
+  .coirnav.done{background:rgba(22,101,52,0.5);border-color:rgba(86,211,100,0.9)}
+  .coirnav.bad{background:rgba(127,29,29,0.5);border-color:rgba(248,113,113,0.9)}
+  .solro.done{background:rgba(22,101,52,0.5);border-color:rgba(86,211,100,0.9)}
+  .solro.gone{opacity:0.5}
   .ramp{display:flex;flex-direction:column;gap:4px;padding:4px 7px;background:rgba(180,32,32,0.55);
     border:1px solid #f87171;border-radius:5px;margin-bottom:4px;font-size:11px}
   .ramp .row{display:flex;align-items:center;gap:6px}
@@ -35988,6 +36073,52 @@ const COMMAND_HTML = `<!doctype html>
     return '<div class="relv"><span>🔥 Falto: ' + main + '</span>'
          +   '<span class="sub">mepheekas killed ' + (Number(v.mepheekas) || 0) + '</span></div>';
   }
+  // Coirnav's event in Plane of Water (the guild lead, 2026-11-04): fiends this client has seen die, of the 75, and the
+  // 15:00 clock from the Guardian. The agent sends s.coirnav only while the event runs (and a few minutes after); the count
+  // is a floor (a far death line never prints here). The waves come on the CLOCK (3:00, 5:00), never from kills, so the
+  // row counts down to the next one from started_at and flashes in the last 30 seconds; killing faster does not bring it.
+  // Everything that ticks is worked out here from started_at / deadline_at / retry_at (ms) on each poll.
+  function coirnavHtml(v, nowMs){
+    function mmss(sec){ sec = Math.max(0, sec); return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'); }
+    var startedAt = Number(v.started_at) || 0, elapsed = Math.floor((nowMs - startedAt) / 1000);
+    var leftTxt = mmss(Math.round((Number(v.deadline_at) - nowMs) / 1000));
+    var kills = Math.min(75, Number(v.kills) || 0), wave = Number(v.wave) || 1;
+    if (elapsed >= 180 && wave < 2) wave = 2;
+    if (elapsed >= 300 && wave < 3) wave = 3;
+    if (v.state === 'done') return '<div class="coirnav done"><span>🌊 Coirnav has fallen</span></div>';
+    if (v.state === 'banished') {
+      var rt = new Date(Number(v.retry_at) || nowMs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      return '<div class="coirnav bad"><span>🌊 Banished · retry at ' + rt + '</span></div>';
+    }
+    if (v.state === 'burn') {
+      return '<div class="coirnav"><span>🌊 Coirnav: all 75 down · burn Coirnav · <span class="n">' + leftTxt + '</span> left</span>'
+           +   '<span class="sub">15:00 clock from the Guardian</span></div>';
+    }
+    var nextIn = wave < 3 ? Math.round((startedAt + (wave === 1 ? 180000 : 300000) - nowMs) / 1000) : 0;
+    var soon = wave < 3 && nextIn <= 30;
+    var mid = wave < 3 ? (soon ? 'wave ' + (wave + 1) + ' soon (' + mmss(nextIn) + ')' : 'wave ' + (wave + 1) + ' in ' + mmss(nextIn)) : 'wave 3';
+    var note = wave < 3 && kills >= (wave === 1 ? 20 : 45)
+             ? 'wave ' + wave + ' nearly down — wave ' + (wave + 1) + ' arrives on the clock at ' + (wave === 1 ? '3:00' : '5:00')
+             : '15:00 clock from the Guardian';
+    return '<div class="coirnav' + (soon ? ' crit' : '') + '"><span>🌊 Coirnav: fiends <span class="n">' + kills + '/75</span> · ' + mid + ' · ' + leftTxt + ' left</span>'
+         +   '<span class="sub">' + note + '</span></div>';
+  }
+  // Tower of Solusek Ro braziers (the guild lead, 2026-11-02; the game calls it a flaming cauldron, the raid calls it a
+  // brazier, and the row says brazier): one row per wing boss killed, counting down to the brazier's depop (30 minutes after it spawned) and saying whether THIS character has clicked it. The agent sends
+  // s.solro_cauldrons only while one is up; the countdown is worked out here from expires_at on each poll.
+  // Red flashing in the last five minutes while unclicked, green once clicked, dim once it has depopped.
+  function solroHtml(list, nowMs){
+    var out = '';
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i], left = Math.round((Number(c.expires_at) - nowMs) / 1000);
+      var gone = !(left > 0), clock = gone ? 'gone' : Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0');
+      var cls = 'solro' + (gone ? ' gone' : (c.clicked ? ' done' : (left <= 300 ? ' crit' : '')));
+      out += '<div class="' + cls + '"><span>' + (c.clicked ? '✓ ' : '🔥 ') + esc(c.wing) + ' brazier</span>'
+           +   '<span class="n">' + clock + '</span>'
+           +   '<span class="sub">' + (c.clicked ? 'clicked' : 'click it') + ' (part ' + (Number(c.part) || 0) + ')</span></div>';
+    }
+    return out;
+  }
   // 🎟 Guests (officers only; the guild lead, 2026-10-30: "add guests to the command center for officers/admins with an
   // extend button for +1/+3"). s.guests is the agent's copy of the bot's guest-link list, or null for anyone who is not
   // an officer, so the card simply is not there for a raider. A guest whose key ended more than 12 hours ago is left
@@ -36114,6 +36245,8 @@ const COMMAND_HTML = `<!doctype html>
     var rampRows = (s.rampages && s.rampages.length > 1) ? s.rampages : (s.rampage && s.rampage.target ? [s.rampage] : []);
     for (var ri = 0; ri < rampRows.length; ri++) html += rampHtml(rampRows[ri], rampRows.length > 1);
     if (s.relv) html += relvHtml(s.relv);
+    if (s.coirnav) html += coirnavHtml(s.coirnav, Date.now());
+    if (s.solro_cauldrons && s.solro_cauldrons.length) html += solroHtml(s.solro_cauldrons, Date.now());
 
     // PoP hail board — straight under the fight cluster (target, enrage, Death Touch, Main Tank, rampage),
     // above the long lists: after a kill there is no fight to push it down, and a fight that starts while
@@ -36695,6 +36828,17 @@ function startWebDashboard(port) {
         try { have = new URL(req.url, 'http://x').searchParams.get('rev') || ''; } catch { /* */ }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(_fightHistoryPayload(have)));
+      }
+      // History → Raid: the guild's fights of tonight ({state, fights}), and one fight's board (?boss=&fight_start=).
+      // Read only while History is on screen with Raid picked; the bot is asked at most every 30 s (_raidFightsList).
+      if (req.url && (req.url === '/api/raid-fights' || req.url.indexOf('/api/raid-fights?') === 0 || req.url.indexOf('/api/raid-fights/board?') === 0)) {
+        let pathname = '', q = null;
+        try { const u = new URL(req.url, 'http://x'); pathname = u.pathname; q = u.searchParams; } catch { /* */ }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        try {
+          if (pathname === '/api/raid-fights/board') return res.end(JSON.stringify(await _raidFightBoard(q.get('boss'), q.get('fight_start'))));
+          return res.end(JSON.stringify(await _raidFightsList()));
+        } catch { return res.end(JSON.stringify({ state: 'error', fights: [], players: [] })); }
       }
       // The Guild triggers card's list, read only while the Triggers tab is on screen and only when the
       // `guildTriggersRev` on /api/state moved. Out of /api/state so the overlays do not parse it ~10x/s.
@@ -45685,6 +45829,81 @@ function _startFightHistoryPersistence() {
   _loadFightHistory();
   _resettleRestoredFights();
   _fightsPersist = true;
+}
+
+// ── Raid fights: every fight the guild uploaded tonight (DPS meter → History → Raid) ──
+// The guild lead, 2026-11-01: "B, and merged after each fight ends". The bot's GET /api/agent/raid-fights lists them, each
+// once with every client's numbers merged; a Raid row's board is the same /live-damage call History's "synced" numbers use.
+// Served to the overlay at GET /api/raid-fights and GET /api/raid-fights/board, which the overlay reads only while History
+// is on screen with Raid picked. The bot is asked at most every 30 s; an older bot (404) is not asked again for ten minutes.
+const RAID_FIGHTS_EVERY_MS = 30_000;
+const RAID_FIGHTS_BACKOFF_MS = 10 * 60_000;
+const RAID_FIGHTS_SINCE_MS = 8 * 3600_000;
+const RAID_BOARD_FULL_MS = 5 * 60_000;       // a board that has numbers
+const RAID_BOARD_EMPTY_MS = 30_000;          // one that came back empty, or failed
+const RAID_BOARD_MAX = 60;
+let _raidFights = { nextAt: 0, state: 'idle', fights: [], inflight: null, boards: new Map() };
+function _resetRaidFightsForTest() { _raidFights = { nextAt: 0, state: 'idle', fights: [], inflight: null, boards: new Map() }; }
+// The fields the overlay reads, nothing else.
+function _raidFightRow(f) {
+  return {
+    id: f.id, name: String(f.name || '').slice(0, 80), npc_id: f.npc_id == null ? null : f.npc_id,
+    started_at: f.started_at, ended_at: f.ended_at, duration_s: Number(f.duration_s) || 0, wipe: !!f.wipe,
+    clients: Number(f.clients) || 0, players: Number(f.players) || 0, top_dps: Number(f.top_dps) || 0,
+  };
+}
+async function _raidFightsList(now = Date.now()) {
+  const R = _raidFights;
+  const view = () => ({ state: R.state, fights: R.fights });
+  if (!_canAskGuildForFights()) return { state: 'offline', fights: [] };
+  if (now < R.nextAt && R.state !== 'idle') return view();
+  if (!R.inflight) {
+    R.inflight = (async () => {
+      try {
+        const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+        const since = new Date(now - RAID_FIGHTS_SINCE_MS).toISOString();
+        const r = await fetch(`${base}/raid-fights?since=${encodeURIComponent(since)}`, {
+          headers: { Authorization: `Bearer ${_uploadOpts.token}` },
+        });
+        if (r.status === 404) { R.state = 'old_bot'; R.fights = []; R.nextAt = now + RAID_FIGHTS_BACKOFF_MS; return; }
+        if (!r.ok) { R.state = 'error'; R.nextAt = now + RAID_FIGHTS_EVERY_MS; return; }   // keep the list we had
+        const j = await r.json();
+        if (!j || !Array.isArray(j.fights)) { R.state = 'error'; R.nextAt = now + RAID_FIGHTS_EVERY_MS; return; }
+        R.fights = j.fights.filter(f => f && f.id != null && f.name && f.started_at).slice(0, 60).map(_raidFightRow);
+        R.state = 'ok'; R.nextAt = now + RAID_FIGHTS_EVERY_MS;
+      } catch { R.state = 'error'; R.nextAt = now + RAID_FIGHTS_EVERY_MS; }
+    })().finally(() => { R.inflight = null; });
+  }
+  await R.inflight;
+  return view();
+}
+// One fight's board: { state, boss, players, uploaders, total }. Empty `players` = no numbers for it yet.
+async function _raidFightBoard(boss, startIso, now = Date.now()) {
+  boss = String(boss || '').slice(0, 120);
+  const startMs = Date.parse(startIso);
+  if (!boss || !Number.isFinite(startMs)) return { state: 'bad', boss, players: [], uploaders: 0, total: 0 };
+  const empty = (state) => ({ state, boss, players: [], uploaders: 0, total: 0 });
+  if (!_canAskGuildForFights()) return empty('offline');
+  const key = boss.toLowerCase() + '|' + startMs;
+  const hit = _raidFights.boards.get(key);
+  if (hit && now - hit.at < (hit.board.players.length ? RAID_BOARD_FULL_MS : RAID_BOARD_EMPTY_MS)) return hit.board;
+  let board;
+  try {
+    const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+    const r = await fetch(`${base}/live-damage?boss=${encodeURIComponent(boss)}&fight_start=${encodeURIComponent(new Date(startMs).toISOString())}`, {
+      headers: { Authorization: `Bearer ${_uploadOpts.token}` },
+    });
+    if (!r.ok) board = empty(r.status === 404 ? 'old_bot' : 'error');
+    else {
+      const j = await r.json();
+      board = j && Array.isArray(j.players)
+        ? { state: 'ok', boss, players: j.players.slice(0, 60), uploaders: j.uploaders || 0, total: j.total || 0 }
+        : empty('error');
+    }
+  } catch { board = empty('error'); }
+  if (_raidFights.boards.size >= RAID_BOARD_MAX) _raidFights.boards.delete(_raidFights.boards.keys().next().value);
+  _raidFights.boards.set(key, { at: now, board });
+  return board;
 }
 
 // ── Target history (Target Info's pager and Recent tab) ─────────────────────
@@ -56533,6 +56752,65 @@ function fetchTargetCasts(name, selfChar, targetId) {
   } catch { _targetCastsInflight.delete(key); }
 }
 
+// A landing's clock can be an hour off (the guild lead, 2026-11-01: the clocks went back, one PC kept stamping
+// its log an hour AHEAD, so a 65-tick slow showed "659/65 · 1h05"). Where the stamp puts the landing in the
+// future — past the spell's whole length plus 6 s (remaining > total + 6 s), or more than 2 minutes ahead when
+// no length is known — it is moved back by the nearest whole number of hours IF that puts it inside the spell's
+// length; a landing that still does not fit is dropped (null). A stamp under 2 minutes ahead is ordinary
+// clock skew between two PCs: kept, as "just landed". Pure; `castAtMs` / `nowMs` are epoch ms, `totalSecs` the
+// catalog length or 0 when unknown. Returns { castAtMs, shifted } or null.
+function _reconcileLandingClock(castAtMs, totalSecs, nowMs) {
+  const HOUR_MS = 3600000, SKEW_MS = 120000, GRACE_MS = 6000;
+  const ageMs = nowMs - castAtMs;
+  const total = totalSecs > 0 ? totalSecs : 0;
+  if (ageMs >= -(total > 0 ? GRACE_MS : SKEW_MS)) return { castAtMs, shifted: false };
+  if (-ageMs <= SKEW_MS) return { castAtMs: nowMs, shifted: false };   // a little ahead, not an hour
+  const hours = Math.round(-ageMs / HOUR_MS);
+  if (hours < 1) return null;                                          // minutes ahead: no shift explains it
+  const back = castAtMs - hours * HOUR_MS;
+  const backAge = nowMs - back;
+  if (backAge < -SKEW_MS) return null;                      // still ahead of now
+  if (total > 0 && backAge > total * 1000) return null;     // would already have worn off
+  return { castAtMs: Math.min(back, nowMs), shifted: true };
+}
+// The relay's rows, made safe to show: a row proven to be a DIFFERENT spawn than the one on screen is dropped
+// (the bot already scopes by id; this is for a bot that does not yet send it), and each row's landing time goes
+// through _reconcileLandingClock. Rows it cannot place are dropped. An untouched row is returned as the same
+// object; a corrected one is a copy with the new time, the time left recomputed, and clock_shifted: true.
+function _sanitizeRemoteBuffs(buffs, nowMs, wantId) {
+  if (!Array.isArray(buffs)) return [];
+  const out = [];
+  for (const b of buffs) {
+    if (!b || !b.name) continue;
+    if (wantId > 0 && Number(b.target_id) > 0 && Number(b.target_id) !== wantId) continue;
+    const at = Number(b.observed_at_ms) || 0;
+    if (!at) { out.push(b); continue; }
+    const total = Number(b.total_secs) > 0 ? Number(b.total_secs) : 0;
+    const fix = _reconcileLandingClock(at, total, nowMs);
+    if (!fix) continue;
+    if (fix.castAtMs === at) { out.push(b); continue; }
+    out.push({ ...b, observed_at_ms: fix.castAtMs, clock_shifted: fix.shifted,
+      remaining_secs: total > 0 ? Math.max(0, Math.round(total - (nowMs - fix.castAtMs) / 1000)) : b.remaining_secs });
+  }
+  return out;
+}
+// The debuffer's landing takes precedence (the guild lead, 2026-11-01). A relay row flagged `by_caster` is a
+// landing its CASTER's own agent reported (the bot's self_cast flag); it replaces, in the merged debuff list,
+// every bystander landing of the same effect: the same spell, or another member of its shared-emote family
+// (_slowSameFamily). Bystander rows stay when no caster row covers them. Local rows that are our own casts
+// (`by_caster`) are never replaced. Returns { local, remote } filtered; a caster row gets `caster` named so
+// the later cast-relay lookup leaves it alone.
+function _applyDebufferPrecedence(local, remote) {
+  const casters = remote.filter(b => b && b.by_caster);
+  if (casters.length === 0) return { local, remote };
+  const covered = (row) => casters.some(c => _slowSameFamily(c.name, row));
+  return {
+    local: local.filter(l => !l || l.by_caster || !covered(l)),
+    remote: remote.filter(b => b && (b.by_caster || !covered(b))).map(b =>
+      (b.by_caster && !b.caster && b.owner) ? { ...b, caster: b.owner } : b),
+  };
+}
+
 // Name the caster of each Target Info effect (the guild lead, 2026-10-08: mousing over the time left
 // "should show you how long it lasted and who cast it"). EverQuest's landing lines never name a
 // caster, so the only source is the bot's cast relay: target-casts' `last_casters` ([{ spell, caster,
@@ -57593,7 +57871,7 @@ function _mobTrackGc(nowMs) {
 function _clearNameObservations(nameLower) {
   if (!nameLower) return;
   try { _buffLandingsByTarget.delete(nameLower); } catch { /* */ }
-  try { _slowsByTarget.delete(nameLower); _slowCalloutState.delete(nameLower); } catch { /* */ }
+  try { _slowsByTarget.delete(nameLower); _slowCalloutState.delete(nameLower); _remoteSlowsByTarget.delete(nameLower); } catch { /* */ }
   try { _extMobHpHist.delete(nameLower); _extMobResetAt.delete(nameLower); } catch { /* */ }
   try { _mobTicks.delete(nameLower); } catch { /* */ }   // the next spawn has its own tick
 }
@@ -58323,8 +58601,14 @@ function buildMobInfo() {
   } else if (liveBuffs !== null) {
     buffs = liveBuffs;
   } else {
-    const local  = targetBuffsFor(tnameLower, _curIdForRelay);
-    const remote = (ctb && Array.isArray(ctb.buffs)) ? ctb.buffs : [];
+    const nowRelay = Date.now();
+    // The relay's rows, clock-corrected (an hour-ahead stamp is put back or dropped), then the debuffer's
+    // landing outranks a bystander's of the same effect — in this list and in the slow badge below.
+    const remoteOk = _sanitizeRemoteBuffs((ctb && Array.isArray(ctb.buffs)) ? ctb.buffs : [], nowRelay, _curIdForRelay);
+    try { _noteRemoteCasterSlows(st.target_name, remoteOk); } catch { /* the badge falls back to local landings */ }
+    const prec = _applyDebufferPrecedence(targetBuffsFor(tnameLower, _curIdForRelay), remoteOk);
+    const local  = prec.local;
+    const remote = prec.remote;
     const seen = new Set(local.map(b => String(b.name || '').toLowerCase()));
     buffs = local.slice();
     for (const b of remote) {
@@ -58487,6 +58771,7 @@ function _liveTargetPosDue(prev, cur, now) {
 }
 function _postLiveState(targetUrl, token, payload) {
   if (!token) return;   // Local mode: no token, so the live state (zone, buffs, pet) never leaves the machine.
+  if (_playerScope()) return;   // A flag-sync-only session may not post live state (the bot answers 403).
   let url;
   try { url = new URL(targetUrl); } catch { return; }
   const mod = url.protocol === 'https:' ? https : http;
@@ -59980,6 +60265,178 @@ function _relvSnapshot(character, now) {
   return { mephits: st.mephits, total: RELV_MEPHITS, mepheekas: st.mepheekas, falto_up: !!st.faltoUp, falto_slain: !!st.faltoSlainAt, started_at: st.startedAt };
 }
 // ── end Relv mephit counter ────────────────────────────────────────────────────────────────────────────────────
+// ── Coirnav the Avatar of Water (Plane of Water): the Command Center's fiend counter ─────────────────────────
+// The guild lead, 2026-11-04: "Do we have a fiend counter for the 75 for command center?" Modelled on the Relv
+// counter above. Quarm's script (powater/encounters/Coirnav.lua) starts a 900 s clock when `Guardian of Coirnav`
+// dies, spawns 25 fiends at 0:00, 3:00 and 5:00 (the waves are CLOCK-driven, never kill-driven; Coirnav's shouts name
+// Povar, then E`ci, then Tarew Marr), and at 75 fiend deaths makes Coirnav attackable with three minibosses
+// ("We will permit no further advance"). Success is "Coirnav, the Avatar of Water, has fallen!"; the deadline is
+// "The Triumvirate has spoken! These waters reject you", and the retry opens 1200 s later. The lings
+// (`a triloun vaporling` and kin) are the after-miniboss adds and never count.
+// ⚠ The count is what THIS client saw. EverQuest prints a death line only to players near it, so a fiend dying far
+// across the reef can be missed: the number is a floor, never exact, and never above 75. Nothing is shared.
+// The RP() emotes arrive as plain log lines; the matches below use stable substrings, not the full sentences. Raw
+// lines, the same stream the Relv counter reads. Live tail only (the caller is the live loop), so it takes now.
+const COIRNAV_FIENDS     = 75;
+const COIRNAV_EVENT_MS   = 900 * 1000;
+const COIRNAV_RETRY_MS   = 1200 * 1000;
+const COIRNAV_DONE_MS    = 5 * 60 * 1000;
+const COIRNAV_GRACE_MS   = 2 * 60 * 1000;   // a clock that ran out with no verdict line stays this long, then goes
+const COIRNAV_WAVE_AT_MS = [0, 180 * 1000, 300 * 1000];
+const _COIRNAV_GUARD_RX  = /^Guardian of Coirnav$/i;
+const _COIRNAV_FIEND_RX  = /^an? (?:triloun vaporfiend|hraquis icefiend|regrua waterfiend)$/i;
+const _COIRNAV_SHOUT_RX  = /Coirnav the Avatar of Water shouts.*power imbued to me by (Povar|E.ci|Tarew Marr)/;
+const _COIRNAV_BURN_RX   = /We will permit no further advance/;
+const _COIRNAV_WON_RX    = /Coirnav, the Avatar of Water, has fallen!/;
+const _COIRNAV_LOST_RX   = /The Triumvirate has spoken! These waters reject you/;
+const _coirnavState   = new Map();   // character (lower) → { state, kills, wave, startedAt, endedAt }
+const _coirnavLogZone = new Map();   // character (lower) → last zone a zone-change line named (lower)
+function _coirnavInWater(cl) {
+  for (const ch of Object.keys(_zealState || {})) {
+    if (ch.toLowerCase() !== cl) continue;
+    const z = _mapZoneShort(_zealState[ch] && _zealState[ch].zone);
+    if (z) return z === 'powater';
+  }
+  return _coirnavLogZone.get(cl) === 'plane of water';
+}
+function _coirnavLive(cl, now) {
+  const st = _coirnavState.get(cl);
+  if (!st) return null;
+  const over = (st.state === 'waves' || st.state === 'burn') ? now > st.startedAt + COIRNAV_EVENT_MS + COIRNAV_GRACE_MS
+             : st.state === 'done' ? now > st.endedAt + COIRNAV_DONE_MS
+             : now > st.endedAt + COIRNAV_RETRY_MS;
+  if (over) { _coirnavState.delete(cl); return null; }
+  return st;
+}
+function _coirnavBegin(cl, now, wave) {
+  _coirnavState.set(cl, { state: 'waves', kills: 0, wave, startedAt: now - COIRNAV_WAVE_AT_MS[wave - 1], endedAt: 0 });
+}
+function _coirnavNoteLine(line, character, now) {
+  if (!line || !character) return;
+  const cl = String(character).toLowerCase();
+  const zm = line.indexOf(' have entered ') !== -1 ? CHAT_ZONE_RX.exec(line) : null;
+  if (zm) {
+    const z = zm[1].trim().toLowerCase();
+    _coirnavLogZone.set(cl, z);
+    if (z !== 'plane of water') _coirnavState.delete(cl);
+    return;
+  }
+  if (line.indexOf('Coirnav') === -1 && line.indexOf('Triumvirate') === -1 && line.indexOf('fiend') === -1) return;
+  const st = _coirnavLive(cl, now);
+  const running = !!st && (st.state === 'waves' || st.state === 'burn');
+  const sm = _COIRNAV_SHOUT_RX.exec(line);
+  if (sm) {
+    const wave = sm[1] === 'Povar' ? 1 : (sm[1] === 'Tarew Marr' ? 3 : 2);
+    if (!running) _coirnavBegin(cl, now, wave);              // joined late: the shout fixes the clock
+    else if (wave > st.wave) st.wave = wave;
+    return;
+  }
+  if (_COIRNAV_WON_RX.test(line)) { _coirnavState.set(cl, { state: 'done', kills: COIRNAV_FIENDS, wave: 3, startedAt: st ? st.startedAt : now, endedAt: now }); return; }
+  if (_COIRNAV_LOST_RX.test(line)) { _coirnavState.set(cl, { state: 'banished', kills: st ? st.kills : 0, wave: st ? st.wave : 1, startedAt: st ? st.startedAt : now, endedAt: now }); return; }
+  if (running && _COIRNAV_BURN_RX.test(line)) { st.state = 'burn'; st.kills = COIRNAV_FIENDS; return; }
+  const dead = _deadMobNameFromLine(line);
+  if (!dead) return;
+  if (_COIRNAV_GUARD_RX.test(dead)) {
+    if (!running && _coirnavInWater(cl)) _coirnavBegin(cl, now, 1);
+    return;
+  }
+  if (running && st.state === 'waves' && _COIRNAV_FIEND_RX.test(dead)) {
+    st.kills++;
+    if (st.kills >= COIRNAV_FIENDS) { st.kills = COIRNAV_FIENDS; st.state = 'burn'; }
+  }
+}
+// The Command Center row: null unless the event is running (or just ended) for this character. The wave is the later of
+// what Coirnav's shouts said and what the clock says; the clock is the authority on Quarm, so a missed shout cannot stall it.
+function _coirnavSnapshot(character, now) {
+  const st = _coirnavLive(String(character || '').toLowerCase(), now);
+  if (!st) return null;
+  let wave = st.wave;
+  for (let i = 0; i < COIRNAV_WAVE_AT_MS.length; i++) if (now - st.startedAt >= COIRNAV_WAVE_AT_MS[i] && i + 1 > wave) wave = i + 1;
+  return {
+    state: st.state, kills: st.kills, total: COIRNAV_FIENDS, wave: Math.min(3, wave),
+    started_at: st.startedAt, deadline_at: st.startedAt + COIRNAV_EVENT_MS,
+    retry_at: st.state === 'banished' ? st.endedAt + COIRNAV_RETRY_MS : 0,
+  };
+}
+// ── end Coirnav fiend counter ────────────────────────────────────────────────────────────────────────────────
+// ── Tower of Solusek Ro cauldrons (the guild lead, 2026-11-02: "add in for the command center timers the clicks for
+// the braziers for tower of solro after the mini bosses are completed") ─────────────────────────────────────────────
+// The game calls it a flaming cauldron, the raid calls it a brazier (the Command Center row says brazier; the
+// identifiers here and the click-line regexes keep the game's "cauldron"). Each of the five wing bosses leaves one when it dies; every raider clicks it
+// once for that wing's part of the Solusek Ro room flag, and it depops 30 minutes after it spawned. Source: SecretsOTheP/
+// quests @572bc06 solrotower/*.lua (the cauldron script sets `eq.set_timer("depop", 1800000)` on spawn; that timer
+// also pauses while the cauldron is in combat, which we ignore). The spawns are on the wing boss's death_complete:
+// Xuzl (part 1), Arlyxir (2), The Protector of Dresolik (3), the SECOND Rizlona (4), Jiva (5). Rizlona's first death
+// spawns a second mob with the same display name and only that one's death leaves a cauldron; the second one leaves
+// after 2 h 30, so a Rizlona death within that gap of an earlier one is the second.
+// ⚠ A client sees only the deaths that print near it, so a wing fought out of range shows no row, and a first Rizlona
+// death that was missed makes the second read as the first. Per character, from the live tail only (it takes now).
+// The click lines are the same ones parsePopFlagLine reads for the flag; here they only mark "this character clicked".
+const SOLRO_CAULDRON_MS       = 30 * 60 * 1000;
+const SOLRO_CAULDRON_GRACE_MS = 2 * 60 * 1000;   // a spent row stays this long past the depop, then goes
+const SOLRO_RIZLONA_GAP_MS    = 150 * 60 * 1000;
+const SOLRO_ZONE_LONG         = 'tower of solusek ro';
+const SOLRO_WINGS = [
+  { wing: 'Xuzl',     part: 1, death: /^Xuzl$/i,                      click: /arcane wisdom pulsing in your mind/ },
+  { wing: 'Arlyxir',  part: 2, death: /^Arlyxir$/i,                   click: /a wealth of knowledge enter your mind/ },
+  { wing: 'Dresolik', part: 3, death: /^The Protector of Dresolik$/i, click: /a bolt of energy surge through your arm/ },
+  { wing: 'Rizlona',  part: 4, death: /^Rizlona$/i,                   click: /relaxed as a short tune slips into your thoughts/ },
+  { wing: 'Jiva',     part: 5, death: /^Jiva$/i,                      click: /your body fill with strength/ },
+];
+const _SOLRO_CLICK_RX = /\]\s+As you place your hand on the burning cauldron, you feel (.+?)\.\s*$/;
+const _solroState   = new Map();   // character (lower) → { cauldrons: Map(wing → { part, diedAt, clickedAt }), rizlonaAt }
+const _solroLogZone = new Map();   // character (lower) → last zone a zone-change line named (lower)
+function _solroInTower(cl) {
+  for (const ch of Object.keys(_zealState || {})) {
+    if (ch.toLowerCase() !== cl) continue;
+    const z = _mapZoneShort(_zealState[ch] && _zealState[ch].zone);
+    if (z) return z === 'solrotower';
+  }
+  return _solroLogZone.get(cl) === SOLRO_ZONE_LONG;
+}
+function _solroNoteLine(line, character, now) {
+  if (!line || !character) return;
+  const cl = String(character).toLowerCase();
+  const zm = line.indexOf(' have entered ') !== -1 ? CHAT_ZONE_RX.exec(line) : null;
+  if (zm) {
+    const z = zm[1].trim().toLowerCase();
+    _solroLogZone.set(cl, z);
+    if (z !== SOLRO_ZONE_LONG) _solroState.delete(cl);
+    return;
+  }
+  if (line.indexOf('cauldron') !== -1) {
+    const st = _solroState.get(cl);
+    const cm = st ? _SOLRO_CLICK_RX.exec(line) : null;
+    const w = cm ? SOLRO_WINGS.find(x => x.click.test(cm[1])) : null;
+    const c = w ? st.cauldrons.get(w.wing) : null;
+    if (c && !c.clickedAt && now < c.diedAt + SOLRO_CAULDRON_MS) c.clickedAt = now;
+    return;
+  }
+  if (line.indexOf('slain') === -1 && line.indexOf('died') === -1) return;
+  const dead = _deadMobNameFromLine(line);
+  const w = dead ? SOLRO_WINGS.find(x => x.death.test(dead)) : null;
+  if (!w || !_solroInTower(cl)) return;
+  let st = _solroState.get(cl);
+  if (!st) { st = { cauldrons: new Map(), rizlonaAt: 0 }; _solroState.set(cl, st); }
+  if (w.wing === 'Rizlona') {
+    const second = st.rizlonaAt && now - st.rizlonaAt <= SOLRO_RIZLONA_GAP_MS;
+    st.rizlonaAt = second ? 0 : now;
+    if (!second) return;   // the first Rizlona only counts; the second one's death leaves the cauldron
+  }
+  st.cauldrons.set(w.wing, { part: w.part, diedAt: now, clickedAt: 0 });
+}
+// The Command Center rows: null unless a cauldron is up (or just gone) for this character, soonest depop first.
+function _solroSnapshot(character, now) {
+  const st = _solroState.get(String(character || '').toLowerCase());
+  if (!st) return null;
+  const out = [];
+  for (const [wing, c] of st.cauldrons) {
+    if (now > c.diedAt + SOLRO_CAULDRON_MS + SOLRO_CAULDRON_GRACE_MS) { st.cauldrons.delete(wing); continue; }
+    out.push({ wing, part: c.part, expires_at: c.diedAt + SOLRO_CAULDRON_MS, clicked: !!c.clickedAt });
+  }
+  return out.length ? out.sort((a, b) => a.expires_at - b.expires_at) : null;
+}
+// ── end Solusek Ro cauldrons ───────────────────────────────────────────────────────────────────────────────────
 // ── Death timeline (the guild lead, 2026-10-21: "the death timers between mobs ... easily and clearly displayed
 // versus having to say it out loud ... a timeline view ... on the bottom of the TTS") ──────────────────────────
 // A small ring of recent boss / Tactics-brother deaths read off the lines THIS PC's logs see (a kill out of this
@@ -61279,6 +61736,38 @@ function _hailNpcWanted(npc) {
   if (_HAIL_FLAG_NPC_RX.test(String(npc).trim())) return true;
   const k = _hailNpcKey(npc);
   return !!k && _hailBoard.windows.some(w => _hailNpcKey(w.npc_name) === k);
+}
+// Hailing a flag NPC while invisible (FB-116, the guild lead, 2026-11-03: "When a person is invis and they hail and don't
+// get text you need to click off invis"). The NPC does not answer someone it cannot see, so the hail is silently wasted;
+// the log the report carried shows "You appear." and the flag one hail later. So YOUR hail of a flag NPC while you are
+// invisible puts up a local callout (this PC only: no upload, no relay, no Discord). Invisible = an invis buff in Zeal's
+// buff list (selfInvisState); when Zeal is not live, your own last "You vanish." / "You appear." line decides.
+const HAIL_INVIS_COOLDOWN_MS = 20_000;
+const HAIL_INVIS_LINE_TTL_MS = 30 * 60_000;   // an invis line older than this says nothing (most invis lasts less)
+const _hailInvisLastWarn = new Map();          // character (lower) → ms of the last callout
+const _hailInvisByLine = new Map();            // character (lower) → { invis, at } from your own vanish / appear lines
+function _hailInvisNoteLine(line, character, now) {
+  if (!line || !character) return null;
+  const cl = String(character).toLowerCase();
+  if (/\]\s+You vanish\.\s*$/.test(line)) { _hailInvisByLine.set(cl, { invis: true, at: now }); return null; }
+  if (/\]\s+You appear\.\s*$/.test(line)) { _hailInvisByLine.set(cl, { invis: false, at: now }); return null; }
+  if (line.indexOf('You say') === -1) return null;
+  const m = line.match(_HAIL_SELF_RX);
+  if (!m || !_hailNpcWanted(m[1])) return null;
+  let invis = selfInvisState(character, now);
+  if (invis == null) { const l = _hailInvisByLine.get(cl); invis = !!(l && l.invis && now - l.at <= HAIL_INVIS_LINE_TTL_MS); }
+  if (!invis) return null;
+  if (now - (_hailInvisLastWarn.get(cl) || 0) < HAIL_INVIS_COOLDOWN_MS) return null;
+  _hailInvisLastWarn.set(cl, now);
+  const npc = m[1].trim();
+  _pushOverlay({
+    text: `You're invisible: ${npc} can't see you. Drop invis and hail again.`,
+    tts: 'You are invisible. Drop invis and hail again.',
+    color: 'orange', duration_ms: 8000, shownAt: now, firedAt: now,
+    trigger: 'Hail while invisible', trigger_id: 'builtin:hail-invis', scope: 'personal', test: false,
+  });
+  scheduleRender();
+  return npc;
 }
 // The local port answers a browser that is not one of ours with 403: a web page can POST to 127.0.0.1
 // (the guild lead, 2026-10-17). `_localRequestGuard` is the one rule, applied to EVERY route by the router
@@ -64713,6 +65202,8 @@ async function main() {
         // leaves the machine (_hailNpcWanted), the one /say exception docs/PRIVACY.md names. Every Mimic
         // in the zone sees the same line, so one install's two logs are collapsed here and the bot
         // collapses the rest.
+        // Your own flag-NPC hail while invisible: a local "drop invis" callout (FB-116; this PC only).
+        try { _hailInvisNoteLine(line, b.character, Date.now()); } catch { void 0; }
         if (!_sourceExcluded) {
           const hailEvt = parseWitnessedHail(line, b.character);
           if (hailEvt && _hailNpcWanted(hailEvt.npc)
@@ -65064,6 +65555,10 @@ async function main() {
         try { _xpNoteRawLine(line, b.character, Date.now()); } catch { void 0; }
         // Relv event (Plane of Storms): the Command Center's mephit counter (live tail only).
         try { _relvNoteLine(line, b.character, Date.now()); } catch { void 0; }
+        // Coirnav event (Plane of Water): the Command Center's fiend counter (live tail only).
+        try { _coirnavNoteLine(line, b.character, Date.now()); } catch { void 0; }
+        // Tower of Solusek Ro cauldrons: wing boss deaths and your clicks (live tail only).
+        try { _solroNoteLine(line, b.character, Date.now()); } catch { void 0; }
         // Corpse DM: your own death, with where the corpse lies (live tail only, so a backfill of an old
         // log never DMs anyone).
         try { _corpseNoteLine(line, b.character); } catch { void 0; }
@@ -66491,6 +66986,32 @@ const RESCAN_BUDGET_MS   = 12;
 const RESCAN_REST_MS     = 25;
 const RESCAN_MAX_DAYS    = 60;
 const RESCAN_MAX_WAIT_MS = 10 * 60_000;     // total time spent paused for a live fight
+const RESCAN_LINES_MAX = 300;                // the newest flag lines the overlay's copy box shows
+// The copy box is the TAIL of what was read (the guild lead, 2026-11-02: "pull from the tail of these logs so we're not
+// getting extra old lines, but the hail lines from the projections and other flag mobs are important as well"): every
+// line the gate passes (Seer, #popflags, grants, trials, your hails and the projection's / flag NPCs' answers), each
+// kept once at its NEWEST time. A #popflags row is keyed by its label, so a later read replaces "Missing" with
+// "Complete" instead of showing both.
+function _rescanKeepLine(sink, line, msg, gate, t, character) {
+  if (!(sink.lines instanceof Map)) return;
+  const i = gate === 'popflags' ? msg.indexOf(': ') : -1;
+  const key = String(character || '').toLowerCase() + '|' + (i > 0 ? 'pf:' + _pfNorm(msg.slice(0, i)) : msg.trim());
+  sink.lines.delete(key);
+  sink.lines.set(key, { t, line });
+  if (sink.lines.size > RESCAN_LINES_MAX * 4) sink.lines.delete(sink.lines.keys().next().value);   // bound memory
+}
+function _rescanTailLines(sink) {
+  if (!sink || !(sink.lines instanceof Map)) return [];
+  return [...sink.lines.values()].sort((a, b) => a.t - b.t).slice(-RESCAN_LINES_MAX).map(x => x.line);
+}
+const RESCAN_FIGHT_RECENT_MS = 15_000;
+// The read rests only for combat happening NOW: the fight snapshot published in the last 15 s. _liveFightActive's
+// 150 s window (made for the update gate) kept a capture "paused while you fight" for minutes after a fight, or
+// while other raiders fought nearby (the guild lead, 2026-11-02: "not currently in a fight for this sync").
+function _rescanFightNow() {
+  const et = stats.currentEncounterThreat;
+  return !!(et && !et.flushedAt && et.publishedAt && Date.now() - et.publishedAt < RESCAN_FIGHT_RECENT_MS);
+}
 const RESCAN_FLUSH       = 100;             // events per upload
 // ONE in-flight guard for both callers: the website's request (the poll's `rescan` stream) and the dashboard's
 // "Capture latest PoP flags" button (POST /api/local/pop-rescan). `running` is that guard; `by` says who holds it;
@@ -66520,6 +67041,8 @@ function _rescanLine(line, character, sinceMs, sink) {
   if (!gate) { sink.prevPassed = false; return; }
   const ts = parseEqTimestamp(line);
   if (!ts || ts.getTime() < sinceMs) { sink.prevPassed = false; return; }
+  // Every flag line read, for the PoP overlay to show and copy (the guild lead, 2026-11-02). See _rescanKeepLine.
+  _rescanKeepLine(sink, line, msg, gate, ts.getTime(), character);
   // parsePopFlagLine names a grant from the line just before it; a skipped line in between must not leave an older
   // NPC line standing in for it, so the real previous line is shown to it first (its answer, if any, is dropped).
   if (gate === 'grant' && !sink.prevPassed && prev) parsePopFlagLine(prev, character);
@@ -66546,12 +67069,16 @@ async function _rescanFile(file, ctx, sink) {
     let carry = null;
     let workStart = Date.now();
     sink.prev = null; sink.prevPassed = false;
+    const pos0 = pos;
+    ctx.frac = 0;                              // how far into THIS file (the status route's progress)
     while (pos < size && ctx.bytes > 0 && !ctx.stop) {
-      if (_liveFightActive() && ctx.waited < RESCAN_MAX_WAIT_MS) { ctx.waited += 1500; await _rescanSleep(1500); continue; }
+      if (_rescanFightNow() && ctx.waited < RESCAN_MAX_WAIT_MS) { ctx.paused = true; ctx.waited += 1500; await _rescanSleep(1500); continue; }
+      ctx.paused = false;
       const want = Math.min(chunk.length, ctx.bytes, size - pos);
       const { bytesRead } = await fh.read(chunk, 0, want, pos);
       if (bytesRead <= 0) break;
       pos += bytesRead; ctx.bytes -= bytesRead;
+      ctx.frac = Math.min(1, (pos - pos0) / Math.max(1, size - pos0));
       const data = carry ? Buffer.concat([carry, chunk.subarray(0, bytesRead)]) : chunk.subarray(0, bytesRead);
       const nl = data.lastIndexOf(10);
       if (nl < 0) { carry = data.length > (1 << 20) ? null : Buffer.from(data); continue; }
@@ -66573,7 +67100,7 @@ async function _rescanFile(file, ctx, sink) {
     }
     if (carry && carry.length && !ctx.stop) { try { _rescanLine(carry.toString('utf8').replace(/\r$/, ''), file.character, ctx.sinceMs, sink); } catch { void 0; } }
     return true;
-  } catch { return false; } finally { try { await fh.close(); } catch { void 0; } }
+  } catch { return false; } finally { ctx.paused = false; try { await fh.close(); } catch { void 0; } }
 }
 // The per-character module state the readers keep (the line before, the last hail, the #popflags time state) is
 // the LIVE tail's: a re-read starts from nothing and puts every entry back, so it can neither borrow the live
@@ -66660,7 +67187,7 @@ async function _rescanRun(req, prog) {
   if (!files.length) return done({});
   const opts = _uploadOpts || {};
   const sink = {
-    events: [], found: 0, sent: 0, prev: null, prevPassed: false,
+    events: [], found: 0, sent: 0, prev: null, prevPassed: false, lines: new Map(),
     flush() {
       if (!this.events.length) return;
       const evs = this.events.splice(0);
@@ -66678,7 +67205,7 @@ async function _rescanRun(req, prog) {
       if (prog) prog.current = f.character;
       if (await _rescanFile(f, ctx, sink)) opened++;
       sink.flush();
-      if (prog) prog.filesDone++;
+      if (prog) { prog.filesDone++; ctx.frac = 0; }
     }
     exportsRead = _rescanPopFlagsExports(files, sink, mode);
     if (prog) prog.exports = exportsRead;
@@ -66793,7 +67320,13 @@ function _rescanStatus() {
       startedAt: p.startedAt, finishedAt: p.finishedAt || null, days: p.days || null,
       files: p.files || 0, filesDone: p.filesDone || 0, excluded: p.excluded || [],
       bytesRead: p.ctx ? RESCAN_MAX_BYTES - p.ctx.bytes : 0,
+      // Waiting out a live fight (the read resumes between pulls), and how far along: 0..1 across the files, or
+      // null before the first file has been sized.
+      paused: p.state === 'running' && !!(p.ctx && p.ctx.paused),
+      progress: p.state === 'done' ? 1 : (p.files && p.ctx ? Math.min(1, ((p.filesDone || 0) + (p.ctx.frac || 0)) / p.files) : null),
       found: p.result ? p.result.found : (p.sink ? p.sink.found : 0),
+      // The lines themselves once the read is done (not while it runs: the overlay polls this every few seconds).
+      ...(p.state === 'done' && p.sink && p.sink.lines instanceof Map ? { lines: _rescanTailLines(p.sink) } : {}),
       logs: p.result ? p.result.logs : 0,
       exports: p.result ? p.result.exports : (p.exports || 0),
       sent: p.result ? p.result.sent : (p.sink ? p.sink.sent : 0),
@@ -68039,6 +68572,7 @@ module.exports = {
   // Meter History on disk + its own endpoint (2026-10-04).
   FIGHT_HISTORY_MAX, FIGHT_HISTORY_KEEP_MS, _saveFightHistory, _loadFightHistory, _resettleRestoredFights,
   _fightHistoryPayload, _setUploadOptsForTest: (o) => { _uploadOpts = o; },
+  _raidFightsList, _raidFightBoard, _resetRaidFightsForTest,
   // Target Info history (2026-10-19): the last 50 targets, the frame hook, the slain-line hook, the past-mob shape and its endpoint.
   TGT_HIST_MAX, TGT_HIST_KEEP_MS, _tgtHistNoteFromState, _tgtHistNoteSlain, _targetHistoryPayload, _pastMobInfo,
   _saveTargetHistory, _loadTargetHistory, _trimTargetHistory,

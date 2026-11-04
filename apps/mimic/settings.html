@@ -128,7 +128,7 @@
   </div>
   <div id="acctSignedOut" style="margin-top:10px">
     <button id="acctSignInBtn" type="button" style="background:#5865f2;border:none;color:#fff;padding:8px 14px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:12px;display:inline-flex;align-items:center;gap:8px">
-      <span style="font-size:14px">⛓</span> Sign in to Wolf Pack
+      <span style="font-size:14px">⛓</span> <span id="acctSignInLabel">Sign in to Wolf Pack</span>
     </button>
     <div class="hint" id="acctSignInHint">Opens your browser at wolfpack.quest. Sign in with the Discord account you use in the guild.</div>
   </div>
@@ -420,6 +420,22 @@
     🛡 Add Windows Defender EQ Exceptions
   </button>
   <div id="defenderResult" class="hint" style="margin-top:6px"></div>
+
+  <h2 id="eqdates">EverQuest won't start unless you change your time zone?</h2>
+  <div class="hint" style="margin-bottom:8px">
+    Players on the Project Quarm Discord found that a few game files can have a broken
+    creation date, and that EverQuest then only starts after the Windows time zone is changed.
+    This looks for those files and gives them a valid date. <b>It changes only file dates,
+    never what is inside a file.</b> Close EverQuest first.
+  </div>
+  <button id="eqdatesScan" type="button"
+    style="margin-top:2px;background:var(--wp-panel);color:var(--wp-text);border:1px solid var(--wp-border);border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">
+    Check my EQ files
+  </button>
+  <button id="eqdatesFix" type="button" style="display:none;margin-top:2px;margin-left:6px;background:var(--wp-panel);color:var(--wp-text);border:1px solid var(--wp-border);border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">
+    Fix them
+  </button>
+  <div id="eqdatesResult" class="hint" style="margin-top:6px"></div>
 
   <h2>Windows clock</h2>
   <div class="hint" style="margin-bottom:8px">
@@ -1381,6 +1397,8 @@
   let _signedInNow = false;
   // The Guild choice. The list is the hub directory (Wolf Pack first); a guild that is not listed is pasted as an address.
   // Switching writes the guild's server address through main (the Bot URL field above follows it) and signs this PC out.
+  // The no-guild choice is stored as the hub '~player' and listed as '__player' in the select.
+  function _hubSelValue(){ return _hub.slug === '~player' ? '__player' : _hub.slug; }
   async function _loadHubs(){
     try {
       const r = await window.mimic.hubList();
@@ -1388,20 +1406,21 @@
       _hub = r.current || _hub;
       const sel = document.getElementById('hubSel');
       const opts = r.hubs.slice();
-      if (!opts.some(x => x.slug === _hub.slug)) opts.push(_hub);
+      if (_hub.slug !== '~player' && !opts.some(x => x.slug === _hub.slug)) opts.push(_hub);
       sel.innerHTML = '';
       for (const x of opts) { const o = document.createElement('option'); o.value = x.slug; o.textContent = x.display_name; sel.appendChild(o); }
+      const pl = document.createElement('option'); pl.value = '__player'; pl.textContent = 'No guild — just sync my PoP flags'; sel.appendChild(pl);
       const p = document.createElement('option'); p.value = '__paste'; p.textContent = 'Paste a guild address…'; sel.appendChild(p);
-      sel.value = _hub.slug;
+      sel.value = _hubSelValue();
     } catch (e) { /* the directory is a convenience: the Bot URL field below still works */ }
   }
   async function _chooseHub(choice){
     const note = document.getElementById('hubNote');
-    if (_signedInNow && !confirm('Switching guilds signs you out of ' + _hub.display_name + ' on this PC. You will need to link again. Continue?')) { document.getElementById('hubSel').value = _hub.slug; return; }
+    if (_signedInNow && !confirm('Switching guilds signs you out of ' + _hub.display_name + ' on this PC. You will need to link again. Continue?')) { document.getElementById('hubSel').value = _hubSelValue(); return; }
     const wasClean = _settingsSig() === _cleanSig;
     let r;
     try { r = await window.mimic.hubSet(choice); } catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
-    if (!r || r.ok === false) { note.textContent = (r && r.error) || 'Could not switch guilds.'; document.getElementById('hubSel').value = _hub.slug; return; }
+    if (!r || r.ok === false) { note.textContent = (r && r.error) || 'Could not switch guilds.'; document.getElementById('hubSel').value = _hubSelValue(); return; }
     _hub = r.hub;
     document.getElementById('hubPasteRow').style.display = 'none';
     document.getElementById('hubAddr').value = '';
@@ -1417,6 +1436,7 @@
     const v = e.target.value;
     if (v === '__paste') { document.getElementById('hubPasteRow').style.display = 'flex'; document.getElementById('hubAddr').focus(); return; }
     document.getElementById('hubPasteRow').style.display = 'none';
+    if (v === '__player') { if (_hub.slug !== '~player') _chooseHub({ player: true }); return; }
     if (v !== _hub.slug) _chooseHub({ slug: v });
   });
   document.getElementById('hubUseBtn').addEventListener('click', () => _chooseHub({ address: document.getElementById('hubAddr').value }));
@@ -1425,6 +1445,12 @@
     const session = status && status.mimicSession;
     _signedInNow = !!session;
     if (status && status.hub) _hub = status.hub;
+    // The no-guild choice signs in to Raid Mimic for flag syncing, not to Wolf Pack.
+    const _isPlayerHub = _hub.slug === '~player';
+    document.getElementById('acctSignInLabel').textContent = _isPlayerHub ? 'Sign in to sync my PoP flags' : 'Sign in to Wolf Pack';
+    document.getElementById('acctSignInHint').textContent = _isPlayerHub
+      ? 'Opens your browser at raidmimic.com. Sign in with Discord. Only your PoP flags are synced; there are no parses or guild features without a guild.'
+      : 'Opens your browser at wolfpack.quest. Sign in with the Discord account you use in the guild.';
     document.getElementById('acctSignedOut').style.display = (!linking && !session) ? '' : 'none';
     document.getElementById('acctLinking').style.display   = linking ? '' : 'none';
     document.getElementById('acctSignedIn').style.display  = session ? '' : 'none';
@@ -1463,7 +1489,7 @@
         session.display_name || session.discord_id || 'your Discord account';
       document.getElementById('acctOfficerBadge').style.display = session.is_officer ? '' : 'none';
       document.getElementById('acctLinkedAt').textContent = [
-        _guildLine(session.guild),
+        session.player ? 'Signed in to Raid Mimic (flag sync): your PoP flags only, no guild' : _guildLine(session.guild),
         session.linked_at ? 'Linked ' + new Date(session.linked_at).toLocaleString() : '',
       ].filter(Boolean).join(' · ');
     }
@@ -2044,6 +2070,46 @@
         btn.disabled = false; btn.textContent = orig;
         refresh();
       });
+    });
+  })();
+
+  // ── EverQuest file creation dates ─────────────────────────────────────────
+  // Check, then (only if something is broken) Fix. Both go through main's two handlers; the fix
+  // re-scans there, so this page never sends a file list.
+  (function () {
+    var scanBtn = document.getElementById('eqdatesScan');
+    var fixBtn  = document.getElementById('eqdatesFix');
+    var out     = document.getElementById('eqdatesResult');
+    if (!scanBtn || !fixBtn || !out) return;
+    if (!(window.mimic && window.mimic.eqFileDatesScan)) { scanBtn.style.display = 'none'; return; }
+    function esc(t){ return String(t == null ? '' : t).replace(/[&<>"]/g, function (c) {
+      return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' })[c]; }); }
+    function say(html) { out.innerHTML = html; }
+    function plural(n) { return n + (n === 1 ? ' file' : ' files'); }
+    scanBtn.addEventListener('click', function () {
+      scanBtn.disabled = true; fixBtn.style.display = 'none'; say('Checking…');
+      window.mimic.eqFileDatesScan().then(function (r) {
+        if (!r || !r.ok) { say('<span style="color:var(--wp-red)">' + esc((r && r.error) || 'Could not check.') + '</span>'); return; }
+        if (!r.bad) { say('<span style="color:var(--wp-green)">No broken dates found</span> (your problem is something else).'); return; }
+        say('<span style="color:var(--wp-gold)">' + plural(r.bad) + ' ' + (r.bad === 1 ? 'has' : 'have') + ' a broken creation date.</span>');
+        fixBtn.style.display = '';
+      }).catch(function (e) { say('<span style="color:var(--wp-red)">Failed: ' + esc(e && e.message) + '</span>'); })
+        .then(function () { scanBtn.disabled = false; });
+    });
+    fixBtn.addEventListener('click', function () {
+      fixBtn.disabled = true; say('Fixing…');
+      window.mimic.eqFileDatesFix().then(function (r) {
+        if (r && r.ok) {
+          fixBtn.style.display = 'none';
+          say('<span style="color:var(--wp-green)">Fixed ' + (r.fixed || 0) + '.</span> You can set Windows back to your normal time zone.');
+        } else if (r && r.error) {
+          say('<span style="color:var(--wp-red)">' + esc(r.error) + '</span>');
+        } else {
+          say('<span style="color:var(--wp-red)">Fixed' + ((r && r.fixed) || 0) + ', could not fix ' + ((r && (r.failed || r.remaining)) || 0)
+            + '.</span> Run Mimic as administrator and try again.');
+        }
+      }).catch(function (e) { say('<span style="color:var(--wp-red)">Failed: ' + esc(e && e.message) + '</span>'); })
+        .then(function () { fixBtn.disabled = false; });
     });
   })();
 

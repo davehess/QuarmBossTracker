@@ -22,11 +22,11 @@ const agent = createRequire(import.meta.url)('../packages/wolfpack-logsync/index
 const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const z2 = n => String(n).padStart(2, '0');
+// One clock per test, mid-second: stamping each line from the live clock let a second boundary turn a 4 s gap into 5 s (CI, 2026-10-31).
 let NOW = 0;
 function stamp(secondsAgo) {
-  // One mid-second clock per test (NOW, set in beforeEach): a second boundary turned a 4 s gap into 5 s. And EverQuest
-  // zero-pads the day ("Aug 02"): a space-padded "Nov  1" failed this file on the 1st to 9th of every month.
   const d = new Date(NOW - secondsAgo * 1000);
+  // EverQuest zero-pads the day ("Aug 02"); a space-padded "Nov  1" failed this file on the 1st to 9th of every month.
   return `[${DAY[d.getDay()]} ${MON[d.getMonth()]} ${z2(d.getDate())} `
     + `${z2(d.getHours())}:${z2(d.getMinutes())}:${z2(d.getSeconds())} ${d.getFullYear()}]`;
 }

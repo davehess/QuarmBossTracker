@@ -27,7 +27,8 @@ const CONTAINERS = ['Settings', 'Updates', 'Open', 'Help', '🗂 Overlay sets'];
 // Items added since the snapshot that are features, not structure: "Span all screens" under the Canvas entry (2026-10-19).
 // ... and the setup walkthrough: one plain item on every build (the trail was picked, 2026-10-19, DECISIONS §383).
 // ... and "Take the tour again" beside it (the guild lead, 2026-10-21), the same call as the dashboard's button.
-const NEW_ITEMS = [/^ {2}↳ Span all screens/, /^✨ Setup walkthrough$/, /^🧭 Take the tour again$/];
+// ... and the EQ file-date repair beside them (the guild lead, 2026-11-03), the tray door to Settings' card.
+const NEW_ITEMS = [/^ {2}↳ Span all screens/, /^✨ Setup walkthrough$/, /^🧭 Take the tour again$/, /^Fix EQ file dates \(time-zone crash\)…$/];
 // Items the snapshot has that were removed on purpose: the beta-only A / B layout submenu for that walkthrough.
 const REMOVED = [
   '{"label":"A · one step at a time","click":"() => openWelcome(\'a\')"}',
@@ -193,7 +194,7 @@ describe('the groups behind the submenus', () => {
   it('Help › — the setup walkthrough is one plain item on stable and beta alike', () => {
     for (const name of ['win32 full, stable, flags on', 'win32 beta build, local only, update pending, no uninstaller']) {
       const help = sub(top(name), 'Help');
-      expect(labelsOf(help)).toEqual(['✨ Setup walkthrough', '🧭 Take the tour again', 'Send feedback — bug or idea', 'Restart agent']);
+      expect(labelsOf(help)).toEqual(['✨ Setup walkthrough', '🧭 Take the tour again', 'Send feedback — bug or idea', 'Fix EQ file dates (time-zone crash)…', 'Restart agent']);
       expect(help[0].submenu).toBeUndefined();   // no A / B layout pick any more
       expect(describeItem(help[0]).click).toBe("() => openWelcome()");
       expect(describeItem(help[1]).click).toBe("() => openTour()");

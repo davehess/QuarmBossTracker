@@ -70,6 +70,10 @@ function build() {
     ${sliceBlock(src, 'function _isTimedDurationFormula(f)', '\n}')}
     ${sliceBlock(src, 'function _rebuildBuffMatchers()', '\n}\n')}
     ${sliceBlock(src, 'function parseDebuffLanding(line, observer)', '\n}')}
+    const _remoteSlowsByTarget = new Map();   // debuffer precedence: nothing relayed in these cases
+    ${sliceBlock(src, 'const SLOW_AMBIG_FAMILIES = [', '\n];')}
+    ${sliceBlock(src, 'function _slowSameFamily(casterName, row)', '\n}')}
+    ${sliceBlock(src, 'function _dropSupersededBystanders(entries, nowMs)', '\n}')}
     ${sliceBlock(src, 'function _bestSlowForTarget(targetLower, nowMs, wantId)', '\n}')}
     ${sliceBlock(src, 'function _noteSlowForTarget(evt, caster)', '\n}')}
     _rebuildBuffMatchers();

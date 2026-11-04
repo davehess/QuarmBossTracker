@@ -32,6 +32,7 @@ const { spawn } = require('child_process');
 const { startZealWatch, chatLineOf } = require('./zealPipe');
 const zealUpdater = require('./zealUpdater');
 const uiPacks = require('./uiPacks');
+const eqFileDates = require('./eqFileDates');
 const { applyIniKeyEdits } = require('./iniKeyEdits');
 const { visibleUiRects, zealAreas, applyPicks, cleanPicks } = require('./uiClearRects');
 const uiLayouts = require('./uiLayouts');
@@ -2790,7 +2791,8 @@ async function getHubDirectory(force) {
 async function setHub(choice) {
   const c = choice || {};
   let next = null;
-  if (c.address) next = hubs.parseGuildAddress(c.address);
+  if (c.player === true) next = { ...hubs.PLAYER_HUB };   // "No guild — just sync my PoP flags": fixed here, not taken from the page
+  else if (c.address) next = hubs.parseGuildAddress(c.address);
   else if (c.slug) next = (await getHubDirectory(false)).find(h => h.slug === String(c.slug)) || null;
   if (!next) return { ok: false, error: c.address ? 'That is not a guild address Mimic can use. Paste the https address your officer gave you.' : 'That guild is not in the list.' };
   const cfg = loadConfig();
@@ -4368,6 +4370,22 @@ function _overlaySetTrayItems() {
 }
 
 // ── Launch the agent under Electron's Node ──────────────────────────────────
+// The Windows 7 build (the guild lead, 2026-11-04) runs on Electron 22, whose Node is 16: the agent then needs
+// node16-shim.js (a global fetch and AbortSignal.timeout) loaded first. The shim is copied out of the app archive to
+// userData because a plain Node --require cannot be trusted to read from inside app.asar. Any Node 18+ gets no
+// extra arguments, so the normal build is untouched.
+function _node16ShimArgs() {
+  if (Number(String(process.versions.node || '0').split('.')[0]) >= 18) return [];
+  try {
+    const dest = path.join(app.getPath('userData'), 'node16-shim.js');
+    fs.writeFileSync(dest, fs.readFileSync(path.join(__dirname, 'node16-shim.js')));
+    return ['--require', dest];
+  } catch (e) {
+    try { appendAgentLog(`[mimic] Node ${process.versions.node}: could not stage the Node 16 shim (${e.message}); the agent may not start\n`); } catch { /* */ }
+    return [];
+  }
+}
+
 async function launchAgent() {
   if (quitting) return;
   const cfg = loadConfig();
@@ -4497,7 +4515,7 @@ async function launchAgent() {
   // agent literally cannot scan the crashes/ folder unless the user opted in.
   if (cfg.crashReports === true) env.WOLFPACK_CRASH_REPORTS = '1';
 
-  agentProc = spawn(process.execPath, args, {
+  agentProc = spawn(process.execPath, [..._node16ShimArgs(), ...args], {
     env,
     cwd: AGENT_DIR(),
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -7858,6 +7876,9 @@ function _makeFocusDebouncer(onFlip, ms) {
 }
 const _focusDeb = _makeFocusDebouncer((ok) => {
   _focusOk = ok;
+  // Another app came to the front, or EverQuest came back: no overlay may stay armed (a lost "pointer left" report
+  // is what kept clicks from reaching the game after an alt-tab). A pointer still on a control re-arms on its next move.
+  try { _disarmAllHover(); } catch (e) { void e; }
   let hides = false;
   try { hides = _focusGateOn(loadConfig(), process.platform); } catch (e) { void e; }
   if (hides) {
@@ -10782,7 +10803,9 @@ function currentStatus() {
       is_officer:   !!cfg.session.identity?.is_officer,
       // The guild a hub session belongs to ({ slug, display_name, role }); null for a Wolf Pack session.
       guild:        hubs.sessionGuild(cfg.session.identity, hubs.hubOf(cfg)),
-      linked_at:    cfg.session.linked_at || null,
+      // A flag-sync-only link (no guild): the pages say "Signed in to Raid Mimic (flag sync)" and leave the guild features out.
+      player:       hubs.isPlayerSession(cfg.session.identity),
+      linked_at:   cfg.session.linked_at || null,
     } : null,
     mimicLinking: _linkInFlight ? {
       user_code:        _linkInFlight._pub.user_code,
@@ -11440,6 +11463,10 @@ function buildTrayMenu() {
     // to load, so the old browser route stays as the fallback.
     { label: 'Send feedback — bug or idea',
       click: () => { if (!openFeedback()) shell.openExternal(`http://127.0.0.1:${agentPort}/#feedback`); } },
+    // Tray ↔ dashboard parity: the card lives in Settings (next to the Windows Defender and clock repairs);
+    // this opens Settings scrolled to it, so the tray and Settings drive the same two IPC handlers.
+    { label: 'Fix EQ file dates (time-zone crash)…', visible: process.platform === 'win32',
+      click: () => { try { openSettings('eqdates'); } catch { /* */ } } },
     { label: 'Restart agent', click: async () => {
         appendAgentLog('[mimic] tray "Restart agent" clicked\n');
         if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
@@ -11754,6 +11781,13 @@ async function checkAgentUpdate(opts) {
 const _ALPHA_FEED  = { provider: 'generic', url: 'https://github.com/davehess/QuarmBossTracker/releases/download/mimic-alpha/', channel: 'alpha' };
 const _GITHUB_FEED = { provider: 'github', owner: 'davehess', repo: 'QuarmBossTracker' };
 let _alphaFeedSet = false;
+// The Windows 7 build (the guild lead, 2026-11-04: "a beta release for Windows 7 specifically"). It is built on
+// Electron 22, the last Electron that starts on Windows 7, so it must NEVER take a normal update: every other build is
+// Electron 31 and would not open there. It follows the beta line as <version>-win7.<run> on ONE rolling release, tag
+// `mimic-win7` (build-mimic-win7.yml), read from its fixed address like the alpha, and ignores every channel toggle.
+const _IS_WIN7_BUILD = Number(String(process.versions.electron || '99').split('.')[0]) < 23;
+const _WIN7_FEED     = { provider: 'generic', url: 'https://github.com/davehess/QuarmBossTracker/releases/download/mimic-win7/', channel: 'win7' };
+let _win7FeedSet = false;
 // → 'alpha' | 'beta' | 'stable'
 function _updateTrack(cfg, version) {
   if (cfg.forceStable === true) return 'stable';
@@ -11763,6 +11797,13 @@ function _updateTrack(cfg, version) {
 }
 function _applyUpdaterChannel() {
   if (!autoUpdater) return false;
+  if (_IS_WIN7_BUILD) {
+    if (!_win7FeedSet) { autoUpdater.setFeedURL(_WIN7_FEED); _win7FeedSet = true; }
+    autoUpdater.allowPrerelease = true;
+    autoUpdater.channel         = 'win7';
+    autoUpdater.allowDowngrade  = false;
+    return true;
+  }
   const cfg = loadConfig();
   const version = String(app.getVersion() || '');
   const _buildIsBeta = /-/.test(version);
@@ -12515,6 +12556,61 @@ ipcMain.handle('overlay-resize-preset', (e, preset) => {
 // momentarily make ITS window interactive while the cursor is over it, then
 // restore the click-through state on mouseleave. Standard Electron recipe.
 const _hoverArmFrames = new Set();
+// The safety net under the handshake (the guild lead, 2026-11-03: "often when i alt tab and open a different window
+// and switch back to everquest, sometimes clicks (right and left) dont make it to the game until i hide all
+// overlays"). Disarming used to rest on the page alone reporting that the pointer left a control. A lost report
+// (alt-tab while pointing at one is the usual way) left that window catching clicks; for the screen-sized Canvas
+// (or the Map in Full mode) that is the whole screen, and moving the mouse could never heal it, because the pointer
+// cannot leave a window that covers the screen. So main keeps its own list of armed windows and puts one back to
+// click-through when: another app comes to the front or EverQuest comes back (_focusDeb below); the pointer is
+// off a normal overlay; or a screen-covering one stopped being re-armed (the preload re-arms every 150 ms while the
+// pointer moves over a control) and the pointer has moved since its last arm.
+const HOVER_ARM_RENEW_MS = 1500;
+const _hoverArmed = new Map();      // armed window -> { at, x, y } of its last arm
+let _hoverArmWatch = null;
+// Pure: should an armed window go back to click-through now? `cursor` = screen point or null, `insideBounds` = the
+// pointer is within the window's rectangle.
+function _hoverArmStale(rec, now, cursor, coversScreen, insideBounds) {
+  if (!rec) return true;
+  if (!coversScreen) return !insideBounds;
+  if (now - rec.at <= HOVER_ARM_RENEW_MS) return false;
+  return !(cursor && cursor.x === rec.x && cursor.y === rec.y);   // a parked pointer keeps it; a moved one without a re-arm drops it
+}
+// What the lock state says this overlay should be when nothing is hovered.
+function _restoreClickThrough(win) {
+  if (!win || win.isDestroyed()) return;
+  // A window in SINGLE-overlay setup mode stays interactive (its Done button and resize edges).
+  if (_inSingleSetup(win)) { win.setIgnoreMouseEvents(false); return; }
+  // The Timers canvas (and the Map in Full mode) is screen-sized: back to click-through, unlocked or not.
+  if (win === canvasWindow || (win === mapWindow && _mapFull)) { win.setIgnoreMouseEvents(true, { forward: true }); return; }
+  const cfg = loadConfig();
+  const locked = !setupMode && cfg.overlaysLocked !== false;
+  if (locked) win.setIgnoreMouseEvents(true, { forward: true });
+  else        win.setIgnoreMouseEvents(false);
+}
+function _disarmHover(win) {
+  _hoverArmed.delete(win);
+  try { _restoreClickThrough(win); } catch (e) { void e; }
+  if (!_hoverArmed.size && _hoverArmWatch) { clearInterval(_hoverArmWatch); _hoverArmWatch = null; }
+}
+function _disarmAllHover() {
+  for (const w of [..._hoverArmed.keys()]) _disarmHover(w);
+}
+function _watchHoverArms() {
+  if (_hoverArmWatch) return;
+  _hoverArmWatch = setInterval(() => {
+    let p = null;
+    try { p = screen.getCursorScreenPoint(); } catch (e) { void e; }
+    const now = Date.now();
+    for (const [w, rec] of [..._hoverArmed]) {
+      if (!w || w.isDestroyed()) { _hoverArmed.delete(w); continue; }
+      const hit = _overlayEntries().find(([, x]) => x === w);
+      const covers = !!(hit && _coversScreen(hit[0]));
+      if (_hoverArmStale(rec, now, p, covers, _cursorInsideWindow(w))) _disarmHover(w);
+    }
+    if (!_hoverArmed.size && _hoverArmWatch) { clearInterval(_hoverArmWatch); _hoverArmWatch = null; }
+  }, 250);
+}
 ipcMain.handle('overlay-hover-interactive', (e, wantInteractive) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
@@ -12538,18 +12634,14 @@ ipcMain.handle('overlay-hover-interactive', (e, wantInteractive) => {
         }
       } catch { /* a log line is never worth the handshake */ }
       win.setIgnoreMouseEvents(false);
+      let at = { x: null, y: null };
+      try { at = screen.getCursorScreenPoint(); } catch (err) { void err; }
+      _hoverArmed.set(win, { at: Date.now(), x: at.x, y: at.y });
+      _watchHoverArms();
     } else {
-      // Restore whatever the lock state dictates for this window. A window
-      // in SINGLE-overlay setup mode stays interactive — this restore path
-      // is exactly what used to re-lock it on the first mouseleave, making
-      // its Done button and resize edges unclickable.
-      if (_inSingleSetup(win)) { win.setIgnoreMouseEvents(false); return true; }
-      // The Timers canvas is screen-sized: back to click-through, unlocked or not.
-      if (win === canvasWindow || (win === mapWindow && _mapFull)) { win.setIgnoreMouseEvents(true, { forward: true }); return true; }
-      const cfg = loadConfig();
-      const locked = !setupMode && cfg.overlaysLocked !== false;
-      if (locked) win.setIgnoreMouseEvents(true, { forward: true });
-      else        win.setIgnoreMouseEvents(false);
+      // Restore whatever the lock state dictates for this window (_restoreClickThrough: single-overlay setup stays
+      // interactive, which is exactly what used to re-lock on the first mouseleave; the Canvas goes click-through).
+      _disarmHover(win);
     }
   } catch {}
   return true;
@@ -15438,6 +15530,39 @@ ipcMain.handle('defender-add-exclusions', async () => {
   appendAgentLog(`[defender] added ${done.length} exclusion(s)`
     + (failed.length ? `, ${failed.length} failed` : '') + `: ${done.join(', ')}\n`);
   return { ok: failed.length === 0, added: done, failed };
+});
+
+// ── EverQuest file creation dates (the "only starts after I change my time zone" fix) ──
+// Players on the Project Quarm Discord found that some game files have an invalid creation date, and that
+// the game then only starts after the Windows time zone is changed. Scan finds those files; Fix gives each
+// a valid creation date. Only dates change, never file contents. The fix re-scans on its own, so the
+// renderer cannot hand over a path list: nothing but what the scan found ever reaches PowerShell.
+// Settings → "EverQuest won't start…" and the tray's Help item are the two doors to the same two handlers.
+async function _eqDatesPrecheck() {
+  if (process.platform !== 'win32') return { ok: false, error: 'Windows only.' };
+  const dir = _zealEqDir();
+  if (!dir) return { ok: false, error: 'Mimic could not find your EverQuest folder. Set it in Settings first.' };
+  if (await _isEqRunning()) return { ok: false, error: 'Close EverQuest first.' };
+  return { ok: true, dir };
+}
+ipcMain.handle('eq-file-dates-scan', async () => {
+  const pre = await _eqDatesPrecheck();
+  if (!pre.ok) return pre;
+  const r = await eqFileDates.scanEqFileDates(pre.dir);
+  if (r.error) return { ok: false, error: r.error };
+  appendAgentLog(`[eqdates] scan: ${r.scanned} files, ${r.bad.length} with a broken creation date`
+    + (r.errors ? `, ${r.errors} unreadable` : '') + (r.truncated ? ', stopped at the file limit' : '') + '\n');
+  return { ok: true, scanned: r.scanned, bad: r.bad.length, errors: r.errors, truncated: !!r.truncated };
+});
+ipcMain.handle('eq-file-dates-fix', async () => {
+  const pre = await _eqDatesPrecheck();
+  if (!pre.ok) return pre;
+  const r = await eqFileDates.scanEqFileDates(pre.dir);
+  if (r.error) return { ok: false, error: r.error };
+  if (!r.bad.length) return { ok: true, fixed: 0, failed: 0, remaining: 0 };
+  const out = await eqFileDates.fixEqFileDates(pre.dir, r.bad);
+  appendAgentLog(`[eqdates] fix: ${out.fixed} fixed, ${out.failed.length} failed, ${out.remaining} still broken\n`);
+  return { ok: out.failed.length === 0 && !out.remaining, fixed: out.fixed, failed: out.failed.length, remaining: out.remaining };
 });
 
 // ── Windows clock sync ──────────────────────────────────────────────────────

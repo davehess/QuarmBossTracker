@@ -235,6 +235,36 @@ describe('swing timer — measured from your own rounds', () => {
     expect(h._meHands(h._meSwings.get('aldenmar'))).toBeNull();
   });
 
+  // FB-107 (a member's monk on a two-hand blunt weapon): the hands are named by the ORDER of two verbs in
+  // one round, and in the report's 15 minutes that order was crush-first in 71 rounds and punch-first in
+  // 76. The bare majority won, and every crush read "OH". A split order is no evidence of a main hand.
+  it('names no hand when the verbs come in either order (FB-107)', () => {
+    const h = load();
+    for (let i = 0; i < 20; i++) swing(h, 'Aldenmar', i % 2 ? ['crush', 'punch'] : ['punch', 'crush'], 2800);
+    expect(h._meHands(h._meSwings.get('aldenmar'))).toBeNull();
+    expect(h._meSwingState('aldenmar', { autoattack: true, gauges: [] }, clock).hands).toBeNull();
+    // 52 / 48 is the report's own split.
+    const h2 = load();
+    for (let i = 0; i < 25; i++) swing(h2, 'Brackwyn', i % 25 < 13 ? ['punch', 'crush'] : ['crush', 'punch'], 2800);
+    expect(h2._meHands(h2._meSwings.get('brackwyn'))).toBeNull();
+  });
+
+  it('still names the hands when one order carries the rounds, with a stray the other way', () => {
+    const h = load();
+    for (let i = 0; i < 12; i++) swing(h, 'Corvale', ['slash', 'pierce'], 2800);
+    swing(h, 'Corvale', ['pierce', 'slash'], 2800);
+    for (let i = 0; i < 4; i++) swing(h, 'Corvale', ['slash', 'pierce'], 2800);
+    expect(h._meHands(h._meSwings.get('corvale'))).toEqual({ mh: 'slash', oh: 'pierce' });
+  });
+
+  it('a weapon change stops being read through the old pairing', () => {
+    const h = load();
+    for (let i = 0; i < 10; i++) swing(h, 'Rethlan', ['slash', 'pierce'], 2800);
+    expect(h._meHands(h._meSwings.get('rethlan'))).toEqual({ mh: 'slash', oh: 'pierce' });
+    for (let i = 0; i < 45; i++) swing(h, 'Rethlan', ['crush', 'crush'], 2800);   // a two-hander now
+    expect(h._meHands(h._meSwings.get('rethlan'))).toBeNull();
+  });
+
   it('prefers Zeal\'s attack gauge (34) whenever a build sends it', () => {
     const h = load();
     const s = h._meSwingState('corvale', { autoattack: true, gauges: [{ slot: 34, hp_pct: 40, text: '1' }] }, clock);
@@ -319,6 +349,18 @@ describe('target read-outs', () => {
     h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: ['Enrage', 'Unslowable'] } });
     expect(h._meTargetExtras(st(), 'Aldenmar', clock).reverse_slow).toBe(false);
     expect(h._meTargetExtras(st({ target_name: 'a gnoll shaman' }), 'Aldenmar', clock).reverse_slow).toBeNull();   // no row yet: unknown, not "no"
+  });
+
+  // The guild lead, 2026-11-04: a partial slow (npc_types.slow_mitigation) rides to the HUD beside unslowable.
+  it('slow_mitigation comes from the mob-info row; no row is null, a row without it is 0', () => {
+    const h = load();
+    h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: [], slow_mitigation: 80 } });
+    expect(h._meTargetExtras(st(), 'Aldenmar', clock).slow_mitigation).toBe(80);
+    h._mobInfoByName.set('a gnoll shaman|12', { at: clock, mob: { specials: ['Unslowable'] } });
+    const t = h._meTargetExtras(st({ target_name: 'a gnoll shaman' }), 'Aldenmar', clock);
+    expect(t.slow_mitigation).toBe(0);
+    expect(t.unslowable).toBe(true);
+    expect(h._meTargetExtras(st({ target_name: 'a gnoll scout' }), 'Aldenmar', clock).slow_mitigation).toBeNull();
   });
 
   it('enrage and unslowable come from the mob-info row; ENRAGED from the server\'s own lines', () => {

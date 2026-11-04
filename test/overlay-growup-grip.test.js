@@ -81,3 +81,28 @@ describe('the grip is there only while grow-up is on, and clear of the ✕', () 
     expect(PRELOAD).not.toMatch(/\n\s*document\.body\.classList\.add\('wp-growup'\)/);   // only _wpApplyGrowUp toggles it
   });
 });
+
+// ▭ A folded window (one title row tall) keeps its row height and both its edges while the ◥ grip sizes it in width
+// (the guild lead, 2026-10-28: "minimized overlays need to be draggable and resizable still"). The 60px floor would
+// otherwise stretch it on the first step, and the bottom-anchored arithmetic would raise its top.
+describe('the top-right grip on a folded window', () => {
+  const ROW = { x: 400, y: 900, width: 300, height: 32 };   // bottom edge at 932
+  it('sizes in width alone: height and top stay, whatever the vertical travel', () => {
+    for (const dy of [-700, -40, 0, 25, 9999]) {
+      const nb = _resizeUpBounds(ROW, 70, dy, WA, null, true);
+      expect(nb).toEqual({ x: 400, y: 900, width: 370, height: 32 });
+    }
+  });
+  it('keeps the width floor (120, or the window\'s own minimum) and the screen edge', () => {
+    expect(_resizeUpBounds(ROW, -9999, 0, WA, null, true).width).toBe(120);
+    expect(_resizeUpBounds(ROW, -9999, 0, WA, { width: 260, height: 24 }, true).width).toBe(260);
+    expect(_resizeUpBounds(ROW, 9999, 0, WA, null, true).width).toBe(1920 - 400);
+  });
+  it('an unfolded window is unchanged by the new argument', () => {
+    expect(_resizeUpBounds(B0, 50, -120, WA, null, false)).toEqual({ x: 400, y: 480, width: 350, height: 320 });
+    expect(_resizeUpBounds(B0, 50, -120, WA, null)).toEqual({ x: 400, y: 480, width: 350, height: 320 });
+  });
+  it('the session passes the window\'s folded flag', () => {
+    expect(MAIN).toMatch(/_resizeUpBounds\(b0, cur\.x - c0\.x, cur\.y - c0\.y, wa, \{ width: mw, height: mh \}, !!s\.win\.__wpFolded\)/);
+  });
+});
