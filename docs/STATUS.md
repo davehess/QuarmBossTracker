@@ -103,6 +103,15 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 Mob Info tags a partially slowable mob, "Slow −N%" (bot 4.0.53 on main `969605f7`; agent 4.0.61 on beta `c3c4ee8b`;
+  2026-11-04).** The guild lead: *"Obsidian Tree Spider Queen is only partially slowable apparently. look for those tags"*. Quarm's
+  server cuts every slow on an NPC by `npc_types.slow_mitigation` percent and tells the client nothing (EQMacEmu
+  `zone/bonuses.cpp`; the messages in `Mob::SlowMitigation` are commented out). 650 NPCs carry 10–99 (Obsidian Tree Spider
+  Queen 80, Babnoxis 90, Coirnav 95). The bot's mob-info now selects and returns `slow_mitigation` (pack version 11); Mobinfo
+  draws the chip next to the specials when 0 < N < 100; the HUD target extras carry it but `me.html` does not draw it yet.
+  Separate from Unslowable (special 12) and Reverse Slow (50). Tests: `test/mobinfo-slow-mitigation.test.js`,
+  `test/mobinfo-slow-mitigation-chip.test.js`.
+
 - **🧪 A Windows 7 build of Mimic (beta `a26291bf`, first build 2026-11-04; DECISIONS §533).** For a member on Windows 7 who
   needs the charm tracker. Electron 22 (the last that starts on Windows 7) with the agent on its Node 16 plus
   `apps/mimic/node16-shim.js` (fetch, `AbortSignal.timeout`). `build-mimic-win7.yml` rebuilds it on every beta push into ONE
