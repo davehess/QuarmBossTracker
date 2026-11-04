@@ -4370,6 +4370,22 @@ function _overlaySetTrayItems() {
 }
 
 // ── Launch the agent under Electron's Node ──────────────────────────────────
+// The Windows 7 build (the guild lead, 2026-11-04) runs on Electron 22, whose Node is 16: the agent then needs
+// node16-shim.js (a global fetch and AbortSignal.timeout) loaded first. The shim is copied out of the app archive to
+// userData because a plain Node --require cannot be trusted to read from inside app.asar. Any Node 18+ gets no
+// extra arguments, so the normal build is untouched.
+function _node16ShimArgs() {
+  if (Number(String(process.versions.node || '0').split('.')[0]) >= 18) return [];
+  try {
+    const dest = path.join(app.getPath('userData'), 'node16-shim.js');
+    fs.writeFileSync(dest, fs.readFileSync(path.join(__dirname, 'node16-shim.js')));
+    return ['--require', dest];
+  } catch (e) {
+    try { appendAgentLog(`[mimic] Node ${process.versions.node}: could not stage the Node 16 shim (${e.message}); the agent may not start\n`); } catch { /* */ }
+    return [];
+  }
+}
+
 async function launchAgent() {
   if (quitting) return;
   const cfg = loadConfig();
@@ -4499,7 +4515,7 @@ async function launchAgent() {
   // agent literally cannot scan the crashes/ folder unless the user opted in.
   if (cfg.crashReports === true) env.WOLFPACK_CRASH_REPORTS = '1';
 
-  agentProc = spawn(process.execPath, args, {
+  agentProc = spawn(process.execPath, [..._node16ShimArgs(), ...args], {
     env,
     cwd: AGENT_DIR(),
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -11765,6 +11781,13 @@ async function checkAgentUpdate(opts) {
 const _ALPHA_FEED  = { provider: 'generic', url: 'https://github.com/davehess/QuarmBossTracker/releases/download/mimic-alpha/', channel: 'alpha' };
 const _GITHUB_FEED = { provider: 'github', owner: 'davehess', repo: 'QuarmBossTracker' };
 let _alphaFeedSet = false;
+// The Windows 7 build (the guild lead, 2026-11-04: "a beta release for Windows 7 specifically"). It is built on
+// Electron 22, the last Electron that starts on Windows 7, so it must NEVER take a normal update: every other build is
+// Electron 31 and would not open there. It follows the beta line as <version>-win7.<run> on ONE rolling release, tag
+// `mimic-win7` (build-mimic-win7.yml), read from its fixed address like the alpha, and ignores every channel toggle.
+const _IS_WIN7_BUILD = Number(String(process.versions.electron || '99').split('.')[0]) < 23;
+const _WIN7_FEED     = { provider: 'generic', url: 'https://github.com/davehess/QuarmBossTracker/releases/download/mimic-win7/', channel: 'win7' };
+let _win7FeedSet = false;
 // → 'alpha' | 'beta' | 'stable'
 function _updateTrack(cfg, version) {
   if (cfg.forceStable === true) return 'stable';
@@ -11774,6 +11797,13 @@ function _updateTrack(cfg, version) {
 }
 function _applyUpdaterChannel() {
   if (!autoUpdater) return false;
+  if (_IS_WIN7_BUILD) {
+    if (!_win7FeedSet) { autoUpdater.setFeedURL(_WIN7_FEED); _win7FeedSet = true; }
+    autoUpdater.allowPrerelease = true;
+    autoUpdater.channel         = 'win7';
+    autoUpdater.allowDowngrade  = false;
+    return true;
+  }
   const cfg = loadConfig();
   const version = String(app.getVersion() || '');
   const _buildIsBeta = /-/.test(version);
