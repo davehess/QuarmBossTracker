@@ -109,7 +109,7 @@ describe('the bot: _buildMobInfo and the mob-info endpoint', () => {
     expect(bot).toMatch(/const n = parseInt\(sp\.get\('npc_id'\), 10\);/);
     expect(bot).toMatch(/\+ \(reqNpcId != null \? '\|n' \+ reqNpcId : ''\);/);
     expect(bot).toMatch(/_buildMobInfo\(supabase, \{ name, norm, caseKey, reqZoneId, reqGender, npcId: reqNpcId \}\)/);
-    expect(bot).toMatch(/const _MOB_PACK_VERSION = 10;/);
+    expect(bot).toMatch(/const _MOB_PACK_VERSION = 11;/);
   });
 });
 
