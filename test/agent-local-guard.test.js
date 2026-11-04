@@ -145,8 +145,8 @@ describe('wiring', () => {
   it('Mimic generates a per-launch secret and hands it to the agent in its env', () => {
     expect(main).toMatch(/const _LOCAL_SECRET = require\('crypto'\)\.randomBytes\(32\)\.toString\('hex'\);/);
     expect(main).toMatch(/WOLFPACK_LOCAL_SECRET:\s+_LOCAL_SECRET/);
-    // the one spawn of the agent child passes that env
-    expect((main.match(/spawn\(process\.execPath, args, \{\s*env,/g) || []).length).toBe(1);
+    // the one spawn of the agent child passes that env (the Windows 7 build's Node 16 shim rides ahead of the args)
+    expect((main.match(/spawn\(process\.execPath, \[\.\.\._node16ShimArgs\(\), \.\.\.args\], \{\s*env,/g) || []).length).toBe(1);
   });
   // Any loopback port, not only the remembered agent port: a port change must never strip the header and 403 every
   // file:// overlay; a local service that could read it is already code on the PC.

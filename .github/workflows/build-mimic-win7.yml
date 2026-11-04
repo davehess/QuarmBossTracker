@@ -1,0 +1,142 @@
+name: Build Mimic (Windows 7)
+
+# The Windows 7 build of Raid Mimic (the guild lead, 2026-11-04: "try a release on Electron 23 and Node 14 for him as a
+# beta release for Windows 7 specifically. He needs the charm stuff").
+#
+# WHY ELECTRON 22: Electron 23 dropped Windows 7, 8 and 8.1, so 22 is the newest that starts there. Its Node is 16.17
+# (Node 14 is not an option inside Electron 22, and the agent needs at least 16). The agent's two Node 18 needs, the
+# global fetch and AbortSignal.timeout, come from apps/mimic/node16-shim.js, which main.js loads ahead of the agent
+# whenever its Node is older than 18.
+#
+# WHAT IT BUILDS: the beta branch as it stands, at <beta version>-win7.<run number>, with Electron pinned to 22 for
+# this job only (apps/mimic/package.json keeps 31 for every other build). Every build REPLACES the files of ONE rolling
+# prerelease, tag `mimic-win7`, exactly like the alpha: the release feed lists only the newest 10 releases, and a
+# rolling release never crowds it (the 2026-07-30 Linux lesson). A Windows 7 install reads win7.yml from that fixed
+# address (main.js _WIN7_FEED) and never looks at the normal channels, whose Electron 31 builds would not start.
+#
+# NOT SIGNED: like every Mimic build until code signing exists (docs/code-signing.md).
+#
+# TRIGGERS: a push to beta touching Mimic or the agent (so the Windows 7 build follows beta), or a manual run.
+
+on:
+  push:
+    branches: [beta]
+    paths:    ['apps/mimic/**', 'packages/wolfpack-logsync/**', 'web/local/**', '.github/workflows/build-mimic-win7.yml']
+  workflow_dispatch:
+
+concurrency: build-mimic-win7
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Version + Electron 22 for this build only
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=$(jq -r .version apps/mimic/package.json); base="${base%%-*}"
+          v="${base}-win7.${{ github.run_number }}"
+          tmp=$(mktemp)
+          jq --arg v "$v" '.version=$v | .devDependencies.electron="22.3.27" | .build.electronVersion="22.3.27"' apps/mimic/package.json > "$tmp"
+          mv "$tmp" apps/mimic/package.json
+          echo "v=$v" >> "$GITHUB_OUTPUT"
+          echo "Windows 7 build: $v on Electron 22.3.27"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+
+      - name: Install + stage agent
+        working-directory: apps/mimic
+        run: npm install
+
+      - name: Check the shim loads under this Node and does nothing here
+        working-directory: apps/mimic
+        shell: bash
+        run: node -e "const f=globalThis.fetch; require('./node16-shim.js'); if (globalThis.fetch!==f) throw new Error('shim replaced a native fetch')"
+
+      - name: Build the local site (web/local)
+        working-directory: web/local
+        shell: bash
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund
+          npx next build
+          test -f out/inventory/index.html || { echo "::error::web/local did not export out/inventory/index.html"; exit 1; }
+
+      - name: Build Windows installer (Electron 22)
+        working-directory: apps/mimic
+        run: npm run dist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check the build really is Electron 22, and name its manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          ev=$(node -p "require('./apps/mimic/node_modules/electron/package.json').version")
+          case "$ev" in 22.*) echo "Electron $ev";; *) echo "::error::built with Electron $ev, not 22: it would not start on Windows 7"; exit 1;; esac
+          # electron-builder's github provider writes latest.yml whatever the version says; a Windows 7 install reads
+          # win7.yml from the rolling release with no fallback, so name it.
+          cp apps/mimic/dist/latest.yml apps/mimic/dist/win7.yml
+
+      - name: Release notes
+        shell: bash
+        run: |
+          cat > "$GITHUB_WORKSPACE/win7-notes.md" <<EOF
+          **Raid Mimic for Windows 7 — ${{ steps.ver.outputs.v }}**
+
+          - The current beta, built to run on Windows 7 (and 8 / 8.1).
+          - Charm tracker, pet tracker, triggers and the rest of the overlays, same as the beta.
+          - Updates itself from this page only; it never jumps to the normal builds, which no longer start on Windows 7.
+
+          ---
+          Not code-signed (SmartScreen → More info → Run anyway). Built on an older Electron for Windows 7; use the normal Mimic download on Windows 10 or 11.
+          EOF
+
+      - name: Move the tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git tag -f mimic-win7 "${{ github.sha }}"
+          ok=0
+          for wait in 2 4 8 16 0; do
+            if git push -f origin refs/tags/mimic-win7; then ok=1; break; fi
+            [ "$wait" -gt 0 ] && { echo "tag push failed, retrying in ${wait}s"; sleep "$wait"; }
+          done
+          [ "$ok" = 1 ] || { echo "tag push failed 5 times"; exit 1; }
+
+      - name: Publish to the rolling release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name:   mimic-win7
+          name:       Raid Mimic for Windows 7 — ${{ steps.ver.outputs.v }}
+          # Prerelease and not semver: stable installs (/releases/latest) and beta installs (which skip tags that are
+          # not semver) never see it, and the bot and site count only -beta.N tags as the beta.
+          prerelease: true
+          body_path:  ${{ github.workspace }}/win7-notes.md
+          files: |
+            apps/mimic/dist/Raid-Mimic-Setup-*.exe
+            apps/mimic/dist/win7.yml
+            apps/mimic/dist/*.blockmap
+
+      # Only after this build's files are up: drop every file that is not one of them.
+      - name: Drop the previous build's files
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          keep=" $( (cd apps/mimic/dist && ls -1 Raid-Mimic-Setup-*.exe win7.yml *.blockmap 2>/dev/null || true) | tr "\n" " ") "
+          echo "keeping:$keep"
+          case "$keep" in *" win7.yml "*) ;; *) echo "win7.yml not found locally; leaving every file in place"; exit 0;; esac
+          for a in $(gh release view mimic-win7 --json assets --jq '.assets[].name'); do
+            case "$keep" in *" $a "*) ;; *) gh release delete-asset mimic-win7 "$a" -y || echo "could not delete $a (left in place)";; esac
+          done
