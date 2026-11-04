@@ -624,6 +624,14 @@
     var s = SPEC_SHOW[label];
     return '<span class="'+specClass(label)+'"'+(s ? ' title="'+esc(s[1])+'"' : '')+'>'+esc(s ? s[0] : label)+'</span>';
   }
+  // Partial slow resistance (the guild lead, 2026-11-04: Obsidian Tree Spider Queen "is only partially slowable").
+  // npc_types.slow_mitigation is the percent of a slow the server takes off; the client is told nothing. Only 0 < N < 100:
+  // 100 is Unslowable (its own chip) and 0 is the ordinary mob. "Slow -80%" = a slow lands at 20% of its strength.
+  function slowMitChip(mob){
+    var n = mob ? Math.round(Number(mob.slow_mitigation)) : 0;
+    if (!(n > 0 && n < 100)) return '';
+    return '<span class="chip imm" title="This mob resists '+n+'% of any slow: a slow lands at only '+(100-n)+'% of its strength. The game does not tell you.">Slow \u2212'+n+'%</span>';
+  }
   // The order the chips are drawn in (FB-104: Summon sat last because the catalog lists codes numerically and a
   // same-name sibling row's extras are appended after the primary's). What the mob DOES to you first, then what
   // it is immune to (damage, then control), then the notes. A label not listed keeps its place after all of these.
@@ -1734,6 +1742,7 @@
           specChips += specChip(slab);
         }
       }
+      specChips += slowMitChip(mob);
       var specBlock = '<div class="spec" style="padding-top:18px">' + (specChips || '<span class="empty" style="color:var(--wp-dim);font-style:italic">no abilities catalogued</span>') + '</div>';
       // PROCS above the spell lists (the guild lead, 2026-10-07: "Need to see mobs Procs as
       // well, not just spells"): a proc lands on the tank every fight, a cast list is what
@@ -1839,6 +1848,7 @@
         var orderedSpecs = specSort(mob.specials);
         for (var j=0;j<orderedSpecs.length;j++){ var lab=orderedSpecs[j]; chips += specChip(lab); }
       }
+      chips += slowMitChip(mob);
       chips += hitsChip(mi.target_hits);   // after the specials: seen in the fight, not catalogued
       if (chips) spec = '<div class="spec">'+chips+'</div>';
       // FB-95: "no catalog stats" used to stand for six different situations. The agent now says which
