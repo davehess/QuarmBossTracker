@@ -1287,6 +1287,16 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   the JSON. Test: `test/named-bosses.test.js`. Bot 4.0.37 (2026-10-30, §477) added Falto, Jeplak, Ston`Ruak and Drornok to the
   Plane of Storms list so a comma-named boss registers as curated.
 
+### Coirnav fiend counter and 15-minute clock (agent 4.0.62 beta, 2026-11-04)
+- **What:** a Command Center row during Coirnav's event in Plane of Water: "Coirnav: fiends N/75 · wave 2 in 0:42 · 12:42
+  left", flashing "wave 2 soon" in the last 30 s before waves 2 and 3; at 20 or 45 kills before the next wave the sub-line says
+  the wave comes on the clock (Quarm's waves are timer-only: 0:00, 3:00, 5:00, never on kills). Then "all 75 down · burn
+  Coirnav", "Coirnav has fallen", or "Banished · retry at <time>". A per-client floor like Relv's.
+- **Where:** agent `_coirnavNoteLine` / `_coirnavSnapshot` (after the Relv block) → Command Center state `coirnav` →
+  `apps/mimic/command.html` `coirnavHtml`. Starts on the Guardian of Coirnav's death in Plane of Water or Coirnav's wave
+  shout. Source: SecretsOTheP/quests `powater/encounters/Coirnav.lua`. Test: `test/coirnav-counter.test.js`. The emote
+  substrings are read from the script, not from a live capture: check them on the first attempt.
+
 ### Relv event mephit counter (agent 4.0.45 beta, 2026-10-30; DECISIONS §471)
 - **What:** a Command Center row during Relv the Mysterious's event in Plane of Storms: "Relv: mephits N/30 · M left"
   and mepheekas killed, then "Falto is up" / "Falto slain". Shows for this event only. A per-client floor: a death far
