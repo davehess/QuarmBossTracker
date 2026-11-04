@@ -9,7 +9,8 @@
 import { cleanAnonMessage, cleanDiscordContact } from './anonFeedbackClean';
 
 import {
-  DKP_TOOLS, GAMES, GUILD_NAME_MAX, HEARD_MAX, NIGHTS, RAIDERS_MAX, RAIDERS_MIN, SERVER_MAX,
+  BID_MODES, DKP_TOOLS, GAMES, GUILD_NAME_MAX, HEARD_MAX, NIGHTS, RAIDERS_MAX, RAIDERS_MIN,
+  RAID_TIMES, SERVER_MAX, TIMEZONES,
 } from './guildInterestFields';
 export * from './guildInterestFields';
 
@@ -19,6 +20,10 @@ export type InterestInput = {
   server?: unknown;
   raiders?: unknown;
   nights?: unknown;
+  tz?: unknown;
+  raidStart?: unknown;
+  raidEnd?: unknown;
+  bidMode?: unknown;
   dkp?: unknown;
   heard?: unknown;
   discord?: unknown;
@@ -32,6 +37,10 @@ export type InterestRow = {
   server: string | null;
   raiders: number | null;
   nights: string[];
+  tz: string | null;
+  raid_start: string | null;
+  raid_end: string | null;
+  bid_mode: string | null;
   dkp: string | null;
   heard: string | null;
   discord_contact: string | null;
@@ -76,12 +85,23 @@ export function validateInterest(input: InterestInput | null | undefined): Inter
   if (given.some(n => !(NIGHTS as readonly unknown[]).includes(n))) return { ok: false, error: 'Those raid nights are not days of the week.' };
   const nights = NIGHTS.filter(n => given.includes(n));
 
+  // All optional, all closed lists: anything off-list stores as null rather than erroring — these arrive
+  // only from this page's own controls, and a lead with a blank timezone is still a lead.
+  const tz = (TIMEZONES as readonly unknown[]).includes(input?.tz) ? (input!.tz as string) : null;
+  const raid_start = RAID_TIMES.includes(input?.raidStart as string) ? (input!.raidStart as string) : null;
+  const raid_end = RAID_TIMES.includes(input?.raidEnd as string) ? (input!.raidEnd as string) : null;
+  const bid_mode = (BID_MODES as readonly unknown[]).includes(input?.bidMode) ? (input!.bidMode as string) : null;
+
   const dkp = (DKP_TOOLS as readonly unknown[]).includes(input?.dkp) ? (input!.dkp as string) : null;
   const heard = cleanShortField(input?.heard, HEARD_MAX) || null;
   const contact = cleanDiscordContact(input?.discord);
 
   return {
     ok: true,
-    row: { guild_name, game, server, raiders: rawRaiders, nights, dkp, heard, discord_contact: contact.contact },
+    row: {
+      guild_name, game, server, raiders: rawRaiders, nights,
+      tz, raid_start, raid_end, bid_mode,
+      dkp, heard, discord_contact: contact.contact,
+    },
   };
 }

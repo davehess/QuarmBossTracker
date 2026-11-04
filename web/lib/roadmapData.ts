@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-108-2026-11-04',
+    title: 'Web 2.1.107–2.1.108',
+    version: 'Web 2.1.108',
+    date: '2026-11-04',
+    headline: 'Elemental Planes planning goes on the site, and the guild register asks a little more.',
+    features: [
+      { name: 'Elemental Planes planning [beta]', blurb: 'Water, Air, Earth and Fire: each plane’s map with a minimal and a full-clear boss path, travel and fight times at our damage rate, the event clocks, the named and the trash. Linked from the PoP page.' },
+      { name: 'Register a guild: more detail', blurb: 'The raidmimic.com register form asks your time zone, your raid window, and how you award loot, each loot mode described in a line. All optional.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'mimic-3-0-7-2026-11-04',
     title: 'Mimic 3.0.7',
     version: 'Mimic 3.0.7 · Agent 4.0.62',

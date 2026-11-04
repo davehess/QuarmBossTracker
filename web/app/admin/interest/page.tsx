@@ -23,6 +23,10 @@ type Row = {
   server: string | null;
   raiders: number | null;
   nights: string[] | null;
+  tz: string | null;
+  raid_start: string | null;
+  raid_end: string | null;
+  bid_mode: string | null;
   dkp: string | null;
   heard: string | null;
   discord_contact: string | null;
@@ -31,6 +35,21 @@ type Row = {
 
 const GAME: Record<string, string> = { quarm: 'Project Quarm', 'eq-live': 'EverQuest live', other: 'Other' };
 const DKP: Record<string, string> = { opendkp: 'OpenDKP', eqdkp: 'EQDKP', other: 'Other', none: 'None' };
+const TZ: Record<string, string> = {
+  et: 'ET', ct: 'CT', mt: 'MT', pt: 'PT', 'gmt-uk': 'UK/GMT', 'eu-central': 'CET', oceania: 'Oceania', other: 'other TZ',
+};
+const BID_MODE: Record<string, string> = {
+  'dkp-open': 'Open bid DKP', 'dkp-sealed': 'Sealed bid DKP', 'dkp-timer': 'Timed auction DKP', epgp: 'EPGP',
+  rolls: 'Rolls / tiers', council: 'Loot council', picks: 'Ranked picks', other: 'Other', none: 'None yet',
+};
+
+/** "Sun, Wed · 20:00–23:00 ET" from whichever of the schedule fields the guild filled in. */
+function schedule(r: Row): string {
+  const days = (r.nights ?? []).join(', ');
+  const window = r.raid_start && r.raid_end ? `${r.raid_start}–${r.raid_end}` : (r.raid_start ?? r.raid_end ?? '');
+  const zone = r.tz ? (TZ[r.tz] ?? '') : '';
+  return [days, [window, zone].filter(Boolean).join(' ')].filter(Boolean).join(' · ');
+}
 
 function fmtTs(iso: string): string {
   return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
@@ -40,7 +59,7 @@ export default async function GuildInterestPage() {
   await requireOfficer();
   const { data } = await supabaseAdmin()
     .from('guild_interest')
-    .select('id, created_at, guild_name, game, server, raiders, nights, dkp, heard, discord_contact, status')
+    .select('id, created_at, guild_name, game, server, raiders, nights, tz, raid_start, raid_end, bid_mode, dkp, heard, discord_contact, status')
     .order('created_at', { ascending: false })
     .limit(300);
   const rows = (data ?? []) as Row[];
@@ -69,7 +88,7 @@ export default async function GuildInterestPage() {
           <table className="w-full text-left text-xs">
             <thead className="bg-panel text-dim">
               <tr>
-                {['When', 'Guild', 'Game', 'Raiders', 'Nights', 'DKP', 'Heard', 'Discord', 'Status'].map(h => (
+                {['When', 'Guild', 'Game', 'Raiders', 'Schedule', 'Loot', 'Heard', 'Discord', 'Status'].map(h => (
                   <th key={h} scope="col" className="px-3 py-2 font-normal">{h}</th>
                 ))}
               </tr>
@@ -83,8 +102,11 @@ export default async function GuildInterestPage() {
                     {r.game ? (GAME[r.game] ?? '') : ''}{r.server ? `: ${r.server}` : ''}
                   </td>
                   <td className="px-3 py-2 text-text">{r.raiders ?? ''}</td>
-                  <td className="px-3 py-2 text-text">{(r.nights ?? []).join(', ')}</td>
-                  <td className="px-3 py-2 text-text">{r.dkp ? (DKP[r.dkp] ?? '') : ''}</td>
+                  <td className="px-3 py-2 text-text whitespace-nowrap">{schedule(r)}</td>
+                  <td className="px-3 py-2 text-text">
+                    {[r.bid_mode ? (BID_MODE[r.bid_mode] ?? '') : '', r.dkp && r.dkp !== 'none' ? `on ${DKP[r.dkp] ?? ''}` : '']
+                      .filter(Boolean).join(' ')}
+                  </td>
                   <td className="px-3 py-2 text-text break-words">{r.heard ?? ''}</td>
                   <td className="px-3 py-2 text-text break-words">{r.discord_contact ?? 'none given'}</td>
                   <td className="px-3 py-2 text-dim">{r.status}</td>

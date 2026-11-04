@@ -1,0 +1,35 @@
+/* The platform's token set (docs/DESIGN-theming.md §2). One file, the same --wp-* names on every surface, seeded with
+   today's values so adopting it changed nothing on screen.
+
+   Colours are space-separated RGB triplets, not hex, so Tailwind can still compose alpha: tailwind.config.ts maps each
+   colour to rgb(var(--wp-<name>) / <alpha-value>), which is what makes `bg-accent/20` keep working. A hex here would
+   break every opacity utility. Read one in plain CSS as rgb(var(--wp-bg)).
+
+   A guild theme (later) overrides these under :root[data-theme="guild"]; nothing else in the app names a colour value.
+   The four meaning colours (green, red, gold, orange) are listed because components read them, but a guild does not
+   get to retheme them: they carry kill, dead, DKP and warning. */
+:root {
+  --wp-bg:     13 17 23;      /* #0d1117 page ground */
+  --wp-panel:  22 27 34;      /* #161b22 cards, rows */
+  --wp-border: 48 54 61;      /* #30363d hairlines */
+  --wp-text:   201 209 217;   /* #c9d1d9 body */
+  --wp-dim:    110 118 129;   /* #6e7681 secondary */
+  --wp-accent: 31 111 235;    /* #1f6feb brand, selected state */
+  --wp-blue:   88 166 255;    /* #58a6ff links, primary action */
+  --wp-purple: 163 113 247;   /* #a371f7 rare, special */
+
+  /* Fixed meanings, not themable. */
+  --wp-green:  86 211 100;    /* #56d364 good, kill */
+  --wp-red:    248 81 73;     /* #f85149 bad, dead, HP */
+  --wp-gold:   210 153 34;    /* #d29922 DKP, top, warning */
+  --wp-orange: 255 166 87;    /* #ffa657 warning */
+
+  /* Site-only shades the landing page and the browser chrome use (not part of the shared §2 set). */
+  --wp-bone:         242 237 225;  /* #f2ede1 selection text, video captions */
+  --wp-mass:         20 27 37;     /* #141b25 the wolf plate's solid head */
+  --wp-scroll-hover: 74 85 96;     /* #4a5560 scrollbar thumb on hover */
+
+  --wp-radius: 6px;
+  --wp-font-mono: Cascadia Code, Consolas, ui-monospace, monospace;
+  --wp-font-ui: ui-sans-serif, system-ui, sans-serif;
+}
