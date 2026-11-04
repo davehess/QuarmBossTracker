@@ -29,6 +29,10 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.52': [
+    '/announce lists every Planes of Power raid zone (Crypt of Decay, Plane of Valor, Halls of Honor, Temple of Marr, Tower of Solusek Ro were missing).',
+    '/announce has a preclear option: give the zone and the boss, and it is announced as "Preclear: <zone> — <boss>" without listing every boss in the zone.',
+  ],
   '4.0.51': [
     'A class an officer fixes on the website stays fixed: the OpenDKP sync no longer resets it to UNKNOWN.',
   ],
