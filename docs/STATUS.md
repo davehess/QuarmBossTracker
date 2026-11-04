@@ -276,6 +276,12 @@ next touch one rather than assuming a missing row means a missing doc.
   `_fixLogClock` in the live tail rewrites a log's timestamps once 5 live lines in a row sit on a 1–2 hour step. Test
   `test/log-clock-shift.test.js`. Open: why some clocks were off (client left running across the change?); a bot-side fallback for
   agents still on 4.0.52.
+- **🧪 `/pop/elementals` [beta]: Elemental Planes planning on the site (web 2.1.107, `main`, 2026-11-04).** The claude.ai
+  planning artifact (Water, Air, Earth, Fire: maps with a minimal and a full-clear boss path, travel and fight times at our damage
+  rate, the event clocks, named, trash) as `web/public/pop/elementals.html` in an iframe, the `/platform/architecture` pattern.
+  Built from the scratch planner by `site-copy.js` with the raid's corrected Water route baked in; drags on the site stay on the
+  viewer's screen (the shared copy lives in the artifact's database). Linked from `/pop` as "Elemental planes [beta]". Open: a
+  database-backed shared route if the site copy becomes the one the raid uses.
 - **✅ Mimic 3.0.7 stable (agent 4.0.62), 2026-11-04, on the guild lead's "lets push the rest to main".** Graduated by file from
   beta: `apps/mimic/**`, `packages/wolfpack-logsync/**`, `.github/workflows/build-mimic-win7.yml` (triggers on beta only) and the
   tests that read only those. Carries agent 4.0.53–4.0.62 (hour-off log clocks, DPS History Raid list, Capture fixes, "no guild,

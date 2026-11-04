@@ -35,6 +35,7 @@ const STATIC_META: Record<string, PageMeta> = {
   '/pop':          { title: 'PoP Flags', description: 'The guild’s road to Quarm — every flag gate by tier, how many raiders hold each flag, who can enter each zone today, and what to raid next to move the most people forward.' },
   '/pop/guide':    { title: 'PoP Checklist', description: 'Every Planes of Power step in order — what to say to whom, where they stand, and whether it is solo, group or raid work. Tick it off per character.' },
   '/pop/latest':   { title: '[beta] Latest flags', description: 'The newest Planes of Power flags the server or an NPC recital confirmed, as a stream and as cards in step order, with who in the raid still needs them.' },
+  '/pop/elementals': { title: '[beta] Elemental Planes planning', description: 'Water, Air, Earth and Fire planned for Wolf Pack: maps with a minimal and a full-clear boss path, travel and fight times at our damage rate, the event clocks, the named and the trash.' },
   '/pop/events':   { title: '[beta] PoP events', description: 'Every scripted Planes of Power event with its loot, the drop chances, a score for each item and a ranking of the events.' },
   '/pop/flag-events': { title: '[beta] Flag events', description: 'Planes of Power flag events the officers have posted, and for each one which raiders still need it and who signed up.' },
   '/pop/raid':     { title: '[beta] Raid night plan', description: 'Tonight’s Planes of Power targets in order — who still needs a preflag, how to get there, what to expect, and a map with the route.' },
