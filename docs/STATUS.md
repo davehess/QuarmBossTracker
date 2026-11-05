@@ -103,6 +103,16 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 Track backfill: the bot asks every Mimic for the raid-track minutes the database missed (bot 4.0.54, agent 4.0.65; branch
+  `track-backfill`, not yet pushed, 2026-11-05).** The database hung 22:00-23:33 ET on 2026-11-04 and `raid_track_minutes` lost
+  those 93 minutes; every Mimic since 3.0 keeps its own copy. An officer sets `track_backfill_id` / `track_backfill_from_s` /
+  `track_backfill_to_s` in `/admin/overlays` tuning; each agent answers an id once (window at most 6 h, ended within 30 days,
+  raid-code minutes never sent) through the durable queue to `POST /api/agent/track-backfill`, and `utils/trackBackfill.js` merges
+  every contribution (stored row wins per raider and second, excluded characters dropped). Tests: `test/track-backfill.test.js`.
+  Ships to `main` for both halves (stable Mimics hot-swap the agent from main, and the PCs that recorded the raid must run it);
+  request 1 covers 03:00-04:34 UTC Nov 5.
+  **Next, future (the guild lead, 2026-11-05: "We should have a full client playback if we can, but that's future"):** a full
+  playback from a client's own record, beyond the positions the replay draws today (`/local/replay/` on each PC).
 - **🧪 Command Center counts Coirnav's 75 fiends and his 15-minute clock (agent 4.0.62 on beta `4b4aa264`, 2026-11-04).** The guild
   lead: *"Do we have a fiend counter for the 75 for command center?"* … *"wave soon when we're at 20 and 45"*. Modelled on the
   Relv counter. Quarm's waves come on the clock only (3:00, 5:00), so "wave soon" is the last 30 s of the countdown, and at 20/45

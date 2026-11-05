@@ -243,8 +243,10 @@ page before anyone quotes them; storage is billed only above Supabase Pro's incl
 ### 8c. The one line that scales: database compute
 
 Storage is cents. What grows with guilds is the database's **work**: the fight feed is ~43k row writes a night per guild, plus
-the reads behind replays and live boards. One guild fits in the included Micro instance today (§334: the slow spots were
-indexes, not size). Supabase sells bigger instances by the month (list: Small $15, Medium $60, Large $110, XL $210). As a
+the reads behind replays and live boards. ~~One guild fits in the included Micro instance today (§334: the slow spots were
+indexes, not size).~~ **2026-11-04: it did not** (DECISIONS §538): the Micro's Disk IO burst budget ran out mid-raid, disk fell
+to 11 MB/s and the database hung for 90 minutes, so the guild lead upgraded compute to **Small** ($15 list, about +$5 a month after Pro's $10 credit). One guild needs more
+than Micro on a raid night. Supabase sells bigger instances by the month (list: Small $15, Medium $60, Large $110, XL $210). As a
 planning guess, not a measurement: Small around 5 guilds, Medium around 20, Large around 50, which is **about $2 to $3 per
 guild-month**. Moving the fight feed out of Postgres into compressed files (`DESIGN-raidmimic-hosted.md` §7a: ~40 KB per fight
 gzipped, $0.02/GB) takes most of that work away and is the cheapest lever we have.
