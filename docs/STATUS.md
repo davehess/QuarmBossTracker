@@ -7007,8 +7007,12 @@ stays 8 h (24 h could pull a previous copy's event in on a reused port). Tests: 
 - **Window sizes:** UI Studio's skin scan now falls back to `uifiles/default` like the client and the Map do, so a window a custom
   skin does not redefine takes its real default size instead of a made-up 200×100. ⚠ This is a guess at "UI Studio didn't resize"
   (the report's screenshot is not readable from a cloud session).
-- **Next:** draw windows from the skin's XML and textures (the real look), in progress.
-Tests: `test/zeal-bars-and-screens.test.js`.
+- **🎨 Real look** (same day, the guild lead: *"load in the UI assets so we display what it actually looks like. interpret the
+  xml"*): a toggle in the Show panel draws each window from the active skin's `EQUI_*.xml` and textures (skin first, then
+  `uifiles/default`) at its in-game size, including AutoStretch/anchors. Approximate: fonts (generic sans), HP colour bands, animated
+  frames (frame 0), item/spell icons, buff slots placed by the client in code, DDS textures. Zeal's bars and windows the skin does
+  not define stay boxes. Not yet drawn: Zeal's own windows from `uifiles/zeal`.
+Tests: `test/zeal-bars-and-screens.test.js`, `test/sidl-skin.test.js`.
 
 ### 🧾 2026-10-14 — UI Studio named layouts per character (Mimic beta `d77a7d5b`, DECISIONS §322)
 Up to 10 named `UI_<char>*.ini` snapshots per character: save, rename, delete, switch (waits for logout while EQ runs), each backed up

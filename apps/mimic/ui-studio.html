@@ -68,6 +68,11 @@
   .win.kind-pet      {background:rgba(192,154,255,0.15);border-color:rgba(192,154,255,0.6)}
   .win.kind-compass,.win.kind-map{background:rgba(110,155,214,0.15);border-color:rgba(110,155,214,0.6)}
   .win.kind-zeal     {background:rgba(129,140,248,0.18);border-color:rgba(129,140,248,0.7)}
+  .look-toggle{display:block;margin:0 0 8px;cursor:pointer}
+  .win.real{background-color:transparent;background-repeat:no-repeat;background-size:100% 100%;border-color:rgba(255,255,255,0.12)}
+  .win.real .lbl,.win.real .sz{opacity:0}
+  .win.real:hover .lbl,.win.real:hover .sz,.win.real.selected .lbl,.win.real.selected .sz{opacity:1}
+  .win.real.selected{outline:2px solid var(--wp-accent);outline-offset:-2px}
   .win .rb-cells{position:absolute;inset:0;overflow:hidden;pointer-events:none}
   .win .rb-cell{position:absolute}
   .win .rb-name{white-space:nowrap;overflow:hidden;font-family:Arial,sans-serif;text-shadow:1px 1px 0 rgba(0,0,0,0.9)}
@@ -276,6 +281,7 @@
     <aside id="filterPanel">
       <h3>👁 Show</h3>
       <p class="hint">Toggle window groups. View-only — Save still writes every window.</p>
+      <label class="look-toggle" title="Draw each window from your UI skin's own XML and textures, at its in-game size"><input type="checkbox" id="realLook"> 🎨 Real look</label>
       <div class="fbtns">
         <button id="filterAll">All</button>
         <button id="filterNone">None</button>
@@ -296,6 +302,7 @@
       <div class="meta" id="sideMeta"></div>
     </aside>
   </div>
+<script src="sidlRender.js"></script>
 <script>
   // ── State ────────────────────────────────────────────────────────────────
   // bundle: { file → contents } loaded from disk. We mutate per-window
@@ -1531,9 +1538,11 @@
       // window (those route by sender — same rule as the cards).
       var cwin = _chatWinOfRect(STATE.windows, i);
       var dropCls = (cwin != null && w.chatMeta.defaultChannel !== 3) ? ' chat-drop' : '';
-      html += '<div class="win' + sel + kindCls + dropCls + '" data-i="' + i + '"'
+      var look = _lookUrl(w);
+      html += '<div class="win' + sel + kindCls + dropCls + (look ? ' real' : '') + '" data-i="' + i + '"'
             + (cwin != null ? ' data-chat-win="' + cwin + '"' : '') + ' '
-            + 'style="left:' + it.sx + 'px;top:' + it.sy + 'px;width:' + it.sw + 'px;height:' + it.sh + 'px;">'
+            + 'style="left:' + it.sx + 'px;top:' + it.sy + 'px;width:' + it.sw + 'px;height:' + it.sh + 'px;'
+            + (look ? 'background-image:url(' + look + ');' : '') + '">'
             + (w.zealBar === 'raidbars' ? _raidBarsCellsHtml(w, STATE.sliceScale) : '')
             + '<span class="lbl"' + (dys[k] ? ' style="top:' + (2 + dys[k]) + 'px"' : '') + '>' + escapeHtml(it.lbl) + '</span>'
             + '<span class="sz">' + w.w + '×' + w.h + '</span>'
@@ -1543,8 +1552,86 @@
     stage.innerHTML = html;
     updateSidePanel();
     _syncChatCardSelection();
+    _lookSchedule();
   }
   window.addEventListener('resize', function(){ if (STATE.windows.length) renderStage(); });
+
+  // ── Real look ────────────────────────────────────────────────────────────
+  // Each window drawn from the active skin's EQUI_*.xml and textures at its in-game size (sidlRender.js; the skin is read
+  // by main, apps/mimic/sidlSkin.js). Rendered off the stage, cached as an image per screen and size, and painted as the
+  // rectangle's background, so dragging and Save work exactly as before. Zeal's bars and anything the skin does not define
+  // stay as boxes. The guild lead, 2026-11-05: "load in the UI assets so we display what it actually looks like".
+  var LOOK_KEY = 'uiStudio.realLook';
+  STATE.look = false;
+  try { STATE.look = localStorage.getItem(LOOK_KEY) === '1'; } catch (e) { /* storage blocked: off */ }
+  STATE.lookModel = null; STATE.lookModelDir = null; STATE.lookTex = {}; STATE.lookCache = {};
+  // The skin's screen for a window: the same name rules as the size scan (exact, +Window, +Wnd, base name of a numbered
+  // window), and every chat window is the one ChatWindow screen.
+  function _lookScreen(w){
+    var m = STATE.lookModel, sc = m && m.screens;
+    if (!sc || w.zealBar) return null;
+    var n = String(w.section || '').trim();
+    if (w.kind === 'chat' || /^(mainchat|chat\s*\d+|chatwindow)$/i.test(n)) return sc.ChatWindow ? 'ChatWindow' : null;
+    var tries = [n, n + 'Window', n + 'Wnd'];
+    var base = n.match(/^(.+?)[_]?(\d+)$/);
+    if (base) tries.push(base[1], base[1] + 'Window', base[1] + 'Wnd');
+    for (var i = 0; i < tries.length; i++) if (sc[tries[i]]) return tries[i];
+    return null;
+  }
+  function _lookKey(screen, w){ return screen + '|' + Math.round(w.w) + 'x' + Math.round(w.h); }
+  function _lookUrl(w){
+    if (!STATE.look) return null;
+    var s = _lookScreen(w);
+    return s ? (STATE.lookCache[_lookKey(s, w)] || null) : null;
+  }
+  var _lookTimer = null;
+  function _lookSchedule(){
+    if (!STATE.look || !STATE.windows.length) return;
+    clearTimeout(_lookTimer);
+    _lookTimer = setTimeout(function(){ _lookRun().catch(function(e){ setStatus('Real look failed: ' + (e && e.message), 'err'); }); }, 150);
+  }
+  async function _lookRun(){
+    if (!STATE.look || !window.SidlRender || !STATE.eqDir) return;
+    if (!STATE.lookModel || STATE.lookModelDir !== STATE.eqDir) {
+      var model = await window.mimic.uiStudioSkinModel(STATE.eqDir);
+      if (!model || !model.ok) { setStatus('Real look: could not read the UI skin (' + ((model && model.error) || 'unknown') + ')', 'err'); return; }
+      STATE.lookModel = model; STATE.lookModelDir = STATE.eqDir; STATE.lookTex = {}; STATE.lookCache = {};
+    }
+    var m = STATE.lookModel, todo = [], need = {};
+    STATE.windows.forEach(function(w){
+      if (!_catVisible(w.category)) return;
+      var sn = _lookScreen(w);
+      if (!sn) return;
+      var k = _lookKey(sn, w);
+      if (STATE.lookCache[k] !== undefined || todo.some(function(t){ return t.k === k; })) return;
+      todo.push({ sn: sn, w: Math.round(w.w), h: Math.round(w.h), k: k });
+      window.SidlRender.neededTextures(m, sn, Math.round(w.w), Math.round(w.h)).forEach(function(f){
+        if (STATE.lookTex[f] === undefined) need[f] = 1;
+      });
+    });
+    if (!todo.length) return;
+    var files = Object.keys(need);
+    if (files.length) {
+      var got = await window.mimic.uiStudioSkinTextures(STATE.eqDir, m.skin, files);
+      files.forEach(function(f){ STATE.lookTex[f] = (got && got[f]) || null; });
+    }
+    var tex = {};
+    Object.keys(STATE.lookTex).forEach(function(f){ if (STATE.lookTex[f]) tex[f] = STATE.lookTex[f]; });
+    todo.forEach(function(t){
+      try { STATE.lookCache[t.k] = window.SidlRender.renderScreen(m, tex, t.sn, t.w, t.h, {}).toDataURL('image/png'); }
+      catch (e) { STATE.lookCache[t.k] = null; }   // a screen that will not draw stays a box
+    });
+    if (STATE.look) renderStage();
+  }
+  (function(){
+    var box = document.getElementById('realLook');
+    box.checked = STATE.look;
+    box.addEventListener('change', function(){
+      STATE.look = box.checked;
+      try { localStorage.setItem(LOOK_KEY, STATE.look ? '1' : '0'); } catch (e) { /* not remembered */ }
+      if (STATE.windows.length) renderStage();
+    });
+  })();
 
   function escapeHtml(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
 
