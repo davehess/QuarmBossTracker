@@ -251,6 +251,32 @@ planning guess, not a measurement: Small around 5 guilds, Medium around 20, Larg
 guild-month**. Moving the fight feed out of Postgres into compressed files (`DESIGN-raidmimic-hosted.md` §7a: ~40 KB per fight
 gzipped, $0.02/GB) takes most of that work away and is the cheapest lever we have.
 
+**Revised 2026-11-05 against Supabase's published limits** (supabase.com/docs/guides/platform/compute-and-disk, read that day;
+the guild lead: "look into how it scales if we bring in other guilds now that we're on a larger plan"). The limit that bit us is
+**sustained disk IO**, and it scales with compute size like this (sizes up to 2XL burst to 261-594 MB/s on a daily budget, then
+fall to baseline; 4XL and up do not burst and do not throttle below their line):
+
+| Size | $/mo list | RAM | Baseline disk | Baseline IOPS | × Micro | Rough concurrent raiding guilds* |
+|---|---|---|---|---|---|---|
+| Micro | 10 | 1 GB | 11 MB/s | 500 | 1× | under 1 (ran dry 2026-11-04) |
+| **Small (ours)** | 15 | 2 GB | 22 MB/s | 1,000 | 2× | 1-3 |
+| Medium | 60 | 4 GB | 39 MB/s | 2,000 | 4× | 4-8 |
+| Large | 110 | 8 GB, dedicated CPU | 79 MB/s | 3,600 | 7× | 8-15 |
+| XL | 210 | 16 GB | 149 MB/s | 6,000 | 12× | 15-25 |
+| 4XL | 960 | 64 GB | 594 MB/s | 20,000 | 40× | 60+ |
+
+\* **Estimates, not measurements.** The only data point is one guild exhausting Micro's budget about 1 h 45 m into a raid, before
+the read trim (bot 4.0.55) and before the fight feed leaves Postgres; both cut that guild's load, the feed by most of its writes.
+The column assumes that roughly halves a guild's raid-night demand. What counts is **guilds raiding at the same time**, not
+guilds signed up: Quarm raids cluster in US evenings, so plan for most guilds overlapping. Replace the column with the dashboard's
+"Disk IO % consumed" on Small for a raid night after the fight feed moves (1% or more = above baseline that day).
+**This means the 2026-10 guess above (Small ~5, Medium ~20, Large ~50 guilds; ~$2-3 per guild-month) was optimistic** by roughly
+3×: plan on **~$8-12 of compute per raiding guild-month** at 5-15 guilds, falling toward ~$5 on the larger, non-bursting sizes.
+The other limits are far away: files in Storage (Pro includes 100 GB; keeping everything is ~3.6 GB per guild-year), database
+size (Small's recommended maximum is 50 GB; a guild's durable rows are ~1.2 GB a year once the feed is out), connections (one bot
+process talks to the database, so 90 direct / 400 pooled on Small is not in play), the bot's memory for live fights (~12 MB per
+fight in progress), and egress (250 GB a month included; never measured, read it from the dashboard).
+
 ### 8d. What it adds up to
 
 | Guilds | Fixed | Per-guild costs (≈ $1.03 fee + ≈ $0.30 storage, bot, egress + ≈ $2.50 compute) | Total cost | Revenue at $25 | Margin |
@@ -260,7 +286,9 @@ gzipped, $0.02/GB) takes most of that work away and is the cheapest lever we hav
 | 10 | $53 | ≈ $38 | ≈ $91 | $250 | +$159 |
 | 50 | $53 | ≈ $190 | ≈ $243 | $1,250 | +$1,007 |
 
-**Break-even is three paying guilds.** Above that the per-guild cost is about $4 of a $25 plan, and the biggest single line is
+⚠ The table's ≈ $2.50 compute per guild is the 2026-10 guess that §8c's 2026-11-05 revision calls optimistic. At ~$10 a guild
+the 10-guild row is ≈ $166 against $250 and break-even moves to about **four or five** paying guilds; the shape holds.
+**Break-even is three paying guilds** (at the old compute guess). Above that the per-guild cost is about $4 of a $25 plan, and the biggest single line is
 the card fee, not the servers. Free users (§527: flags, kills, the overlays) cost almost nothing per head and are not in
 these rows; a free player's sync is a few KB a night.
 
