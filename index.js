@@ -20289,6 +20289,34 @@ async function _handleAgentRaidRoster(req, res) {
   }
 }
 
+// POST /api/agent/track-backfill — a Mimic sends back the raid-track minutes it recorded locally for the window the
+// tuning map asks for (track_backfill_id / _from_s / _to_s); utils/trackBackfill.js validates and merges them into
+// raid_track_minutes. Body { request_id, rows:[{ minute_at, night_key, data }] }, 15 rows a batch.
+async function _handleAgentTrackBackfill(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  let body = '';
+  let tooBig = false;
+  await new Promise((resolve) => {
+    req.on('data', (chunk) => { body += chunk; if (body.length > 1024 * 1024) { tooBig = true; req.destroy(); resolve(); } });
+    req.on('end', resolve); req.on('error', resolve);
+  });
+  const reply = (status, obj) => { res.writeHead(status, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(obj)); };
+  if (tooBig) return reply(413, { ok: false, error: 'too large' });
+  let payload;
+  try { payload = JSON.parse(body); } catch { return reply(400, { ok: false, error: 'invalid json' }); }
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return reply(200, { ok: true, accepted: 0, merged: 0, inserted: 0, rejected: 0, note: 'supabase disabled' });
+  const tb = require('./utils/trackBackfill');
+  let excluded = null;
+  try { excluded = await require('./utils/raidTrack').excludedNames(); } catch { excluded = null; }
+  const out = await tb.handle(payload, {
+    supabase, tune: await _overlayTuningMap(), excluded, guildId: supabase.guildId(),
+  });
+  console.log(`[track-backfill] request ${payload && payload.request_id}: HTTP ${out.status} ${JSON.stringify(out.body)}`);
+  return reply(out.status, out.body);
+}
+
 // GET /api/agent/raid-live — "is a raid on the ground right now?", polled by Bristlebane (the separate
 // raid-voice bot, apps/bristlebane): it joins the raid voice channel while this says live and leaves when
 // it stops. Answered from memory — the roster samples utils/raidTrack.js already holds ARE the signal
@@ -25500,6 +25528,15 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentRaidRoster(req, res); }
     catch (err) {
       console.error('[raid-roster] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/track-backfill') {
+    try { return await _handleAgentTrackBackfill(req, res); }
+    catch (err) {
+      console.error('[track-backfill] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

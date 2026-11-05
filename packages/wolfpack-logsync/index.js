@@ -13359,6 +13359,7 @@ function _endpointForKind(kind, botUrl) {
     case 'ari_lead':        return base + '/ari-lead';
     case 'crash_report':    return base + '/crash_report';
     case 'kite_loop':       return base + '/kite-loop';
+    case 'track_backfill':  return base + '/track-backfill';
     default:                return botUrl;
   }
 }
@@ -49000,6 +49001,7 @@ function _applyTuningResponse(resp) {
       ? '[raid-hold] ON — bot reports an active raid; deferring gear/spellbook/crash scans and agent updates until it lifts'
       : '[raid-hold] lifted — deferred scans resume on the next pass');
   }
+  try { _trackBackfillMaybe(); } catch { /* a backfill request must never break the tuning poll */ }
 }
 function pollOverlayTuning({ botUrl, token }) {
   if (!botUrl || !token) return Promise.resolve();
@@ -66305,6 +66307,50 @@ function _localTrackRoute(req, res) {
 }
 function _localTrackSetStoreForTest(st) { _localTrack.store = st; }
 
+// ── Track backfill: the bot asks for the minutes it missed ─────────────────────────────────────────────────
+// The tuning map carries track_backfill_id / track_backfill_from_s / track_backfill_to_s (set by an officer after the
+// hub's database was down). A request id this PC has not finished sends back its own recorded minutes inside
+// [from, to) through the durable queue (POST /api/agent/track-backfill), 15 minutes a batch, then remembers the id in
+// the local store so it is answered once, across restarts. A minute recorded under a raid code belongs to another
+// guild's raid and is never sent. (Kept outside the local-store block above: that block must never reach the queue.)
+const TRACK_BACKFILL_MAX_WINDOW_MS = 6 * 3600_000;
+const TRACK_BACKFILL_MAX_AGE_MS = 30 * 86400_000;
+const TRACK_BACKFILL_BATCH = 15;
+const _trackBackfillSeen = new Set();            // ids handled (or refused for good) by this process
+function _trackBackfillRun(tune, o = {}) {
+  const store = o.store || _localTrackStore();
+  const now = Number.isFinite(o.now) ? o.now : Date.now();
+  const t = tune && typeof tune === 'object' ? tune : {};
+  const id = Number(t.track_backfill_id);
+  const fromMs = Number(t.track_backfill_from_s) * 1000, toMs = Number(t.track_backfill_to_s) * 1000;
+  if (!Number.isInteger(id) || id <= 0 || !Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) return { skipped: 'invalid' };
+  if (_trackBackfillSeen.has(id)) return { skipped: 'seen' };
+  if (toMs - fromMs > TRACK_BACKFILL_MAX_WINDOW_MS) { _trackBackfillSeen.add(id); return { skipped: 'window' }; }
+  if (toMs < now - TRACK_BACKFILL_MAX_AGE_MS) { _trackBackfillSeen.add(id); return { skipped: 'old' }; }
+  if (_controlStandDown().down) return { skipped: 'paused' };          // not marked: answered once the fleet resumes
+  if (store.get('track_backfill', String(id))) { _trackBackfillSeen.add(id); return { skipped: 'done' }; }
+  const rows = [];
+  for (const e of store.scan('track_minute', { since: fromMs, until: toMs, limit: TRACK_BACKFILL_MAX_WINDOW_MS / 60_000 + 10 })) {
+    const r = e.rec;
+    if (!r || r.raid_code || typeof r.data !== 'string' || typeof r.minute_at !== 'string') continue;
+    rows.push({ minute_at: r.minute_at, night_key: r.night_key || null, data: r.data });
+  }
+  let batches = 0;
+  for (let i = 0; i < rows.length; i += TRACK_BACKFILL_BATCH) {
+    if (!enqueueUpload('track_backfill', { request_id: id, rows: rows.slice(i, i + TRACK_BACKFILL_BATCH) })) return { skipped: 'not-queued', batches };
+    batches++;
+  }
+  store.put('track_backfill', String(id), { id, at: now, rows: rows.length, batches }, { ts: now });
+  _trackBackfillSeen.add(id);
+  console.log(`[track-backfill] request ${id}: ${rows.length} minute(s) queued in ${batches} batch(es)`);
+  return { rows: rows.length, batches };
+}
+function _trackBackfillMaybe() {
+  if (!_overlayTuning || !_overlayTuning.track_backfill_id) return null;
+  if (_uploadOpts && _uploadOpts.dryRun) return null;
+  return _trackBackfillRun(_overlayTuning);
+}
+
 // ── Rebuild from my logs (local-first, 2026-10-21) ─────────────────────────────────────────────────────────
 // The guild lead, 2026-10-21: people coming into the tool will bring their large log files, and the backfill
 // "could try to build out all of their local parses and figure out what raids they were in based on the log
@@ -68568,7 +68614,7 @@ module.exports = {
   _uploadQueueLenForTest: () => _uploadQueue.length,
   AGENT_VERSION,
   // Local store + own position recorder (2026-10-21): see the block above module.exports.
-  _localStore, _localStoreOpen, _localTrackFrame, _localTrackMinuteRow, _localTrackNightKey, _localTrackTick, _localTrackClose, _localTrackPush,
+  _trackBackfillRun, _trackBackfillSeen, _applyTuningResponse, _localStore, _localStoreOpen, _localTrackFrame, _localTrackMinuteRow, _localTrackNightKey, _localTrackTick, _localTrackClose, _localTrackPush,
   _localTrackNights, _localTrackWindow, _localTrackBosses, _localTrackMap, _mapPaths, _localTrackRoute, _localTrackSetStoreForTest, _localRecorderStart, _localRecorderStop,
   // My parses on the local site + the guild's record kept beside it (2026-10-21): see the block above module.exports.
   _localParsesAnswer, _localParsesRoute, _localFights, _localFoldPlayers, _localParseDiff, _localHubMatch, _localHubClean, _localHubApply, _localHubEncounters, _localHubSync,

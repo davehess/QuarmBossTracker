@@ -202,6 +202,9 @@ function _frameTargets(rows) {
   } catch { return []; }
 }
 
+/** The lowercase names of characters with exclude_from_stats (cached 30 min), or null when they cannot be read. */
+function excludedNames() { return _excludedSet(_sb()); }
+
 /** Wire where frames read the raid's targets (index.js passes raidTargets' snapshot); null unwires. */
 function setTargetSource(fn) { _targetSource = typeof fn === 'function' ? fn : null; }
 
@@ -560,7 +563,7 @@ function _state() {
 
 module.exports = {
   noteRows, takeFrame, closeFinished, liveSnapshot, liveRows, buildMinuteRow, resolveSrcZones, flush, start, stop, raidKey,
-  stepS, minPlaced, setTargetSource, TARGETS_PER_FRAME,
+  stepS, minPlaced, setTargetSource, excludedNames, TARGETS_PER_FRAME,
   STEP_S_DEFAULT, MIN_PLACED_DEFAULT, STICKY_MS, FRESH_MS, PRUNE_MS, MAX_TRACKED, MAX_PENDING_MINUTES,
   MAX_ATTEMPTS, RETRY_BACKOFF_MS, SAFETY_MS, EXCLUDE_TTL_MS, ZONE_TTL_MS, LIVE_ZONE_MS,
   _reset, _setDeps, _state,
