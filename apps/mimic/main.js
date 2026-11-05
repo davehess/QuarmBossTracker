@@ -7074,7 +7074,9 @@ function _scanSkinWindowSizes(eqDir, opts) {
     return { ok: false, error: err && err.message };
   }
 }
-ipcMain.handle('ui-studio-scan-window-defaults', (_e, eqDir) => _scanSkinWindowSizes(eqDir, { fresh: true }));
+// withDefault: a window the active skin does not redefine takes uifiles/default's size, as EQ does. Without it, every such
+// window in a custom skin drew as a made-up 200×100 box (FB-120, "UI Studio didn't resize", 2026-11-05).
+ipcMain.handle('ui-studio-scan-window-defaults', (_e, eqDir) => _scanSkinWindowSizes(eqDir, { fresh: true, withDefault: true }));
 
 ipcMain.handle('ui-studio-write-pages', (_e, eqDir, edits) => {
   try {

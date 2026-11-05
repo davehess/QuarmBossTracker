@@ -6997,6 +6997,19 @@ reused (per-kind envelope, 404 permanent, holds back agent updates while non-emp
 stays 8 h (24 h could pull a previous copy's event in on a reused port). Tests: `test/map-sync-outbox.test.js` (beta), `test/map-sync-dedup.test.js` (main).
 ⚠ Order: deploy the bot, THEN apply the migration (the index with the old bot rejects a repeated batch whole). Shipped 2026-10-26 in that order.
 
+### 🧾 2026-11-05 — UI Studio: raid bars as a full raid, the assist bar always, Gems game apart, default-skin sizes (Mimic beta, FB-120)
+- **Raid bars** draw 71 fake members (a 72-person raid; Zeal skips you) in Zeal's own grid: cell size from the raid bars' font and
+  BarWidth/BarHeight exactly as `RaidBars::LoadBitmapFont` computes it (metrics read from Zeal's `.spritefont` files into
+  `ZEAL_FONT_METRICS`), filled top to bottom then the next column; the label says how many fit.
+- **Assist bar** shows at Zeal's default 5,30 even when `zeal.ini` has no `[AssistBar]` ("· not set up"); its size now comes from
+  the same font metrics ("ToT: <name>" + health bar).
+- **GemsGameWnd** (the Gems minigame) has its own category, off by default, instead of riding in Hotbar / Cast.
+- **Window sizes:** UI Studio's skin scan now falls back to `uifiles/default` like the client and the Map do, so a window a custom
+  skin does not redefine takes its real default size instead of a made-up 200×100. ⚠ This is a guess at "UI Studio didn't resize"
+  (the report's screenshot is not readable from a cloud session).
+- **Next:** draw windows from the skin's XML and textures (the real look), in progress.
+Tests: `test/zeal-bars-and-screens.test.js`.
+
 ### 🧾 2026-10-14 — UI Studio named layouts per character (Mimic beta `d77a7d5b`, DECISIONS §322)
 Up to 10 named `UI_<char>*.ini` snapshots per character: save, rename, delete, switch (waits for logout while EQ runs), each backed up
 with its name. **Open:** `ui_snapshots` pruning; a Windows + EQ check that the swapped file survives a camp.
