@@ -34,12 +34,13 @@ function run(url, { rpcFails = false } = {}) {
     },
   };
   // eslint-disable-next-line no-new-func
-  const fn = new Function('mimicLink', 'require', 'process', '_corroboratedDamage',
+  const fn = new Function('mimicLink', 'require', 'process', '_corroboratedDamage', '_snapshotStoreMode',
     handler + '\nreturn _handleAgentLiveDamage;')(
     { requireAgentAuth: async () => ({ discord_id: '1' }) },
     (p) => (String(p).endsWith('supabase') ? supabase : String(p).endsWith('ttlCache') ? ttlCache : {}),
     { env: {} },
-    (v) => Math.max(0, ...(v || [])));
+    (v) => Math.max(0, ...(v || [])),
+    async () => 0);   // fight files off: the database path under test
   const res = { writeHead() {}, end(b) { this.body = b; } };
   return fn({ url }, res).then(() => ({ queries, res }));
 }

@@ -2653,6 +2653,14 @@ re-stamps a death the log already holds. `_groupDeathWatchSnapshot()` is the
 diagnostic. **No `death_evidence` table or upload exists** —
 `docs/DESIGN-group-death-watcher.md` §8 for what was deliberately left.
 
+### Fight files — where the per-second threat snapshots live (2026-11-05)
+- **Ingest** `_handleAgentThreatSnapshot` (`index.js`) reads the tuning number `snapshot_store`: 0 = `encounter_threat_snapshots`
+  rows only; 1 = rows AND `utils/fightFiles.js`'s memory buffer; 2 = buffer only. The buffer writes one gzipped ndjson per fight to the
+  private `fight-snapshots` bucket 5 min after the last snapshot, indexes it in `fight_snapshot_files`, and upserts the fight's
+  `encounter_threat_rank` rows (`rankRows`, the JS twin of `rollup_threat_ranks`; trash folds into the night's row).
+- **Readers** `_handleAgentLiveDamage` (memory first; mode 1 falls back to the `live_damage_snapshots` RPC, mode 2 to the fight's file);
+  the nightly rank rollup in the midnight chain is skipped in mode 2. The row retention sweep is unchanged.
+
 ### Threat snapshots (cadence, labelling, claiming) — 2026-08-04
 `boss_name` was NULL on all 463k rows by construction: it is assigned only at
 flush (death handler / inside `flush()`), while the uploader refuses to run once

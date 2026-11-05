@@ -379,8 +379,8 @@ describe('GET /api/agent/live-damage', () => {
     const req = (p) => (String(p).endsWith('supabase') ? sb : requireBot(p));
     globalThis._liveDmgCache = new Map();
     // eslint-disable-next-line no-new-func
-    const fn = new Function('mimicLink', 'require', 'process', '_corroboratedDamage', handler + '\nreturn _handleAgentLiveDamage;')(
-      { requireAgentAuth: async () => ({ discord_id: '1' }) }, req, { env: {} }, (v) => Math.max(0, ...(v || [])));
+    const fn = new Function('mimicLink', 'require', 'process', '_corroboratedDamage', '_snapshotStoreMode', handler + '\nreturn _handleAgentLiveDamage;')(
+      { requireAgentAuth: async () => ({ discord_id: '1' }) }, req, { env: {} }, (v) => Math.max(0, ...(v || [])), async () => 0);
     const ask = async (qs) => { const res = mkRes(); await fn({ url: '/api/agent/live-damage?' + qs }, res); return res; };
     return { ask, calls };
   }
