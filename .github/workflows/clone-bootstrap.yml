@@ -1,0 +1,68 @@
+name: Clone — build the test clone's database
+
+# Builds the schema and loads the game catalog into the TEST CLONE's Supabase project (DECISIONS §540). Manual only.
+# Repo secrets (Settings → Secrets → Actions), all for the CLONE project, never production:
+#   CLONE_DB_URL                     postgres connection string (session pooler, port 5432, or direct), password included
+#   CLONE_SUPABASE_URL               https://<clone-ref>.supabase.co
+#   CLONE_SUPABASE_SERVICE_ROLE_KEY  the clone project's service-role key
+# Both steps refuse to touch Wolf Pack's production project.
+
+on:
+  workflow_dispatch:
+    inputs:
+      load_catalog:
+        description: 'Also load the game catalog (~97 MB) after the schema'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clone-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Refuse production
+        env:
+          CLONE_DB_URL: ${{ secrets.CLONE_DB_URL }}
+          CLONE_SUPABASE_URL: ${{ secrets.CLONE_SUPABASE_URL }}
+        run: |
+          for v in "$CLONE_DB_URL" "$CLONE_SUPABASE_URL"; do
+            [ -n "$v" ] || { echo "CLONE_DB_URL and CLONE_SUPABASE_URL secrets are required"; exit 1; }
+            case "$v" in *zhtoekwakucbckvatfky*) echo "REFUSED: a clone secret points at production"; exit 1;; esac
+          done
+
+      - name: Install psql 17
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -q && sudo apt-get install -y -q postgresql-client-17
+          psql --version
+
+      - name: Build the schema
+        env:
+          DB_URL: ${{ secrets.CLONE_DB_URL }}
+        run: bash scripts/selfhost-bootstrap-db.sh
+
+      - name: Set up Node
+        if: ${{ inputs.load_catalog }}
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+
+      - name: Load the game catalog
+        if: ${{ inputs.load_catalog }}
+        env:
+          SUPABASE_URL: ${{ secrets.CLONE_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.CLONE_SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/selfhost-load-game-data.js
