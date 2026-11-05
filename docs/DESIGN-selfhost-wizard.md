@@ -143,6 +143,11 @@ different failure for a raid night) and current egress against the 250 GB. The
 Management API exposes neither. Do not quote an egress figure until someone does.
 
 ## 3. Decisions already made that the wizard must carry
+- **2026-11-05 — a cheap-cloud deployment shape: Cloudflare in front, Supabase behind** (DECISIONS §540): the website on
+  Cloudflare Workers through the OpenNext adapter, files on R2, database + sign-in on Supabase, the bot on any always-on
+  container host (Cloudflare cannot hold a Discord gateway connection). Being proven as an isolated test clone first. Neon and
+  Clerk were weighed and deferred: they replace the database's sign-in and access rules, not just its host. A wizard that
+  offers this shape must ask for a separate Discord app per deployment and must never default an anchor to another guild's.
 - **2026-11-05 — a fight's snapshots are files in object storage, kept forever** (`utils/fightFiles.js`, DECISIONS §538): the bot
   holds a fight in memory and writes one gzipped ndjson per fight to a private `fight-snapshots` bucket, instead of ~6 Postgres rows
   a second. Hosted: Supabase Storage (bucket + `fight_snapshot_files` index, migration `20261105120000`). On-prem: a directory on
