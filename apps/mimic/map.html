@@ -1568,6 +1568,7 @@
     ['focus', 'Raid focus target (MA / most targeted)'], ['corpses', 'Guild corpses (☠)'], ['raidRoute', 'Saved raid route (gold line, numbered stops)'],
     ['kite', 'Kite coach (your circling: lap, drift)'], ['kiteLoops', 'Guild kite loops'],
     ['traps', 'Traps (△ spots and trap-table traps)'],
+    ['warders', 'Sol Ro death-touch warders (☠ DT, with their aggro ring)'],
   ];
   var CFG_GLYPHS = [
     ['👁', 'Sees invisible'], ['👁ᵤ', 'Sees invisible to undead'], ['🥷', 'Sees through hide'], ['↯', 'Summons'],
@@ -3036,6 +3037,20 @@
         if (c.dragger) { ctx.beginPath(); ctx.setLineDash([3, 3]); ctx.arc(cq[0], cq[1], 10 * I.dot, 0, 6.2832); ctx.lineWidth = 1.6; ctx.strokeStyle = cCol; ctx.stroke(); ctx.setLineDash([]); }
         halo('☠', cq[0], cq[1], 'bold ' + Math.round(13 * (S.cfg.text || 1) * I.dot) + 'px ui-monospace,Consolas,monospace', cCol, 'center');
         if (S.labels !== 'off' && v.scale >= 0.4) halo(c.name, cq[0] + 9 * I.dot, cq[1], fontSmall, cCol);
+        ctx.globalAlpha = 1;
+      });
+      // ☠ The Tower of Solusek Ro's death-touch warders (the guild lead, 2026-11-04: "add the warders to the Mimic map"). The
+      // agent's `warders`: [{ wing, x, y, z, aggro, assist, until }], three per wing for an hour after its boss died. Each gets
+      // its aggro ring (always, whatever the ◯ switch says: walking into one is a death touch), Xuzl's its dashed assist ring,
+      // and a ☠; at a readable zoom "DT" and the minutes left. Off in ⚙ under "Sol Ro death-touch warders".
+      if (SH.warders) (P.warders || []).forEach(function (wd) {
+        var wq = wpt(wd.x, wd.y), ar = Number(wd.aggro) || 0, as = Number(wd.assist) || 0, reach = Math.max(ar, as) * v.scale + 20;
+        if (wq[0] < -reach || wq[0] > w + reach || wq[1] < -reach || wq[1] > h + reach) return;
+        ctx.globalAlpha = inLevelRange(wd.z, sz, range) ? 1 : 0.4;
+        aggroRing(wq[0], wq[1], ar, as, 'kos', null, Date.now());
+        halo('☠', wq[0], wq[1], 'bold ' + Math.round(13 * (S.cfg.text || 1) * I.dot) + 'px ui-monospace,Consolas,monospace', S.cfg.col.aggro, 'center');
+        var left = Math.max(0, Math.round((Number(wd.until) - Date.now()) / 60000));
+        if (S.labels !== 'off' && v.scale >= 0.4) halo('DT ' + left + 'm', wq[0] + 9 * I.dot, wq[1], fontSmall, S.cfg.col.aggro);
         ctx.globalAlpha = 1;
       });
       // Tracked NPCs' walks (the agent's MAP_TRACKED_PATHS: Thelin in the hedge maze), recorded whenever anyone on this
