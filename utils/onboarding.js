@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.57': [
+    'Fixed: an event announced for later now really clears from the queue once it opens, so ending that raid session no longer lets the bot open it again.',
+  ],
   '4.0.56': [
     'Fight numbers can now be kept as one file per fight instead of thousands of database rows, which takes the heaviest load off the database on raid nights. Off until an officer switches it on; the DPS meter and threat ranks look the same either way.',
   ],
