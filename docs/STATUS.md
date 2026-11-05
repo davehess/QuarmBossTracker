@@ -103,6 +103,22 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 Fight files: a fight's per-second snapshots go to Storage as one file, not Postgres rows (bot 4.0.56; branch `fight-files`, not
+  yet pushed, 2026-11-05; DECISIONS §538; the guild lead: "do A, keep everything").** `encounter_threat_snapshots` was 2.6 GB (53% of
+  the database) and ~12.5k inserts + 2.9k updates per two raid hours. `utils/fightFiles.js` holds a fight's snapshots in the bot's
+  memory (grouped like /live-damage: same boss, starts within 20 s), and 5 minutes after the last snapshot writes
+  `fight-snapshots/<guild>/<date>/<boss>/<start>_s<HHMMSS>.ndjson.gz` (header line + one line per row), indexes it in
+  `fight_snapshot_files`, and upserts that fight's `encounter_threat_rank` rows (the JS twin of `rollup_threat_ranks`). A written
+  fight stays readable in memory 30 minutes; SIGTERM writes whatever is pending. **Switch:** tuning number `snapshot_store` in
+  `/admin/overlays`: **0** rows only (today; the default), **1** rows AND memory/files (live-damage answers from memory, the database
+  is its fallback), **2** memory/files only (no row insert; live-damage reads memory, then the file for an older fight; the nightly
+  rank rollup is skipped). **Migration `20261105120000_fight_snapshot_files.sql` is NOT yet applied** (index table + private bucket);
+  apply it before setting the switch to 1. Files are kept forever; the row sweep is untouched. Test: `test/fight-files.test.js`.
+  Shipped to `main` switched off (2026-11-05). **Before mode 2, two gaps:** (a) the parse page's damage curve and the raid session's
+  fight timeline read `encounter_timeline()`, which serves the per-fight graphs `build_encounter_threat_graphs` builds nightly FROM
+  the snapshot rows (and the row sweep is gated on them), so mode 2 must build each fight's graph when its file is written;
+  (b) trash ranks in mode 2 merge approximately (one row per character per night). Mode 1 is safe: rows still feed both.
+
 - **🧪 Hot database reads trimmed after the Disk IO exhaustion (bot 4.0.55; branch `db-io-trim`, not yet pushed, 2026-11-05;
   DECISIONS §538).** The gateway logs for the 2026-11-04 raid showed `characters` (~110/min), the auctions panel's `wishlists`
   read (~100/min) and `mimic_sessions` reads plus a `last_used_at` PATCH per refill as the most frequent calls, all far more

@@ -3359,8 +3359,14 @@ function scheduleMidnightSummary(readyClient) {
       try {
         const supabase = require('./utils/supabase');
         if (supabase.isEnabled()) {
-          const n = await supabase.rpc('rollup_threat_ranks', { p_since_hours: 48 });
-          console.log('[midnight] rolled up threat ranks:', JSON.stringify(n));
+          // Fight files mode 2 writes no snapshot rows: each fight's ranks were upserted when its file was
+          // written (utils/fightFiles.js rankRows), so there is nothing here to read.
+          if (await _snapshotStoreMode() >= 2) {
+            console.log('[midnight] threat ranks come from the fight files (snapshot_store 2) — rollup skipped');
+          } else {
+            const n = await supabase.rpc('rollup_threat_ranks', { p_since_hours: 48 });
+            console.log('[midnight] rolled up threat ranks:', JSON.stringify(n));
+          }
         }
       } catch (err) {
         console.warn('[midnight] threat rank rollup failed:', err?.message);
@@ -8799,8 +8805,16 @@ async function _handleAgentThreatSnapshot(req, res) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: true, written: 0, note: 'unchanged' }));
   }
-  await supabase.upsert('encounter_threat_snapshots', [row], 'guild_id,uploader,boss_name,snapshot_at')
-    .catch(err => console.warn('[threat-snap] upsert failed:', err?.message));
+  // `snapshot_store` (tuning map number, utils/fightFiles.js): 0 = rows only, as always (the default when unset);
+  // 1 = rows AND the fight buffer in memory that becomes one gzipped file in Storage when the fight ends;
+  // 2 = the buffer and the file only, no row written. The /live-damage reader and the nightly threat-rank
+  // rollup follow the same switch. See docs/STATUS.md (fight files).
+  const _snapMode = await _snapshotStoreMode();
+  if (_snapMode >= 1) require('./utils/fightFiles').getStore().add(row);
+  if (_snapMode < 2) {
+    await supabase.upsert('encounter_threat_snapshots', [row], 'guild_id,uploader,boss_name,snapshot_at')
+      .catch(err => console.warn('[threat-snap] upsert failed:', err?.message));
+  }
   _trackUpload({ endpoint: 'threat_snapshot', character: row.uploader, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(JSON.stringify({ ok: true, written: 1 }));
@@ -12662,6 +12676,14 @@ const _SHED_KINDS = new Set([
   'hist_mob_sightings', 'hist_mob_hp', 'hist_casts', 'hist_zone_changes', 'hist_pet_owners', 'hist_trigger_fires',
 ]);
 const _SHED_NEVER = new Set(['encounter', 'chat', 'bosskill', 'lockout', 'historical_chat']);
+// Where the per-second fight snapshots go (the guild lead, 2026-11-05; utils/fightFiles.js): the tuning number
+// `snapshot_store` — 0 rows only (default), 1 rows + memory/files, 2 memory/files only. Fail-open to 0.
+async function _snapshotStoreMode() {
+  try {
+    const n = Number((await _overlayTuningMap()).snapshot_store);
+    return n >= 2 ? 2 : n >= 1 ? 1 : 0;
+  } catch { return 0; }
+}
 async function _isShedded(kind, res, ackBody) {
   // Durable exception OR an unrecognized kind → never sheddable (defense in depth:
   // a typo'd flag_shed_encounter can't take the parse pipe down).
@@ -15141,7 +15163,21 @@ async function _handleAgentLiveDamage(req, res) {
       + `&started_at=lte.${encodeURIComponent(new Date(fightStartMs + 20_000).toISOString())}`
     : '';
   let rows = [];
+  // Fight files (`snapshot_store` >= 1): the fight being played is in the bot's memory, and the same rows feed the
+  // code below. Mode 1 falls back to the database when memory has nothing (a restart); mode 2 has no rows to fall
+  // back on, so a fight older than the memory window is read from its file.
+  const snapMode = await _snapshotStoreMode();
+  let fromFiles = false;
+  if (snapMode >= 1) {
+    const ff = require('./utils/fightFiles').getStore();
+    const sinceMs = Date.parse(since);
+    const loMs = oneFight ? fightStartMs - 20_000 : null, hiMs = oneFight ? fightStartMs + 20_000 : null;
+    rows = ff.liveRows({ guild: guildId, boss, sinceMs, loMs, hiMs });
+    if (!rows.length && snapMode === 2 && oneFight) rows = await ff.readStoredFight({ guild: guildId, boss, loMs, hiMs });
+    fromFiles = rows.length > 0 || snapMode === 2;
+  }
   try {
+    if (fromFiles) { /* answered from memory or the fight's file */ } else {
     // live_damage_snapshots (migration 20261015060000) is the same read phrased on lower(boss_name), which the
     // existing boss index serves: 153 ms → ~1–3 ms. As a plain `boss_name=eq.` select this was ~70% of all
     // database time and part of the 2026-10-14 mid-raid overload. A failed call (null) falls back to the old read.
@@ -15157,6 +15193,7 @@ async function _handleAgentLiveDamage(req, res) {
         + `&snapshot_at=gte.${encodeURIComponent(since)}`
         + fightClause
         + `&select=uploader,snapshot_at,per_player&order=snapshot_at.desc&limit=400`) || [];
+    }
     }
   } catch (err) {
     console.warn('[live-damage] select failed:', err?.message);
@@ -26160,6 +26197,8 @@ function _gracefulShutdown(signal) {
   // Rows held for the next 2-second batch (utils/liveMemory.js) go out now, inside the drain window.
   try { require('./utils/liveMemory').flushAll().catch(() => {}); } catch (e) { void e; }
   try { _raidHistory().flush().catch(() => {}); } catch (e) { void e; }   // raid history rows still buffered
+  // Fights still in memory are written to Storage now (utils/fightFiles.js), one try each.
+  try { require('./utils/fightFiles').getStore().flushAll().catch(() => {}); } catch (e) { void e; }
   const done = () => {
     console.log('[shutdown] destroying Discord client + exiting');
     try { client.destroy(); } catch (e) { void e; }

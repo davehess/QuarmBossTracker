@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.56': [
+    'Fight numbers can now be kept as one file per fight instead of thousands of database rows, which takes the heaviest load off the database on raid nights. Off until an officer switches it on; the DPS meter and threat ranks look the same either way.',
+  ],
   '4.0.55': [
     'Fewer database reads on busy raid nights: the bot remembers the guild roster, a raider\'s linked characters and wishlist flags for a few minutes instead of asking every time.',
   ],
