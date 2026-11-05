@@ -103,6 +103,14 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 Hot database reads trimmed after the Disk IO exhaustion (bot 4.0.55; branch `db-io-trim`, not yet pushed, 2026-11-05;
+  DECISIONS §538).** The gateway logs for the 2026-11-04 raid showed `characters` (~110/min), the auctions panel's `wishlists`
+  read (~100/min) and `mimic_sessions` reads plus a `last_used_at` PATCH per refill as the most frequent calls, all far more
+  often than their data changes. Now: `utils/hotReadCache.js` (bounded, failed reads never cached) fronts the uploader's linked
+  characters and the pvp_assists roster (5 min) and the wishlist flags (60 s, busted by the bot's own wishlist writes);
+  `utils/mimicLink.js` shares one read among concurrent lookups and writes `last_used_at` at most once an hour per token; the
+  session cache stays 5 min so a website-side revoke still takes effect within 5 min (the draft's 10 min was not taken).
+
 - **🧪 Track backfill: the bot asks every Mimic for the raid-track minutes the database missed (bot 4.0.54, agent 4.0.65; branch
   `track-backfill`, not yet pushed, 2026-11-05).** The database hung 22:00-23:33 ET on 2026-11-04 and `raid_track_minutes` lost
   those 93 minutes; every Mimic since 3.0 keeps its own copy. An officer sets `track_backfill_id` / `track_backfill_from_s` /

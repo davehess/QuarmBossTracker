@@ -4088,6 +4088,12 @@ function _recordWitness(key, speaker, uploaderId, source) {
   if (source) w.sources.add(source);
   return slot;
 }
+// Hot-path character reads (DECISIONS §538: ~110/min against `characters` in the 2026-11-04 gateway logs). A chat
+// upload asks for the uploader's linked characters; a pvp_assists upload asks for the whole guild roster. Both change
+// only when a member links a character or the sync adds one, so a few minutes of staleness is harmless.
+const { createHotReadCache: _createHotReadCache, wishlistPriorities: _wishlistPriorities } = require('./utils/hotReadCache');
+const _uploaderCharsCache = _createHotReadCache({ ttlMs: 5 * 60 * 1000, max: 500 });   // discord_id → rows
+const _assistRosterCache = _createHotReadCache({ ttlMs: 5 * 60 * 1000, max: 8 });      // guild id → rows
 // Roster cache (lowercased WP character names), refreshed lazily.
 let _rosterNames = new Set();
 let _rosterNamesAt = 0;
@@ -4907,10 +4913,10 @@ async function _handleAgentChat(req, res) {
   // per upload for the former; the roster is cached ~10min.
   let uploaderCharacters = new Set();
   try {
-    const rows = await supabase.select(
+    const rows = await _uploaderCharsCache.get(identity.discord_id, () => supabase.select(
       'characters',
       `select=name&guild_id=eq.${encodeURIComponent(process.env.SUPABASE_GUILD_ID || 'wolfpack')}&discord_id=eq.${encodeURIComponent(identity.discord_id)}`,
-    );
+    ));
     for (const r of (Array.isArray(rows) ? rows : [])) if (r?.name) uploaderCharacters.add(String(r.name).toLowerCase());
   } catch { /* offline: safeguard degrades to roster + corroboration only */ }
   const rosterSet = await _rosterNameSet();
@@ -6049,10 +6055,10 @@ async function _handleAgentPvpAssists(req, res) {
   // drop it. (Defense-in-depth: the bot's auth token already gates upload
   // access, but the upload could plausibly carry junk if the agent is
   // misconfigured or a test rig pointed at production.)
-  const rosterRows = await supabase.select(
+  const rosterRows = await _assistRosterCache.get(guildId, () => supabase.select(
     'characters',
     `select=name&guild_id=eq.${encodeURIComponent(guildId)}&limit=10000`,
-  ).catch(() => []);
+  )).catch(() => []);
   const rosterLower = new Set(
     (Array.isArray(rosterRows) ? rosterRows : []).map(r => String(r.name || '').toLowerCase())
   );
@@ -8061,11 +8067,11 @@ async function _handleAgentServerPanel(req, res) {
           // PostgREST 400 from filtering on a missing column floods the logs.
           // Drop the guild_id clause; character_name is unique enough here.
           void guildId;
-          const wlRows = await supabase.select(
+          const wlRows = await _wishlistPriorities.get(String(character).toLowerCase(), () => supabase.select(
             'wishlists',
             `select=item_id,priority` +
             `&character_name=ilike.${encodeURIComponent(character)}`
-          );
+          ));
           for (const r of (wlRows || [])) wishById.set(r.item_id, { priority: r.priority });
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });

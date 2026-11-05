@@ -28,6 +28,7 @@ const screenTicket = require('./screenTicket');
 const { bearerOf } = require('./serviceKey');
 const { encryptBid, decryptBid, isEncryptionEnabled } = require('./bidCrypto');
 const rules = require('./wishlistRules');
+const { bustWishlist } = require('./hotReadCache');
 
 const MAX_BODY = 2048;
 const NAME_RE = /^[A-Za-z]{2,}$/;     // a character name; also what makes the ilike below wildcard-free
@@ -129,6 +130,7 @@ async function handle(req, res) {
 
   if (op === 'remove') {
     await sb.del('wishlists', where);          // best-effort and idempotent, like /wishlist remove
+    bustWishlist(name);
     return send(200, { ok: true });
   }
 
@@ -147,6 +149,7 @@ async function handle(req, res) {
     // The plaintext column is deprecated and always null (migration 20260525150000).
     const out = await sb.update('wishlists', where, { bid_amount: null, bid_amount_enc: bidEnc });
     if (!Array.isArray(out)) return send(502, { error: 'could not save' });
+    bustWishlist(name);
     return send(200, { ok: true, bid: bid.value });
   }
 
@@ -162,6 +165,7 @@ async function handle(req, res) {
     priority: prio.value, note: null, source: 'manual', source_url: null,
   }]);
   if (!Array.isArray(out)) return send(502, { error: 'could not save' });
+  bustWishlist(name);
   return send(200, { ok: true, priority: prio.value, bid: bid.value });
 }
 
