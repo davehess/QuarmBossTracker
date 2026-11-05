@@ -72,3 +72,19 @@ describe('pendingSessionAction — the spawn-checker side', () => {
     expect(pendingSessionAction({ threadId: 't1', startMs: NaN }, 0, false)).toBe('clear');
   });
 });
+
+// 2026-11-05: clearing set bot_kv.value to null, which the NOT NULL column refused (a 400 every 5 minutes), so the
+// parked record never went away and an opened session could reopen after an officer ended it. Clearing must delete.
+describe('clearPendingSession — removes the parked row', () => {
+  it('deletes the bot_kv row instead of nulling a NOT NULL column', async () => {
+    const calls = [];
+    const fakeSupabase = {
+      del: async (table, q) => { calls.push(['del', table, q]); },
+      update: async (table, q, body) => { calls.push(['update', table, q, body]); },
+    };
+    const { clearPendingSession } = new Function('require', 'process',
+      block + '\nreturn { clearPendingSession };')(() => fakeSupabase, { env: {} });
+    await clearPendingSession();
+    expect(calls).toEqual([['del', 'bot_kv', 'guild_id=eq.wolfpack&key=eq.pending_parse_session']]);
+  });
+});

@@ -367,11 +367,13 @@ async function savePendingSession(pending) {
     'guild_id,key');
 }
 
+// Deletes the row: bot_kv.value is NOT NULL, so the old "set value to null" failed every time (a 400 every 5 minutes
+// from the spawn checker, 2026-11-05), left the row parked, and an opened session could be reopened after an officer
+// ended it, until start + 6 h.
 async function clearPendingSession() {
   const supabase = require('../utils/supabase');
-  await supabase.update('bot_kv',
-    `guild_id=eq.${encodeURIComponent(_kvGuildId())}&key=eq.${_PENDING_SESSION_KEY}`,
-    { value: null, updated_at: new Date().toISOString() });
+  await supabase.del('bot_kv',
+    `guild_id=eq.${encodeURIComponent(_kvGuildId())}&key=eq.${_PENDING_SESSION_KEY}`);
 }
 
 /** 'now' when the announce should open the session immediately; 'defer' otherwise. Pure. */
