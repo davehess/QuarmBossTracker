@@ -29,7 +29,10 @@ const VERIFICATION_URL_DEFAULT = 'https://wolfpack.quest/auth/mimic-link';
 
 // In-process session cache to avoid hitting Supabase on every upload. Mimic
 // installs send the session token as a header on every agent request which the
-// agent forwards to the bot on every call — cache for 5 minutes per token.
+// agent forwards to the bot on every call — cache for 5 minutes per token. That is also the longest a revoke made on the
+// WEBSITE (a write the bot is not told about) keeps working, which is why §538's read trim did NOT lengthen it: the
+// single-flight lookup and the hourly last_used_at write carry the saving instead. The bot's own revoke path calls
+// invalidateSessionCache and takes effect at once; guests stay on the 1-minute window below.
 // Both caches are BOUNDED (unauthenticated-flood hardening, the guild lead, 2026-10-17): the positive cache holds only
 // tokens the store vouched for, the not-found/revoked answers live in a separate small cache with a short TTL, so a
 // stream of random tokens can neither grow memory without limit nor evict a real member's session.
@@ -131,6 +134,24 @@ function _setBounded(map, max, key, val) {
   if (!map.has(key) && map.size >= max) map.delete(map.keys().next().value);   // Map keeps insertion order → FIFO
   map.set(key, val);
 }
+
+// last_used_at feeds only the "this install last seen X ago" display, so an hour of resolution is plenty. Writing it on
+// every cache refill was ~4k PATCHes in 2 h (DECISIONS §538). At most one write per token per hour; the stamp is taken
+// before the write so a failed one is not retried in a loop (the next hour's resolve tries again).
+const SESSION_TOUCH_MS = 60 * 60 * 1000;
+const _lastTouched = new Map();   // token → ms of the last write  (FIFO-capped)
+function _touchSession(token) {
+  const now = Date.now();
+  const last = _lastTouched.get(token);
+  if (last !== undefined && now - last < SESSION_TOUCH_MS) return;
+  _setBounded(_lastTouched, SESSION_CACHE_MAX, token, now);
+  supabase.update(
+    'mimic_sessions',
+    `session_token=eq.${encodeURIComponent(token)}`,
+    { last_used_at: new Date(now).toISOString() },
+  ).catch(() => null);
+}
+const _lookupInflight = new Map();   // token → pending lookup promise (single flight)
 
 // Per-IP rate limit on the UNAUTHENTICATED /start — it does a Supabase INSERT
 // per call, so an open loop could spam mimic_link_codes (audit: unauthenticated
@@ -536,7 +557,14 @@ function _hubGuildOf(guildId) {
 // uploads). Single cache means a session token used by both surfaces only
 // hits Supabase once per 5 min.
 async function _resolveSessionToken(token, ip) {
-  const r = await _lookupSessionToken(token, ip);
+  // Single flight: when the cache entry lapses, every request already in the air for that token shares ONE store read
+  // instead of each issuing its own (an agent fires several calls at once). Entries live only while the read runs.
+  let p = _lookupInflight.get(token);
+  if (!p) {
+    p = _lookupSessionToken(token, ip).finally(() => _lookupInflight.delete(token));
+    _lookupInflight.set(token, p);
+  }
+  const r = await p;
   // Member lockout (utils/memberLockout.js): a locked member's token behaves exactly like a revoked one. The check
   // sits OUTSIDE the 5-minute cache on purpose, so an unlock (or a lock) takes effect within one lockout refresh.
   if (r && r !== LOOKUP_ERROR && r !== RATE_LIMITED && memberLockout.isLocked(r.discord_id)) return null;
@@ -596,11 +624,7 @@ async function _lookupSessionToken(token, ip) {
     };
     // Cached for a minute, not five: the officer's Revoke on /admin/links is a web write the bot is not told about.
     _setBounded(_sessionCache, SESSION_CACHE_MAX, token, { resolvedAt: Date.now() - SESSION_CACHE_TTL_MS + GUEST_CACHE_MS, value });
-    supabase.update(
-      'mimic_sessions',
-      `session_token=eq.${encodeURIComponent(token)}`,
-      { last_used_at: new Date().toISOString() },
-    ).catch(() => null);
+    _touchSession(token);
     return value;
   }
   // A player session (the free flag-sync link, no guild; 2026-11-02) resolves through hub_players alone. It is checked
@@ -629,11 +653,7 @@ async function _lookupSessionToken(token, ip) {
       scope: 'player', guild_id: PLAYER_HUB, hub_guild: null, hub_player: true, player_id: p.player_id,
     };
     _setBounded(_sessionCache, SESSION_CACHE_MAX, token, { resolvedAt: Date.now(), value });
-    supabase.update(
-      'mimic_sessions',
-      `session_token=eq.${encodeURIComponent(token)}`,
-      { last_used_at: new Date().toISOString() },
-    ).catch(() => null);
+    _touchSession(token);
     return value;
   }
   // A session linked to a hub guild (§499) resolves through that guild's roster, never wolfpack_members. Leaving the
@@ -663,11 +683,7 @@ async function _lookupSessionToken(token, ip) {
       hub_plan: m.plan, player_id: m.player_id,   // the plan decides the paid routes (requireAgentAuth); the player keys hub_flags
     };
     _setBounded(_sessionCache, SESSION_CACHE_MAX, token, { resolvedAt: Date.now(), value });
-    supabase.update(
-      'mimic_sessions',
-      `session_token=eq.${encodeURIComponent(token)}`,
-      { last_used_at: new Date().toISOString() },
-    ).catch(() => null);
+    _touchSession(token);
     return value;
   }
   // Sessions minted for OAuth-blocked members carry no user_id — fall back
@@ -709,11 +725,7 @@ async function _lookupSessionToken(token, ip) {
   };
   _setBounded(_sessionCache, SESSION_CACHE_MAX, token, { resolvedAt: Date.now(), value });
   // Best-effort bump last_used_at so we can show "this install last seen X ago".
-  supabase.update(
-    'mimic_sessions',
-    `session_token=eq.${encodeURIComponent(token)}`,
-    { last_used_at: new Date().toISOString() },
-  ).catch(() => null);
+  _touchSession(token);
   return value;
 }
 

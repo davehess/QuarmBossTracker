@@ -19,6 +19,7 @@ const { encryptBid, decryptBid, isEncryptionEnabled } = require('../utils/bidCry
 const { getCharacter, getAllNames }         = require('../utils/roster');
 const { hasAllowedRole }                   = require('../utils/roles');
 const { discordOwnership }                 = require('../utils/characterOwner');
+const { bustWishlist }                     = require('../utils/hotReadCache');
 const rules                                = require('../utils/wishlistRules'); // shared with the web's add (utils/webWishlist.js)
 
 // ── Item resolution ─────────────────────────────────────────────────────────
@@ -111,6 +112,7 @@ async function _add(interaction) {
   };
 
   const result = await supabase.upsert('wishlists', [row], 'character_name,item_id');
+  bustWishlist(rosterChar.name);
   if (!result) {
     return interaction.editReply({
       content: '⚠️ Supabase write failed. Check bot logs.',
@@ -183,6 +185,7 @@ async function _remove(interaction) {
 
   const query = `character_name=eq.${encodeURIComponent(rosterChar.name)}&item_id=eq.${itemId}`;
   await supabase.del('wishlists', query);
+  bustWishlist(rosterChar.name);
   // del() returns null on failure (already logged) — treat as best-effort
 
   return interaction.editReply({
