@@ -3653,6 +3653,10 @@ Loads the character's ini bundle (`ui-studio-read-bundle`), parses window
 sections (`XPos<res>` blocks, bare Width/Height), rescales source→target
 resolution, drag/snap editor, writes back with `.bak` or defers until logout
 (`defer-save` + background watcher).
+**Zeal bars as they draw** (Mimic beta, 2026-11-05, FB-120): `_raidBarsGrid` lays 71 fake members into the raid-bars box with
+Zeal's own cell math (`ZEAL_FONT_METRICS`, measured from Zeal's `.spritefont` files), `_raidBarsCellsHtml` draws them; `_assistBar`
+sizes the assist bar from the same metrics and is shown even with no `[AssistBar]` section. `GemsGameWnd` has its own `gemsgame`
+category. The skin-size scan (`ui-studio-scan-window-defaults`) uses `withDefault`, so `uifiles/default` fills what a skin omits.
 **Compare-first restore, Keep in sync, This PC** (Mimic beta `d494250d`, 2026-11-01, DECISIONS §510): Settings' ↩ Restore
 calls `ui-restore-plan` (backup vs disk per part, from `apps/mimic/uiRestorePlan.js`: `classify` / `compare` / `fitLayout` /
 `buildRestore` / `windowRects`) and `ui-restore-parts` (write now, or queue `{kind:'restore'}` for after the camp). Parts: layout

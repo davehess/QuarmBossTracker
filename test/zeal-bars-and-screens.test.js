@@ -19,8 +19,8 @@ const main   = readSource(path.join(ROOT, 'apps', 'mimic', 'main.js'));
 
 function studioZeal() {
   const parse = sliceBlock(studio, '  function parseIni(text){', '\n    return { lines: lines, sections: sections };\n  }');
-  const bars  = sliceBlock(studio, '  function _zealBarWindows(parsed, srcW, srcH, fxX, fxY){', '\n    return e;\n  }');
-  return evalBlock(parse + '\n' + bars, ['parseIni', '_zealBarWindows', '_zealBarEdits']);
+  const bars  = sliceBlock(studio, '  var ZEAL_FONT_METRICS = {', '\n    return e;\n  }');
+  return evalBlock(parse + '\n' + bars, ['parseIni', '_zealBarWindows', '_zealBarEdits', '_raidBarsGrid', 'RAID_FAKE_MEMBERS']);
 }
 
 describe('UI Studio shows Zeal\'s raid bars and assist bar as Zeal windows', () => {
@@ -46,7 +46,7 @@ describe('UI Studio shows Zeal\'s raid bars and assist bar as Zeal windows', () 
 
   it('the assist bar moves but its size is its text', () => {
     const [w] = z._zealBarWindows(ini('[AssistBar]\nEnabled=FALSE\nLeft=5\nTop=30\nFontSize=20\n'), 1920, 1080, 1, 1);
-    expect(w).toMatchObject({ zealBar: 'assistbar', fixedSize: true, w: 220, h: 44 });
+    expect(w).toMatchObject({ zealBar: 'assistbar', fixedSize: true, w: 264, h: 51 });   // arial_20, Zeal's own metrics
     expect(w.label).toBe('🐺 Assist bar (/assistbar) · off');
     w.x = 50; w.sizeEdited = true;
     expect(z._zealBarEdits(w)).toEqual({ Left: 50, Top: 30 });
@@ -54,11 +54,56 @@ describe('UI Studio shows Zeal\'s raid bars and assist bar as Zeal windows', () 
 
   it('positions remap to the target resolution; sizes stay pixels', () => {
     const [w] = z._zealBarWindows(ini('[AssistBar]\nLeft=100\nTop=200\nFontSize=16\n'), 2560, 1440, 0.75, 0.75);
-    expect([w.x, w.y, w.w]).toEqual([75, 150, 176]);
+    expect([w.x, w.y, w.w]).toEqual([75, 150, 203]);
   });
 
-  it('no section, no window', () => {
-    expect(z._zealBarWindows(ini('[Zeal]\nPipeDelay=100\n'), 1920, 1080, 1, 1)).toEqual([]);
+  it('no raid-bar section, no raid bars; no assist-bar section, the assist bar shows where Zeal would draw it (FB-120)', () => {
+    const out = z._zealBarWindows(ini('[Zeal]\nPipeDelay=100\n'), 1920, 1080, 1, 1);
+    expect(out.map(w => w.zealBar)).toEqual(['assistbar']);
+    expect(out[0]).toMatchObject({ section: 'AssistBar', x: 5, y: 30, w: 203, h: 40 });   // Zeal's defaults: 5,30, arial_16
+    expect(out[0].label).toBe('🐺 Assist bar (/assistbar) · not set up');
+    out[0].x = 40;
+    expect(z._zealBarEdits(out[0])).toEqual({ Left: 40, Top: 30 });   // a move writes a new [AssistBar]
+  });
+
+  it('a section-less assist bar is not added twice when zeal.ini has one', () => {
+    const out = z._zealBarWindows(ini('[AssistBar]\nEnabled=TRUE\nFontSize=16\n'), 1920, 1080, 1, 1);
+    expect(out.length).toBe(1);
+    expect(out[0].label).toBe('🐺 Assist bar (/assistbar)');
+  });
+});
+
+// FB-120: "please move GemsGameWnd to its own thing" — the Gems minigame is not a casting window.
+describe('UI Studio categories: the Gems game has its own toggle', () => {
+  const { FILTER_CATEGORIES } = evalBlock(sliceBlock(studio, '  var FILTER_CATEGORIES = [', '\n  ];'), ['FILTER_CATEGORIES']);
+  const first = (n) => FILTER_CATEGORIES.find(c => c.test(n)).key;
+  it('GemsGameWnd lands in gemsgame, off by default; spell gems and hotbars stay put', () => {
+    expect(first('GemsGameWnd')).toBe('gemsgame');
+    expect(FILTER_CATEGORIES.find(c => c.key === 'gemsgame').on).toBe(false);
+    expect(first('CastSpellWnd')).toBe('hotbars');
+    expect(first('HotButtonWnd')).toBe('hotbars');
+  });
+});
+
+// FB-120 (the guild lead, 2026-11-05): "The Raidbars setup needs to show fake player rows, up to 72 players bars."
+// The grid is RaidBars::LoadBitmapFont + QueueByClass: cells top to bottom, then the next column, stopping at the box.
+describe('raid bars draw a full raid laid out like Zeal does', () => {
+  const z = studioZeal();
+  it('Default font: 76.25 × 21.25 cells; a full-height box holds all 71', () => {
+    const g = z._raidBarsGrid(1880, 980, {});
+    expect([g.gw, g.gh, g.bw, g.bh]).toEqual([76.25, 21.25, 68, 8]);
+    expect(z.RAID_FAKE_MEMBERS).toBe(71);
+    expect(g.fit).toBe(71);
+    expect(g.cells[46]).toEqual({ x: 76.25, y: 0 });   // 46 rows fit in 980, so the 47th starts column two
+  });
+  it('a small box shows how many will not fit', () => {
+    const g = z._raidBarsGrid(300, 400, {});
+    expect(g.fit).toBe(54);   // 18 rows × 3 columns
+  });
+  it('font and bar settings change the cell', () => {
+    const g = z._raidBarsGrid(1000, 1000, { Font: 'arial_16', BarWidth: '100' });
+    expect([g.gw, g.gh, g.bw, g.bh]).toEqual([154.25, 39.25, 100, 13]);
+    expect(z._raidBarsGrid(1000, 1000, { Font: 'not_a_font' }).gw).toBe(76.25);   // sized as Default
   });
 
   it('is wired: loaded from zeal.ini, saved through _zealBarEdits, no grip on a fixed size, in the Zeal filter', () => {
