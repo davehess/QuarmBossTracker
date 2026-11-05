@@ -3951,9 +3951,14 @@ function _provableTargetId(observer, targetName) {
 // with two "A War Boar"s up, "A War Boar slows down." landing on boar B while this observer targets boar A
 // matched A's name above and was stamped with A's id, so A showed a PROVEN slow it never had. The id at land
 // time is proof only for our own cast (the target captured when we cast it, `_castTargetId`) or for a mob
-// whose name has no article (a named mob is one spawn). A generic "a/an/the …" landing stays id-less, and
+// whose name has no article (a named mob is one spawn). A generic "a/an …" landing stays id-less, and
 // the readers show it as unproven rather than as fact.
-const _GENERIC_MOB_RX = /^\s*(a|an|the)\s/i;
+// "The" is NOT generic (the guild lead, 2026-11-04, Target Info on The Acolyte of Affliction with every debuff but the
+// raid's own casts marked "?": "there's no way all of these are observed only"). eqemu_npc_types has 142 "the_…"/"The_…"
+// rows and they are named mobs (The Acolyte of Affliction, the Goblin King, The Protector of Dresolik); the only ones on
+// more than one spawn point are untargetable emote speakers (The air, The sand) and a few rotating rares, none of them
+// a debuff target. So a "The …" mob is one spawn, like any other named.
+const _GENERIC_MOB_RX = /^\s*(a|an)\s/i;
 function _landingTargetId(observer, evt) {
   if (evt && Number(evt._castTargetId) > 0) return Number(evt._castTargetId);
   const name = evt && evt.target;
