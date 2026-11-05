@@ -250,6 +250,11 @@ next touch one rather than assuming a missing row means a missing doc.
   clickable after an alt-tab. Not yet tried in game.
 - **🧪 FB-116: "drop invis and hail again" (Mimic beta, agent 4.0.60, 2026-11-03).** Your own hail of a flag NPC while invisible
   gets a local callout. HOW-ITS-BUILT: Hail while invisible.
+- **🧪 Target Info: debuffs on a named "The …" mob are fact, not "?" (agent 4.0.64, beta, 2026-11-04; DECISIONS §537).** The
+  guild lead, on The Acolyte of Affliction with every bystander-seen debuff marked "?": "there's no way all of these are observed
+  only". FB-83's generic-name rule counted "the" as an article like "a/an", so a landing seen by anyone but its caster never
+  proved the spawn. `_GENERIC_MOB_RX` is now `a|an` only (142 "the_" catalog names are named mobs or untargetable emote
+  speakers). Test `test/mobinfo-spawn-id-agent.test.js`. Already-tracked landings keep their "?" until they land again.
 - **🧪 The Tower of Solusek Ro's death-touch warders on the Map (agent 4.0.63, beta, 2026-11-04; DECISIONS §536).** For an
   hour after a wing boss dies, its three warders (death touch, aggro 60, see invisible, cannot be damaged; Xuzl's assist 100)
   draw on the Map with their aggro ring and "DT <minutes>m", whatever the ◯ switch says; ⚙ "Sol Ro death-touch warders"

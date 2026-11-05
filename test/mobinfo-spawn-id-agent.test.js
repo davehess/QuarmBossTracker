@@ -84,12 +84,20 @@ describe('which landings may carry a spawn id (FB-83)', () => {
     h.put('Hitya', 'A War Boar', 5101);
     expect(h._landingTargetId('Hitya', { target: 'A War Boar' })).toBe(null);
     expect(h._landingTargetId('Hitya', { target: 'an elder thought horror' })).toBe(null);
-    expect(h._landingTargetId('Hitya', { target: 'the Ishva Mal' })).toBe(null);
   });
 
   it('a named mob (no article) is one spawn, so the observer\'s target id proves it', () => {
     h.put('Hitya', 'Lord of Ire', 7);
     expect(h._landingTargetId('Hitya', { target: 'Lord of Ire' })).toBe(7);
+  });
+
+  // The guild lead, 2026-11-04: Target Info on The Acolyte of Affliction marked every bystander-seen debuff "?" ("there's
+  // no way all of these are observed only"). "The …" names are named mobs (The_Ishva_Mal: one spawn point), not generic.
+  it('a "The …" named mob is one spawn too', () => {
+    h.put('Hitya', 'The Acolyte of Affliction', 207123);
+    expect(h._landingTargetId('Hitya', { target: 'The Acolyte of Affliction' })).toBe(207123);
+    h.put('Hitya', 'the Ishva Mal', 18001);
+    expect(h._landingTargetId('Hitya', { target: 'the Ishva Mal' })).toBe(18001);
   });
 
   it('our own cast carries the id captured at cast time, generic name or not', () => {
@@ -137,6 +145,10 @@ describe('targetBuffsFor marks an unproven landing (FB-83)', () => {
   it('a named mob is never marked', () => {
     seed('lord of ire', [{ name: 'Tepid Deeds', target_name: 'Lord of Ire', target_id: null }]);
     expect(targetBuffsFor('lord of ire', 7)[0].unproven).toBe(false);
+  });
+  it('a "The …" named mob is never marked: a bystander\'s Ignite Blood on The Acolyte of Affliction is fact', () => {
+    seed('the acolyte of affliction', [{ name: 'Ignite Blood', target_name: 'The Acolyte of Affliction', target_id: null }]);
+    expect(targetBuffsFor('the acolyte of affliction', 207123)[0].unproven).toBe(false);
   });
 });
 
