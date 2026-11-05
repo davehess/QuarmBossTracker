@@ -1796,6 +1796,9 @@ contextBridge.exposeInMainWorld('mimic', {
   // Scan the active UI skin's XML files for each window's design size — used
   // as the authoritative MAX size in the visual layout. Returns { skin, sizes }.
   uiStudioScanWindowDefaults: (eqDir)        => ipcRenderer.invoke('ui-studio-scan-window-defaults', eqDir),
+  // "Real look": the skin's XML as a model, and its textures decoded to { width, height, rgba } by file name.
+  uiStudioSkinModel:    (eqDir)              => ipcRenderer.invoke('ui-studio-skin-model', eqDir),
+  uiStudioSkinTextures: (eqDir, skin, files) => ipcRenderer.invoke('ui-studio-skin-textures', eqDir, skin, files),
   uiStudioCapturePvpDraft:(params)           => ipcRenderer.invoke('ui-studio-capture-pvp-draft', params),
 
   // Mimic Discord login (device-code flow). `mimicLinkStart` returns

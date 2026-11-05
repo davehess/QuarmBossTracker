@@ -7078,6 +7078,39 @@ function _scanSkinWindowSizes(eqDir, opts) {
 // window in a custom skin drew as a made-up 200×100 box (FB-120, "UI Studio didn't resize", 2026-11-05).
 ipcMain.handle('ui-studio-scan-window-defaults', (_e, eqDir) => _scanSkinWindowSizes(eqDir, { fresh: true, withDefault: true }));
 
+// UI Studio's "Real look": the active skin's EQUI_*.xml read into a model (skin first, uifiles/default for the rest) and its
+// textures decoded, so the page can draw each window as it looks in game (apps/mimic/sidlSkin.js + sidlRender.js; the guild
+// lead, 2026-11-05: "load in the UI assets so we display what it actually looks like. interpret the xml"). Read-only.
+const sidlSkin = require('./sidlSkin');
+let _skinModelCache = null;   // { key, at, model }
+function _activeUiSkin(eqDir) {
+  try {
+    const m = fs.readFileSync(path.join(eqDir, 'eqclient.ini'), 'utf8').match(/^\s*UISkin\s*=\s*(.+?)\s*$/im);
+    if (m && m[1].trim()) return m[1].trim();
+  } catch { /* no eqclient.ini: the client uses default too */ }
+  return 'default';
+}
+ipcMain.handle('ui-studio-skin-model', (_e, eqDir) => {
+  const d = String(eqDir || '').trim();
+  if (!d || !fs.existsSync(d)) return { ok: false, error: 'eqDir does not exist' };
+  const skin = _activeUiSkin(d);
+  const key = d + '|' + skin;
+  if (_skinModelCache && _skinModelCache.key === key && Date.now() - _skinModelCache.at < 60000) return _skinModelCache.model;
+  const model = sidlSkin.loadSkinModel(d, skin);
+  _skinModelCache = { key, at: Date.now(), model };
+  return model;
+});
+ipcMain.handle('ui-studio-skin-textures', (_e, eqDir, skin, files) => {
+  const d = String(eqDir || '').trim();
+  const out = {};
+  if (!d || !Array.isArray(files)) return out;
+  for (const f of files.slice(0, 400)) {
+    if (typeof f !== 'string' || out[f] !== undefined) continue;
+    out[f] = sidlSkin.readSkinTexture(d, skin, f);   // null when missing or undecodable: the page draws a placeholder
+  }
+  return out;
+});
+
 ipcMain.handle('ui-studio-write-pages', (_e, eqDir, edits) => {
   try {
     const d = String(eqDir || '').trim();

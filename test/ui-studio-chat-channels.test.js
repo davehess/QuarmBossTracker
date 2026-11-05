@@ -318,7 +318,8 @@ describe('selection is one state, shared', () => {
 
   it('both sides drive the same state', () => {
     // the stage repaints the cards from STATE.selected; the card title assigns it
-    expect(code).toMatch(/_syncChatCardSelection\(\);\n  \}\n  window\.addEventListener\('resize'/);
+    // (the Real look's _lookSchedule() follows it at the end of renderStage, 2026-11-05)
+    expect(code).toMatch(/_syncChatCardSelection\(\);\n    _lookSchedule\(\);\n  \}\n  window\.addEventListener\('resize'/);
     expect(code).toMatch(/_selectChatWindow\(parseInt\(this\.getAttribute\('data-win'\), 10\), chatBlock\.dataset\.file\)/);
   });
 });
