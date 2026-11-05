@@ -250,6 +250,11 @@ next touch one rather than assuming a missing row means a missing doc.
   clickable after an alt-tab. Not yet tried in game.
 - **🧪 FB-116: "drop invis and hail again" (Mimic beta, agent 4.0.60, 2026-11-03).** Your own hail of a flag NPC while invisible
   gets a local callout. HOW-ITS-BUILT: Hail while invisible.
+- **🧪 The Tower of Solusek Ro's death-touch warders on the Map (agent 4.0.63, beta, 2026-11-04; DECISIONS §536).** For an
+  hour after a wing boss dies, its three warders (death touch, aggro 60, see invisible, cannot be damaged; Xuzl's assist 100)
+  draw on the Map with their aggro ring and "DT <minutes>m", whatever the ◯ switch says; ⚙ "Sol Ro death-touch warders"
+  turns them off. Reuses the cauldron tracker's wing-death signal. `_solroWarders` → `/api/map-state` `warders`; tests
+  `test/solro-warders.test.js`, `test/map-heading-up.test.js`. Not yet seen in game.
 - **🧪 Tower of Solusek Ro brazier clicks in the Command Center (Mimic beta, agent 4.0.59, 2026-11-02, first draft, not yet tried in
   game).** The guild lead: "add in for the command center timers the clicks for the braziers for tower of solro after the mini
   bosses are completed." One row per wing boss killed: countdown to the 30-minute depop and clicked / not clicked for this

@@ -56148,7 +56148,7 @@ function _mapStatePayload(have, now, haveLocal, haveRoute) {
   const character = _mapActiveCharacter(now);
   const st = character ? _zealState[character] : null;
   const out = { zone: null, long_name: null, zone_id: null, version: null, status: character ? 'ok' : 'no-pipe', local_only: _localOnly(),
-    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], engaged: [], unassigned: [], copy: null, cc: [], paths: {}, watched: {}, corpses: [], route_ver: null, now };
+    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], engaged: [], unassigned: [], copy: null, cc: [], paths: {}, watched: {}, corpses: [], warders: [], route_ver: null, now };
   if (!st) return out;
   _mapSlowRefresh(now);
   out.zone_id = Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
@@ -56239,6 +56239,8 @@ function _mapStatePayload(have, now, haveLocal, haveRoute) {
   }
   // Guild corpses (see "Guild corpses"): { name, x, y, z, age, died_age, dragger, by }, before the spawn data like the paths.
   try { out.corpses = _mapCorpseList(zone, now); } catch { out.corpses = []; }
+  // The Tower of Solusek Ro's death-touch warders, for an hour after each wing boss dies (see "death-touch warders").
+  try { out.warders = _solroWarders(character, zone, now); } catch { out.warders = []; }
   // The saved raid route (see "Saved raid route"): its version always, the route itself only when the overlay lacks that version.
   try {
     const route = _mapRouteFor(zone, now);
@@ -60424,6 +60426,43 @@ function _solroNoteLine(line, character, now) {
     if (!second) return;   // the first Rizlona only counts; the second one's death leaves the cauldron
   }
   st.cauldrons.set(w.wing, { part: w.part, diedAt: now, clickedAt: 0 });
+  _solroWarderNote(cl, w.wing, now);
+}
+// The death-touch warders (the guild lead, 2026-11-04: "add the warders to the Mimic map"). The same death_complete that
+// spawns a wing's cauldron spawns three of them (quests @60e979f solrotower/Xuzl.lua:3-5, Arlyxir.lua:3-5,
+// The_Protector_of_Dresolik.lua:5-7, #Rizlona.lua:5-7, Jiva.lua:27-29; spawn2 x, y, z = the eqemu_spawn2 frame the Map
+// draws in). eqemu_npc_types 212415-212419: Touch of Vinitras (spell 2859, a death touch, every 30 s), aggro radius 60,
+// see invisible, summon, immune to melee and magic, no harm from players; Xuzl's (212415) alone assist out to 100.
+// a_warder_of_*.lua depops each 60 minutes after it spawns, the clock paused while it fights (ignored here, like the
+// cauldron's). Kept apart from _solroState, which forgets a wing when its cauldron goes (32 min) and on any zone change.
+const SOLRO_WARDER_MS     = 60 * 60 * 1000;
+const SOLRO_WARDER_AGGRO  = 60;
+const SOLRO_WARDERS = {
+  Xuzl:     { assist: 100, at: [[1837, -1040, 297], [1880, -1091, 297], [1800, -1091, 297]] },
+  Arlyxir:  { assist: 0,   at: [[1726, 1165, 624], [1713, 1207, 633], [1738, 1207, 633]] },
+  Dresolik: { assist: 0,   at: [[976, 1918, -158], [1007, 1982, -158], [1041, 1918, -158]] },
+  Rizlona:  { assist: 0,   at: [[-1087, 2022, -902], [-1118, 2022, -902], [-1102, 1975, -914]] },
+  Jiva:     { assist: 0,   at: [[-2211, -790, -1094], [-2255, -790, -1094], [-2301, -790, -1094]] },
+};
+const _solroWarderAt = new Map();   // character (lower) → Map(wing → boss died at)
+function _solroWarderNote(cl, wing, now) {
+  let m = _solroWarderAt.get(cl);
+  if (!m) { m = new Map(); _solroWarderAt.set(cl, m); }
+  m.set(wing, now);
+}
+// For the Map: [{ wing, x, y, z, aggro, assist, until }] while a wing's warders are up, in the Tower of Solusek Ro only.
+function _solroWarders(character, zone, now) {
+  if (zone !== 'solrotower') return [];
+  const m = _solroWarderAt.get(String(character || '').toLowerCase());
+  if (!m) return [];
+  const out = [];
+  for (const [wing, diedAt] of m) {
+    if (now > diedAt + SOLRO_WARDER_MS) { m.delete(wing); continue; }
+    const w = SOLRO_WARDERS[wing];
+    if (!w) continue;
+    for (const [x, y, z] of w.at) out.push({ wing, x, y, z, aggro: SOLRO_WARDER_AGGRO, assist: w.assist, until: diedAt + SOLRO_WARDER_MS });
+  }
+  return out;
 }
 // The Command Center rows: null unless a cauldron is up (or just gone) for this character, soonest depop first.
 function _solroSnapshot(character, now) {
