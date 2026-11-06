@@ -6997,6 +6997,20 @@ reused (per-kind envelope, 404 permanent, holds back agent updates while non-emp
 stays 8 h (24 h could pull a previous copy's event in on a reused port). Tests: `test/map-sync-outbox.test.js` (beta), `test/map-sync-dedup.test.js` (main).
 ⚠ Order: deploy the bot, THEN apply the migration (the index with the old bot rejects a repeated batch whole). Shipped 2026-10-26 in that order.
 
+### 🧾 2026-11-06 — Target info: run speed and ROOTED, PQDI spell links, the kill log on the canvas (agent 4.0.71, Mimic beta)
+The guild lead: *"add run speed for mobs to target info. if run speed is zero list it as ROOTED"*, *"make it so spell names are a
+link to the PQDI entry"*, *"there isn't parity with the kill log on the target info and canvas mode"*.
+- **Run speed** from the catalog (`eqemu_npc_types.runspeed`, already on the mob-info row). **ROOTED** (red) only on evidence: a
+  harmful root landing (catalog `cc` 'root', SPA 99) on that target with no movement seen. Catalog speed 0 = "does not move", never
+  ROOTED; a rooted mob seen moving = "root has broken". Zeal's pipe sends no speed (the client Entity's `MovementSpeed` is not
+  exported), so movement is measured from `target_loc` over ~3.5 s for the same target id (`classifyMovement`,
+  `observedSpeed` in the agent). ⚠ A damage-broken root on a mob that then stands still still reads ROOTED until the landing ends.
+- **Spell names** in buffs, casting, last cast, procs and the spell list open `https://www.pqdi.cc/spell/<id>` in the browser;
+  no id, plain text.
+- **Kill log:** one builder (`apps/mimic/targetInfoShared.js` `killLogRows`) for the ⟲ Recent tab and a new canvas
+  `target.recent` piece (plus `target.move`). The canvas piece shows every target, not the overlay's filter.
+Tests: `test/target-info-speed-links-killlog.test.js`. Not tried in game yet.
+
 ### 🧾 2026-11-06 — "How I died" in My replay (agent 4.0.70, Mimic beta)
 The guild lead: *"I just got destroyed by a few mobs and it looked like I wasn't anywhere near them"* → *"build the how I died
 panel"*. After each death, My replay (tray → 🎬 My replay) shows the last 30 s: damage taken per second by attacker with your HP and

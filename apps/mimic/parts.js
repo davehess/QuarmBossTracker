@@ -520,6 +520,9 @@
     timers: { path: '/api/timers',          every: 700 },
     // What the target NPC says, takes and sells (Target Info's Quest and Vendor tabs). Its path
     // depends on who is targeted, so it is a function of the other sources; null means wait.
+    // Target Info's kill log (the agent's last 50 targets). The agent answers {rev, unchanged} in a few bytes
+    // when nothing moved, but no rev is sent here, so every poll carries the list.
+    hist:   { path: '/api/target-history', every: 3000 },
     npc:    { path: function (live) { var s = live('state'), m = s && s.mobInfo && s.mobInfo.mob; return m && m.id ? '/api/npc-interact?id=' + m.id : null; },
               needs: ['state'], every: 5000 },
   };
@@ -541,12 +544,16 @@
     for (var i = 0; i < list.length; i++) if (low(list[i][key || 'owner']) === me) return list[i];
     return null;
   }
+  // The pieces Target Info and the canvas draw the same way (PQDI spell links, the kill log, the run-speed line)
+  // live in targetInfoShared.js, loaded before this file by canvas.html.
+  var TI = root.WpTargetInfo || (typeof require === 'function' ? require('./targetInfoShared.js') : null);
+  function spellUrl(id) { return TI ? TI.pqdiSpellUrl(id) : ''; }
   function buffRows(list, at) {
     return (Array.isArray(list) ? list : []).map(function (b) {
       var left = num(b.remaining_secs);
       if (left != null && num(b.observed_at_ms)) left = Math.max(0, left - (Date.now() - b.observed_at_ms) / 1000);
       var tot = num(b.total_secs);
-      return { name: b.name, text: b.fell_off ? 'fell off' : left == null ? '' : secsText(left),
+      return { name: b.name, url: spellUrl(b.spell_id) || undefined, text: b.fell_off ? 'fell off' : left == null ? '' : secsText(left),
         pct: (left != null && tot) ? (left / tot) * 100 : null,
         color: b.fell_off ? C.purple : b.good === 0 ? C.red : C.green };
     });
@@ -792,10 +799,10 @@
     },
     { pct: 58, text: '~58%' }, { short: 'Target mana', color: C.blue });
   P('target.lastcast', 'target', 'Target\'s last cast', 'state', 'value',
-    function (d) { var c = d.mobInfo && d.mobInfo.target_lastcast; return c && c.spell ? { text: (c.confidence === 'guess' ? '? ' : '') + c.spell, sub: ago(Date.now() - c.atMs) } : null; },
+    function (d) { var c = d.mobInfo && d.mobInfo.target_lastcast; return c && c.spell ? { text: (c.confidence === 'guess' ? '? ' : '') + c.spell, url: spellUrl(c.spell_id) || undefined, sub: ago(Date.now() - c.atMs) } : null; },
     { text: 'Lava Breath', sub: '12s ago' }, { short: 'Last cast' });
   P('target.casting', 'target', 'Casting on the target', 'state', 'list',
-    function (d) { var cs = d.mobInfo && d.mobInfo.target_casting; if (!Array.isArray(cs)) return null; return { items: cs.map(function (c) { var l = num(c.ends_at_ms) ? c.ends_at_ms - Date.now() : null; return { name: c.caster + ' → ' + c.spell, text: l == null ? '' : (Math.max(0, l) / 1000).toFixed(1) + 's' }; }), empty: 'no casts' }; },
+    function (d) { var cs = d.mobInfo && d.mobInfo.target_casting; if (!Array.isArray(cs)) return null; return { items: cs.map(function (c) { var l = num(c.ends_at_ms) ? c.ends_at_ms - Date.now() : null; return { name: c.caster + ' → ' + c.spell, url: spellUrl(c.spell_id) || undefined, text: l == null ? '' : (Math.max(0, l) / 1000).toFixed(1) + 's' }; }), empty: 'no casts' }; },
     { items: [{ name: 'Corvale → Tashanian', text: '1.8s' }] }, { short: 'Casting on it' });
   P('target.debuffs', 'target', 'Debuffs on the target', 'state', 'list',
     function (d) { var b = d.mobInfo && d.mobInfo.target_buffs; if (!Array.isArray(b)) return null; return { items: buffRows(b.filter(function (x) { return x.good === 0; })), empty: 'no debuffs' }; },
@@ -898,12 +905,30 @@
       var sp = (Array.isArray(m.spells) ? m.spells : []).filter(Boolean).slice().sort(function (a, b) { return (a.good === 1) - (b.good === 1); });
       return { items: sp.map(function (s) {
         var res = s.good === 1 ? 'buff' : (RESIST_NAME[s.resist_type] || 'unresistable') + (num(s.resist_diff) ? ' ' + s.resist_diff : '');
-        return { name: s.name || ('Spell #' + s.id), text: s.mana != null ? s.mana + 'm' : '', color: s.good === 1 ? C.green : C.purple,
+        return { name: s.name || ('Spell #' + s.id), url: spellUrl(s.id) || undefined, text: s.mana != null ? s.mana + 'm' : '', color: s.good === 1 ? C.green : C.purple,
           sub: [res, castSecs(s.cast_ms) ? 'cast ' + castSecs(s.cast_ms) : '', num(s.recast_ms) ? 'recast ' + Math.round(s.recast_ms / 1000) + 's' : ''].filter(Boolean).join(' · ') };
       }), empty: 'no spell list catalogued' };
     },
     { items: [{ name: 'Lava Breath', text: '150m', color: C.purple, sub: 'Fire · cast 3.0s · recast 30s' }, { name: 'Shield of Lava', text: '60m', color: C.green, sub: 'buff · cast 2.5s' }] },
     { short: 'Spells' });
+  // Run speed and ROOTED (same wording as Target Info's line: TI.moveView over the agent's classifyMovement).
+  P('target.move', 'target', 'Run speed and ROOTED', 'state', 'value',
+    function (d) {
+      var v = TI && d && d.mobInfo ? TI.moveView(d.mobInfo, mob(d)) : null;
+      if (!v) return null;
+      return { text: v.label || v.run, sub: v.label ? v.run : '', color: v.tone === 'red' ? C.red : v.tone === 'orange' ? C.orange : C.dim };
+    },
+    { text: 'ROOTED', sub: 'Run speed: 1.25', color: C.red }, { short: 'Run speed' });
+  // The kill log: the agent's target history, drawn from the SAME rows as Target Info's ⟲ Recent tab
+  // (TI.killLogRows). Gold = seen to die, blue = left alive. The 'hist' source is /api/target-history.
+  P('target.recent', 'target', 'Kill log: recent targets', 'hist', 'list',
+    function (d) {
+      if (!TI || !d || !Array.isArray(d.targets)) return null;
+      var rows = TI.killLogRows(d.targets, 'all', null, Date.now());
+      return { items: rows.map(function (r) { return { name: r.name, sub: r.line2, color: r.tone === 'gold' ? C.gold : C.blue }; }), empty: TI.killLogEmpty(d.targets, 'all') };
+    },
+    { items: [{ name: 'a dire wolf', sub: 'Lavastorm Mountains · killed 4m ago', color: C.gold }, { name: 'a giant spider', sub: 'Lavastorm Mountains · left alive, seen 12m ago · lowest HP 54%', color: C.blue }] },
+    { short: 'Kill log' });
   P('target.factions', 'target', 'Faction hits on kill', 'state', 'list',
     function (d) {
       var m = mob(d); if (!m) return null;
@@ -1241,8 +1266,8 @@
       ['target.flags', 'chips', 160, 141, 160, 20], ['target.ht', 'readout', 0, 164, 80, 15], ['target.slow', 'readout', 80, 164, 120, 15],
       ['target.mana', 'thin', 200, 164, 120, 16], ['target.lastcast', 'readout', 0, 182, 200, 15], ['target.tot', 'readout', 200, 182, 120, 15],
       ['target.casting', 'rows', 0, 200, 320, 40], ['target.debuffs', 'rows', 0, 243, 320, 60], ['target.buffs', 'rows', 0, 306, 320, 50]] },
-    { id: 'target-tabs', name: 'Target: drops, spells, F/Q/V', parts: stack([['target.loot', 'rows', 170], ['target.spells', 'rows', 170],
-      ['target.factions', 'rows', 90], ['target.quest', 'rows', 170], ['target.vendor', 'rows', 90]], 280) },
+    { id: 'target-tabs', name: 'Target: drops, spells, F/Q/V', parts: stack([['target.move', 'readout', 24], ['target.loot', 'rows', 170], ['target.spells', 'rows', 170],
+      ['target.factions', 'rows', 90], ['target.quest', 'rows', 170], ['target.vendor', 'rows', 90], ['target.recent', 'rows', 150]], 280) },
     { id: 'charm', name: 'Charm', embed: 'charm', parts: stackC([['charm.pet', 'bar'], ['charm.uptime', 'readout'], ['charm.breaks', 'bar'], ['charm.servertick', 'bar'], ['charm.mobtick', 'bar'], ['charm.buffs', 'rows', 90]], 240) },
     { id: 'pets', name: 'Pets', embed: 'pets', parts: stackC([['pet.hp', 'bar'], ['pet.target', 'readout'], ['pet.combat', 'readout'], ['pet.buffs', 'rows', 100]], 240) },
     { id: 'dps', name: 'DPS HUD', embed: 'hud', parts: stackC([['fight.name', 'readout'], ['fight.dps', 'rows', 200], ['fight.mine', 'readout']], 280) },

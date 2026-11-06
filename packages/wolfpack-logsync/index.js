@@ -58586,6 +58586,86 @@ function mobInfoFeedbackMeta(now) {
     };
   } catch { return null; }
 }
+// ── Target Info: run speed + ROOTED (the guild lead, 2026-11-06) ─────────────────────────────────────────
+// "add run speed for mobs to target info. if run speed is zero list it as ROOTED." Three signals, and only
+// the last two ever say ROOTED:
+//   1. the catalog's runspeed (eqemu_npc_types, via the bot's mob-info row). 0 is a mob that does not walk at
+//      all, so it reads "does not move" and never ROOTED: nothing rooted it, and a root changes nothing.
+//   2. a root spell landed on this target and not yet faded: the observed landings already in target_buffs, a
+//      harmful spell whose catalog `cc` holds 'root' (SPA 99). A landing outlives the root being broken by
+//      damage, so it is read together with 3.
+//   3. the target's own movement from successive Zeal target_loc samples (units per second over ~3 s, same
+//      target_id only). The Zeal pipe sends NO speed field (named_pipe.cpp exports target_id/loc/type/level/
+//      size, not Entity::MovementSpeed @0x5C or MovementType @0x320), so this is derived. A mob standing
+//      still is NOT rooted: it is "standing still", a neutral line. A rooted-by-spell mob that is seen
+//      moving has broken the root and is not shown ROOTED.
+const TGT_MOVE_WINDOW_MS = 3500, TGT_MOVE_MIN_SPAN_MS = 1200, TGT_MOVE_SAMPLE_GAP_MS = 250, TGT_MOVING_UPS = 1.5;
+const _tgtMove = { id: null, pts: [] };
+// Record this poll's target_loc and return the observed speed (units/s) or null while it cannot be read.
+function _tgtMoveNote(st, now) {
+  const id = st && Number.isFinite(st.target_id) && st.target_id > 0 ? st.target_id : null;
+  const loc = st && st.target_loc;
+  const npc = !st || st.target_type == null || Number(st.target_type) === 1;
+  if (!id || !npc || !loc || !Number.isFinite(Number(loc.x)) || !Number.isFinite(Number(loc.y))) {
+    _tgtMove.id = null; _tgtMove.pts = [];
+    return null;
+  }
+  if (_tgtMove.id !== id) { _tgtMove.id = id; _tgtMove.pts = []; }
+  const last = _tgtMove.pts[_tgtMove.pts.length - 1];
+  if (!last || now - last.t >= TGT_MOVE_SAMPLE_GAP_MS) _tgtMove.pts.push({ t: now, x: Number(loc.x), y: Number(loc.y), z: Number(loc.z) || 0 });
+  _tgtMove.pts = _tgtMove.pts.filter(p => now - p.t <= TGT_MOVE_WINDOW_MS);
+  return observedSpeed(_tgtMove.pts, now);
+}
+// Path length over the window / its span; null until the samples span enough time to mean anything.
+function observedSpeed(pts, now) {
+  const w = (pts || []).filter(p => now - p.t <= TGT_MOVE_WINDOW_MS);
+  if (w.length < 2) return null;
+  const span = w[w.length - 1].t - w[0].t;
+  if (span < TGT_MOVE_MIN_SPAN_MS) return null;
+  let d = 0;
+  for (let i = 1; i < w.length; i++) d += Math.hypot(w[i].x - w[i - 1].x, w[i].y - w[i - 1].y, w[i].z - w[i - 1].z);
+  return d / (span / 1000);
+}
+// A root spell is up on the target: a harmful, unfaded landing whose catalog entry carries cc 'root'.
+function rootActiveOn(buffs) {
+  for (const b of (Array.isArray(buffs) ? buffs : [])) {
+    if (!b || !b.name || b.fell_off || b.good === 1) continue;
+    if (b.remaining_secs != null && b.remaining_secs <= 0) continue;
+    const e = _spellByNameLower.get(String(b.name).toLowerCase());
+    if (e && Array.isArray(e.cc) && e.cc.includes('root')) return true;
+  }
+  return false;
+}
+// The pure decision. runspeed: catalog number or null; rootActive: bool; observed: units/s or null.
+function classifyMovement({ runspeed, rootActive, observed }) {
+  const rs = runspeed != null && Number.isFinite(Number(runspeed)) ? Number(runspeed) : null;
+  const obs = observed != null && Number.isFinite(observed) ? observed : null;
+  const moving = obs != null && obs >= TGT_MOVING_UPS;
+  const out = { runspeed: rs, observed: obs == null ? null : Math.round(obs * 10) / 10, state: null, label: null, rooted: false };
+  if (rs === 0) { out.state = 'stationary'; out.label = 'does not move'; return out; }
+  if (rootActive) {
+    if (moving) { out.state = 'root-broken'; out.label = 'moving, root has broken'; return out; }
+    out.state = 'rooted'; out.label = 'ROOTED'; out.rooted = true;
+    out.basis = obs != null ? 'root landed and it is standing still' : 'root landed (movement not readable)';
+    return out;
+  }
+  if (moving) { out.state = 'moving'; out.label = 'moving'; }
+  else if (obs != null) { out.state = 'still'; out.label = 'standing still'; }
+  return out;
+}
+// Spell id by name from the catalog, for the PQDI links (null when unknown: the overlay keeps plain text).
+function _spellIdByName(name) {
+  const e = name ? _spellByNameLower.get(String(name).toLowerCase()) : null;
+  return e && e.id != null && Number(e.id) > 0 ? Number(e.id) : null;
+}
+function withSpellIds(list, key) {
+  if (!Array.isArray(list)) return list;
+  return list.map(r => {
+    if (!r || r.spell_id != null) return r;
+    const id = _spellIdByName(r[key || 'name']);
+    return id ? { ...r, spell_id: id } : r;
+  });
+}
 // FB-111: is this character's EverQuest log quiet while Zeal still sees them in game? Then Target Info can only know
 // their own buffs (Zeal's list), never what lands on a mob. Two cases, the dashboard's two banners: the log went
 // silent mid-session (_logSilent), or no log is being read at all. null when the log is fine. Nothing volatile in it.
@@ -58712,6 +58792,8 @@ function buildMobInfo() {
   // resolver + max>100 guard the Tank overlay uses (a ≤100 "pool" is a percent in
   // disguise). Uploaded live-state was already fetched above for the PC buff path.
   const targetVals = _resolveHpValuesForName(tnameLower, selfChar, st);
+  const mobBody = cached && cached.mob ? _pickMobBody(cached.mob, st, selfChar, myZoneId, Date.now()) : null;
+  const targetMove = classifyMovement({ runspeed: mobBody ? mobBody.runspeed : null, rootActive: rootActiveOn(buffs), observed: _tgtMoveNote(st, Date.now()) });
   return {
     target_name:    st.target_name,
     target_hp_pct:  st.target_hp_pct != null ? st.target_hp_pct : null,
@@ -58721,13 +58803,14 @@ function buildMobInfo() {
     loading:        !cached,
     // FB-95: why there is no row to show (null when there is one) — the overlay prints it beside a ↻ retry.
     mob_miss:       _mobMiss(mobKey, cached, st.target_name, myZoneId),
-    target_buffs:   buffs,
+    target_buffs:   withSpellIds(buffs),
+    target_move:    targetMove,
     log_quiet:      _logQuietFor(selfChar),
     // PC = live buff data (own Zeal list OR the target's uploaded live-state)
     // — drives the "(live)" header suffix instead of "(observed)".
     target_is_pc:   zealBuffs !== null || liveBuffs !== null,
     target_slots:   slotCounts,
-    target_casting: ctc ? ctc.casts : [],
+    target_casting: ctc ? withSpellIds(ctc.casts, 'spell') : [],
     // #130 — best ACTIVE slow on the current target (strongest still-live,
     // observed-landing + catalog-duration derived; the only path for mobs, which
     // have no authoritative buff readout on the Zeal pipe). null when unslowed.
@@ -58745,7 +58828,7 @@ function buildMobInfo() {
     // and without it a zone full of same-named trash shares one ledger and one
     // "last cast" — which is exactly what shipped and was wrong.
     target_mana:    npcManaState(st.target_name, _curIdForRelay),
-    target_lastcast: lastNpcCast(st.target_name, _curIdForRelay),
+    target_lastcast: (lc => lc ? { ...lc, spell_id: _spellIdByName(lc.spell) } : lc)(lastNpcCast(st.target_name, _curIdForRelay)),
     // A player target: class, level (exact or a /consider range), and the PvP
     // drain tally. Null for NPCs.
     target_player:  _targetPlayerInfo(st, selfChar, cached),
@@ -68832,6 +68915,7 @@ module.exports = {
   _fightHistoryPayload, _setUploadOptsForTest: (o) => { _uploadOpts = o; },
   _raidFightsList, _raidFightBoard, _resetRaidFightsForTest,
   // Target Info history (2026-10-19): the last 50 targets, the frame hook, the slain-line hook, the past-mob shape and its endpoint.
+  classifyMovement, observedSpeed, rootActiveOn, withSpellIds, _tgtMoveNote, _tgtMoveResetForTest: () => { _tgtMove.id = null; _tgtMove.pts = []; },
   TGT_HIST_MAX, TGT_HIST_KEEP_MS, _tgtHistNoteFromState, _tgtHistNoteSlain, _targetHistoryPayload, _pastMobInfo,
   _saveTargetHistory, _loadTargetHistory, _trimTargetHistory,
   _tgtHistForTest: () => _tgtHist, _tgtHistResetForTest: () => { _tgtHist = []; _tgtCur.clear(); },
