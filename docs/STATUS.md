@@ -6997,6 +6997,14 @@ reused (per-kind envelope, 404 permanent, holds back agent updates while non-emp
 stays 8 h (24 h could pull a previous copy's event in on a reused port). Tests: `test/map-sync-outbox.test.js` (beta), `test/map-sync-dedup.test.js` (main).
 ⚠ Order: deploy the bot, THEN apply the migration (the index with the old bot rejects a repeated batch whole). Shipped 2026-10-26 in that order.
 
+### 🧾 2026-11-06 — Feedback of every kind can attach a log slice (agent 4.0.67, beta)
+The guild lead: *"feedback that isn't a bug should also be able to take screenshots and include logs"*. Screenshots were already
+open to every kind on every surface, and the bot already stored `log_excerpt` for any category; the one gate was the agent
+dashboard's Feedback card (also Mimic's Feedback window and the tray's Send feedback), which hid the log row and forced
+`attach_log` off unless the kind was bug. It now offers the log on every kind with the same opt-in (unticked, previewed, filtered
+by `buildFeedbackLogSlice`). The website has no log path (it cannot read a member's log); anonymous feedback untouched.
+Tests: `test/feedback-log-slice.test.js`, `test/mob-miss-reason.test.js`, `test/feedback-ingest.test.js`.
+
 ### 🧾 2026-11-05 — UI Studio: raid bars as a full raid, the assist bar always, Gems game apart, default-skin sizes (Mimic beta, FB-120)
 - **Raid bars** draw 71 fake members (a 72-person raid; Zeal skips you) in Zeal's own grid: cell size from the raid bars' font and
   BarWidth/BarHeight exactly as `RaidBars::LoadBitmapFont` computes it (metrics read from Zeal's `.spritefont` files into
