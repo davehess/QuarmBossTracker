@@ -126,6 +126,21 @@ next touch one rather than assuming a missing row means a missing doc.
   id / level / hp, so the agent cannot compare texture / gender / size against a body; the bot would need those columns on each
   body (see the commit). UI labels 87-89 (target distance, level, class) need nothing: `charInfo` already keeps every non-buff
   label verbatim. Test: `test/zeal-target-item.test.js`.
+- **🧾 Zeal 1.5 death events feed the map, kill log and charm tracker (agent 4.0.76 on `beta`, 2026-11-06; the guild lead: "ingest the
+  pipe data").** Needs **Zeal 1.5.0+** (CoastalRedwood/Zeal PR #263, pipe message type 7, `death`: `{spawn_id, name?, type?, level?,
+  killer_id, killer_name?}` for every death the client is told about); **a no-op on older Zeal**, which never sends the message.
+  Mimic (`_zealAbsorb`, `_pipeDeath`) validates each one and keeps a ring of the last 50 (5 minutes) on the character's snapshot as
+  `deaths[]` (with the zone, since spawn ids are zone-scoped); the existing snapshot push carries it. The agent
+  (`_zealDeathsFromState`) handles each death once (spawn id + name + zone within 10 s, so several characters on one PC count it
+  once) and hands it to the EXISTING consumers: **the spawn map** (`_mapNoteZealDeath` → `_mapNoteDeath`, src `zeal`, so a
+  target-window death beside it still counts once; position from the sighting or last remembered one, else only when the spawn is
+  already listed alive), **Target Info's Recent tab** (the entry for that spawn id is marked killed, "by <killer>"; a mob nobody
+  targeted gets a row only when one of our characters killed it), **the charm tracker** (a tracked pet's spawn id is removed
+  silently like a "slain" line, never a "charm break" call) and **the debuff timers on the dead mob**. Left alone on purpose: the
+  bot-facing payloads (no upload carries deaths today; `bosskill` / encounter end could use `killer_name`, not changed), the
+  EncounterBuilder's charm sessions (no `pet_died` end reason yet), `_ownPetRecs` (keeps the pet id after death by design) and the
+  log-line paths (they stay as the fallback). Test: `test/zeal-death-events.test.js`.
+
 - **🧪 Fight files: a fight's per-second snapshots go to Storage as one file, not Postgres rows (bot 4.0.56; branch `fight-files`, not
   yet pushed, 2026-11-05; DECISIONS §538; the guild lead: "do A, keep everything").** `encounter_threat_snapshots` was 2.6 GB (53% of
   the database) and ~12.5k inserts + 2.9k updates per two raid hours. `utils/fightFiles.js` holds a fight's snapshots in the bot's

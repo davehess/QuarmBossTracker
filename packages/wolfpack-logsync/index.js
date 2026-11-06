@@ -38509,6 +38509,8 @@ function startWebDashboard(port) {
           try { _tgtHistNoteFromState(character, prevState, _zealState[character], Date.now()); } catch (e) { void e; }
           // Spawn map: first sightings off target_loc, and a mob seen dead starts its respawn window.
           try { _mapNoteState(character, prevState, _zealState[character], Date.now()); } catch (e) { void e; }
+          // Zeal 1.5.0+ death events (pipe type 7): the exact spawn that died and who killed it. Absent on an older Zeal.
+          try { _zealDeathsFromState(character, _zealState[character], Date.now()); } catch (e) { void e; }
           // #205 — group member HP hitting (and holding) zero is death evidence
           // that owes nothing to the log text. Feeds the death registry.
           try { _noteGroupHpFromState(character, st, Date.now()); } catch (e) { void e; }
@@ -46255,6 +46257,28 @@ function _tgtHistNoteSlain(deadName, now = Date.now()) {
   const e = _tgtHist.find(x => !x.restored && !x.killedMs && String(x.name).toLowerCase() === want && now - x.lastMs <= 3 * 60_000);
   if (e && _tgtMarkKilled(e, now, 'slain')) { _trimTargetHistory(now); _tgtChanged(); }
 }
+// A Zeal 1.5 death event for a spawn id: that exact entry died (how 'zeal-death'), with who killed it. A mob nobody
+// targeted gets a row only when one of OUR characters landed the kill: every death in the zone would otherwise push the
+// mobs you actually looked at out of the 50. → true when the list changed.
+function _tgtHistNoteZealDeath(d, zone, now = Date.now(), ours = false) {
+  const id = Number(d && d.spawn_id);
+  if (!(id > 0)) return false;
+  const z = Number.isFinite(Number(zone)) ? Number(zone) : null;
+  let e = _tgtHist.find(x => !x.restored && x.id === id && x.zone === z && (!x.killedMs || now - x.killedMs <= 60_000) && (!d.name || String(x.name).toLowerCase() === String(d.name).toLowerCase()));
+  if (!e && ours && d.name && (d.type == null || Number(d.type) === 1)) {
+    e = { key: (z == null ? 'x' : z) + '#' + id + '#' + now.toString(36) + '#' + String(d.name).toLowerCase(), zone: z, zoneName: _zoneName(z), id,
+          name: String(d.name), ch: '', firstMs: now, lastMs: now, minHp: 0, hp: 0, killedMs: null, killedHow: null };
+    _tgtHist.unshift(e);
+  }
+  if (!e) return false;
+  const marked = _tgtMarkKilled(e, now, 'zeal-death');
+  const killer = d.killer_name ? String(d.killer_name) : null;
+  const named = !!killer && e.killer !== killer;
+  if (named) e.killer = killer;
+  if (!marked && !named) return false;
+  _trimTargetHistory(now); _tgtChanged();
+  return true;
+}
 // Which entry the live target is, for the overlay to skip it while paging (null when it has none).
 function _tgtLiveKey(st, now = Date.now()) {
   if (!st || !st.target_name) return null;
@@ -52747,6 +52771,56 @@ function _noteMobDeathFromState(character, prev, next) {
     if (t.unref) t.unref();
   }
 }
+// Zeal 1.5.0 pipe type 7, `death` (the guild lead, 2026-11-06: "ingest the pipe data"). Mimic keeps a ring of the last
+// ~50 deaths (≤5 min) on each character's snapshot as st.deaths = [{spawn_id, name?, type?, level?, killer_id, killer_name?,
+// at, zone}], so every /api/zeal-state frame carries the ring again: an entry already handled is skipped, and the same
+// death heard by two characters on one PC counts once (spawn id + name + zone, within 10 s). A death is exact (the spawn
+// id, the killer) where everything else here infers it, and it covers mobs nobody targeted. It feeds the EXISTING
+// consumers: the spawn map, Target Info's kill log, the charm tracker, and the debuff timers on the dead mob. An older
+// Zeal never sends the message, st.deaths is absent and this returns at the first line. Nothing is uploaded to the bot.
+const ZEAL_DEATH_DEDUPE_MS = 10_000;
+const ZEAL_DEATH_MAX_AGE_MS = 5 * 60_000;
+const _zealDeathSeen = new Map();   // "zone|spawn_id|name" → at (ms) of the death last handled
+// A charm pet's spawn id is dead: the tracker entry goes silently, the way a "slain" line removes it (checkCharmPetDeath), so
+// no "charm break" call is made for a pet that was killed. → the pet names removed.
+function _charmPetDiedById(spawnId) {
+  const id = Number(spawnId);
+  const out = [];
+  if (!(id > 0)) return out;
+  for (const [k, info] of _charmTickTracker) {
+    if (info && Number(info.pet_id) === id) { out.push(info.pet || k); _charmTickTracker.delete(k); }
+  }
+  return out;
+}
+function _zealDeathsFromState(character, st, now = Date.now()) {
+  const list = st && st.deaths;
+  if (!Array.isArray(list) || !list.length) return 0;
+  let handled = 0;
+  for (const d of list) {
+    const id = Number(d && d.spawn_id);
+    if (!(id > 0)) continue;
+    const at = Number.isFinite(Number(d.at)) ? Math.min(Number(d.at), now) : now;
+    if (now - at > ZEAL_DEATH_MAX_AGE_MS) continue;
+    const key = (d.zone != null ? d.zone : st.zone) + '|' + id + '|' + String(d.name || '').toLowerCase();
+    const prev = _zealDeathSeen.get(key);
+    if (prev != null && Math.abs(at - prev) <= ZEAL_DEATH_DEDUPE_MS) continue;
+    _zealDeathSeen.set(key, at);
+    handled++;
+    const zoneId = d.zone != null ? d.zone : st.zone;
+    const killer = d.killer_name ? String(d.killer_name) : '';
+    const ours = !!killer && _watchedCharacters().some(c => String(c).toLowerCase() === killer.toLowerCase());
+    try { _charmPetDiedById(id); } catch (e) { void e; }
+    if (d.type == null || Number(d.type) === 1) {
+      try { _mapNoteZealDeath(_mapZoneShort(zoneId), character, d, at); } catch (e) { void e; }
+      try { _tgtHistNoteZealDeath(d, zoneId, at, ours); } catch (e) { void e; }
+      if (d.name) { try { _dropDebuffTimersOnDeath(d.name, id, at, 'zeal'); } catch (e) { void e; } }
+    }
+  }
+  if (_zealDeathSeen.size > 500) {
+    for (const [k, t] of _zealDeathSeen) if (now - t > ZEAL_DEATH_MAX_AGE_MS) _zealDeathSeen.delete(k);
+  }
+  return handled;
+}
 function _noteMobHealFromState(character, prev, next) {
   if (!character || !prev || !next) return;
   const pn = prev.target_name, nn = next.target_name;
@@ -56684,6 +56758,29 @@ function _mapNoteLogDeath(deadName, character, lineMs, now) {
     else loc = _mapServerXY(st.loc);
   }
   _mapNoteDeath(zone, { name: deadName, spawn_id: id, loc, loc_source: src, at: Number.isFinite(lineMs) ? Math.min(lineMs, now) : now, src: 'log', character }, now);
+}
+// A Zeal 1.5 `death` event {spawn_id, name?, type?}: that exact spawn died, whoever was looking at it. The normal kill path
+// (_mapNoteDeath, src 'zeal', so the target-window death a moment earlier or later counts once). A position comes from the
+// sighting _mapNoteDeath reads itself, else the last one remembered for the spawn id; with neither, the death is acted on
+// only when the spawn is already listed alive (_mapProveDead), because a death with no position and no history is a
+// trash mob that would just add "?" markers. A name the event omits is read back from what the map knows of the id.
+// A player or a corpse (type 0, 2, 3) is not a spawn. → true when the map was handed the death.
+function _mapNoteZealDeath(zone, character, d, now) {
+  const id = Number(d && d.spawn_id);
+  if (!zone || !(id > 0)) return false;
+  if (d.type != null && Number(d.type) !== 1) return false;
+  const zd = _mapZoneDoc(zone);
+  const sight = zd.sightings[String(id)];
+  const seenRow = Object.values(zd.seen).find(s => s && s.spawn_id != null && Number(s.spawn_id) === id);
+  const mem = _mapHpMem.zone === zone ? _mapHpMem.m.get(id) : null;
+  const name = d.name || (sight && sight.name) || (seenRow && seenRow.name) || (mem && mem.name) || null;
+  if (!name) { _mapNoteDeath(zone, { name: '', spawn_id: id, at: now, src: 'zeal', character }, now); return false; }   // forgets its health, nothing more
+  const pos = _mapPosMem.zone === zone ? _mapPosMem.m.get(id) : null;
+  if (sight || pos) {
+    _mapNoteDeath(zone, { name, spawn_id: id, loc: pos ? { x: pos.x, y: pos.y, z: pos.z } : null, loc_source: 'target', at: now, src: 'zeal', character }, now);
+    return true;
+  }
+  return !!_mapProveDead(zone, character, id, name, null, now);
 }
 // ── end Spawn map core ──
 
@@ -69128,6 +69225,7 @@ module.exports = {
   classifyMovement, observedSpeed, rootActiveOn, withSpellIds, _tgtMoveNote, _tgtMoveResetForTest: () => { _tgtMove.id = null; _tgtMove.pts = []; },
   TGT_HIST_MAX, TGT_HIST_KEEP_MS, _tgtHistNoteFromState, _tgtHistNoteSlain, _targetHistoryPayload, _pastMobInfo,
   _saveTargetHistory, _loadTargetHistory, _trimTargetHistory,
+  _zealDeathsFromState, _charmPetDiedById, _tgtHistNoteZealDeath, _zealDeathSeen,
   _tgtHistForTest: () => _tgtHist, _tgtHistResetForTest: () => { _tgtHist = []; _tgtCur.clear(); },
   // Kite loops (2026-10-15): the Map's summary gate + queue, the guild's loops in, and the queue the summary lands in.
   _kiteLoopSubmit, _kiteLoopBody, _kiteLoopsClean, _kiteLoopsFor, _kiteLoopCache, _handleKiteLoopPost, _handleKiteLoopsGet,

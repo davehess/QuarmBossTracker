@@ -3615,7 +3615,8 @@ nudged (`/log on` hint) when a configured folder has no fresh logs.
 ### Zeal pipe bridge (`zealPipe.js`)
 tasklist → find eqgame PIDs → connect to Zeal's named pipe per PID → frames
 to the local agent. Types: log 0, label 1, gauge 2, player 3, custom 4,
-raid 5, group 6 (reserved). Elevation mismatch (EQ admin, Mimic not) =
+raid 5, group 6 (reserved), death 7 (Zeal 1.5.0+: `_pipeDeath` in `main.js` → `st.deaths[]` → agent
+`_zealDeathsFromState` → spawn map, Target Info kill log, charm tracker). Elevation mismatch (EQ admin, Mimic not) =
 connect-then-close with no error — run Mimic as admin (field-diagnosed
 2026-07-05; auto-hint in the Zeal notification + zealhealth.html).
 In-EQ-folder installs can break DX-hook detection — reinstall outside.

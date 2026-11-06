@@ -2097,6 +2097,19 @@ function _retireZealChar(character, why, swappedTo) {
   req.on('error', () => {}); req.on('timeout', () => req.destroy());
   req.write(body); req.end();
 }
+// Zeal 1.5.0 pipe type 7, `death`: one per death in the zone the client is told about. { spawn_id, name?, type?, level?,
+// killer_id, killer_name? } (name/type/level are omitted when the client did not know the spawn; killer_id 0 = no killer,
+// e.g. a DoT tick). Returns the sanitized entry, or null for anything malformed. An older Zeal never sends the type.
+function _pipeDeath(v, at) {
+  if (!v || typeof v !== 'object') return null;
+  const spawn_id = _pipeSpawnId(v.spawn_id);
+  if (spawn_id == null) return null;
+  const str = (x) => (typeof x === 'string' && x.trim() ? x.trim().slice(0, 64) : null);
+  const int = (x, lo, hi) => (typeof x === 'number' && Number.isFinite(x) && x >= lo && x <= hi) ? Math.trunc(x) : null;
+  return { spawn_id, name: str(v.name), type: int(v.type, 0, 3), level: int(v.level, 1, 255),
+           killer_id: _pipeSpawnId(v.killer_id), killer_name: str(v.killer_name), at };
+}
+const ZEAL_DEATH_KEEP = 50, ZEAL_DEATH_KEEP_MS = 5 * 60_000;
 function _zealAbsorb(obj, pid) {
   const character = obj && obj.character;
   if (!character) return;
@@ -2363,6 +2376,15 @@ function _zealAbsorb(obj, pid) {
       s.last_item = { item_id: id, name: nm, at: Date.now() };
       cur.dirty = true;
     }
+  } else if (type === 7) {                            // death — Zeal 1.5.0+; a no-op on an older Zeal (it never sends one)
+    const d = _pipeDeath(_zealParseData(obj), Date.now());
+    if (!d) return;
+    d.zone = s.zone != null ? s.zone : null;   // spawn ids are zone-scoped: the ring outlives a zone change by up to 5 minutes
+    // A short ring on the snapshot; the agent dedupes (several characters on one PC each hear the same death).
+    const keep = (Array.isArray(s.deaths) ? s.deaths : []).filter(x => d.at - x.at <= ZEAL_DEATH_KEEP_MS);
+    keep.push(d);
+    s.deaths = keep.slice(-ZEAL_DEATH_KEEP);
+    cur.dirty = true;
   } else if (type === 6) {                            // group — this char's group
     // Zeal group payload per member: { name, loc {x,y,z}, heading } always,
     // plus { hp_current, hp_max, class, level, zone_id } when /pipeverbose is
