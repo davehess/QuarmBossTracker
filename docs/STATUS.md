@@ -103,8 +103,7 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
-- **🧾 Target info: an overwritten debuff drops off (agent 4.0.74 beta · bot 4.0.58; branches `draft/debuff-overwrite` and
-  `draft/stack-sig-main`, local drafts not yet pushed, 2026-11-06).** The guild lead saw Malo and Malosinia listed together; on the
+- **🧾 Target info: an overwritten debuff drops off (agent 4.0.74 beta · bot 4.0.58 on main, 2026-11-06).** The guild lead saw Malo and Malosinia listed together; on the
   server Malosinia overwrites Malo and a Malo cast after it is blocked, and both print the same landing line. One generic rule,
   ported from EQMacEmu `zone/buffstacking.cpp` (`Mob::FindAffectSlot`, NPC target; lines ported are named in the comment above
   `_stackDecide`), covers the ~40 same-text families (Tashan line, Malo line, slows, roots, snares, poisons, Choke...). **Bot:**
@@ -116,6 +115,17 @@ next touch one rather than assuming a missing row means a missing doc.
   catalog:** an agent that gets a catalog without `st` behaves exactly as before (tested). Not ported: per-caster level, the
   stacking-command rules, `dot_stacking_exempt`. Tests: `test/spell-catalog-stack-signature.test.js`, `test/debuff-overwrite.test.js`.
 
+- **🧾 2026-11-06 — Zeal 1.5 target appearance and item windows reach the agent (beta, agent 4.0.75; the guild lead: "ingest the
+  pipe data").** Zeal v1.5.0-alpha0 adds the target's texture, gender, model size and worn equipment (9 entries) to the player
+  message (PR #264) and a new type 8 `item` message `{ item_id, name }` each time an item window is filled (PR #261). Mimic's
+  `_zealAbsorb` now keeps `target_texture` / `target_gender` / `target_size` / `target_equipment` (finite numbers; equipment only
+  as <= 9 integers; all null on an older Zeal or with no target) and `last_item = { item_id, name, at }`. Both ride the existing
+  `/api/zeal-state` POST into the agent's `_zealState`, and show on the local Zeal state as `target_look` and `last_item`.
+  Used: a clicky cast looks its catalog row up by the item id when the player's last viewed item (within 30 min) has that name
+  (`_clickyEntryFor`). **Not used yet:** variant picking. The bot's `mob-info` takes a name or an npc id and `level_bodies` carry only
+  id / level / hp, so the agent cannot compare texture / gender / size against a body; the bot would need those columns on each
+  body (see the commit). UI labels 87-89 (target distance, level, class) need nothing: `charInfo` already keeps every non-buff
+  label verbatim. Test: `test/zeal-target-item.test.js`.
 - **🧪 Fight files: a fight's per-second snapshots go to Storage as one file, not Postgres rows (bot 4.0.56; branch `fight-files`, not
   yet pushed, 2026-11-05; DECISIONS §538; the guild lead: "do A, keep everything").** `encounter_threat_snapshots` was 2.6 GB (53% of
   the database) and ~12.5k inserts + 2.9k updates per two raid hours. `utils/fightFiles.js` holds a fight's snapshots in the bot's

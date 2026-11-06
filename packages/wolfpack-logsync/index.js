@@ -46932,6 +46932,25 @@ let _itemClickyByNameLower = new Map();
 let _itemClickyMeta = null;
 const ITEM_CLICKY_FILE = path.join(__dirname, 'logsync.item-clickies.json');
 
+// The clicky catalog row for an item NAME, made exact by the item window (Zeal 1.5 pipe type 8: the id of the last item the
+// player inspected). The catalog is keyed by name, so two items sharing a name collapse to one row; when the character's
+// last viewed item has this name and a known id, that id's row wins. Anything else is the name lookup, as before.
+const ZEAL_ITEM_HINT_MS = 30 * 60 * 1000;
+function _clickyEntryFor(character, itemName, now) {
+  const lower = String(itemName || '').toLowerCase();
+  const byName = _itemClickyByNameLower.get(lower);
+  try {
+    const st = _zealState[character];
+    const li = st && st.last_item;
+    if (li && Number(li.item_id) > 0 && String(li.name || '').toLowerCase() === lower
+        && ((now || Date.now()) - Number(li.at || 0)) <= ZEAL_ITEM_HINT_MS
+        && !(byName && Number(byName.id) === Number(li.item_id))) {
+      for (const e of _itemClickyByNameLower.values()) if (e && Number(e.id) === Number(li.item_id)) return e;
+    }
+  } catch (e) { void e; }
+  return byName;
+}
+
 // A spell's name from its id, for the clicky catalog's clickeffect. A scan: clicks are rare.
 function _spellNameById(id) {
   const n = Number(id);
@@ -60126,6 +60145,10 @@ function _serializeZealForWeb() {
       autoattack:  !!st.autoattack,
       loc:         st.loc || null,
       heading:     st.heading != null ? st.heading : null,
+      // Zeal 1.5: the target's look, and the last item window the player opened (null on an older Zeal).
+      target_look: st.target_name ? { texture: st.target_texture != null ? st.target_texture : null, gender: st.target_gender != null ? st.target_gender : null,
+        size: st.target_size != null ? st.target_size : null, equipment: Array.isArray(st.target_equipment) ? st.target_equipment : null } : null,
+      last_item:   st.last_item || null,
       buffs:       Array.isArray(st.buffs) ? st.buffs : [],
       casting:     st.casting || null,
       custom_recent: Array.isArray(st.custom_recent) ? st.custom_recent : [],
@@ -65375,7 +65398,7 @@ async function main() {
           const m = line.match(/\]\s+Your\s+(.+?)\s+begins\s+to\s+(?:glow|sparkle|hum|smoke|burn)\b/i);
           if (m) {
             const itemName = m[1];
-            const cat = _itemClickyByNameLower.get(itemName.toLowerCase());
+            const cat = _clickyEntryFor(b.character, itemName, Date.now());
             const castMs = (cat && typeof cat.casttime === 'number' && cat.casttime > 0) ? cat.casttime : null;
             if (b.character) {
               _pendingClickies.set(b.character.toLowerCase(),

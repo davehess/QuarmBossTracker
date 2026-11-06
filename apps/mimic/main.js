@@ -2044,6 +2044,18 @@ function _pipeLoc(v) {
   const x = Number(v.x), y = Number(v.y), z = Number(v.z);
   return (Number.isFinite(x) && Number.isFinite(y)) ? { x, y, z: Number.isFinite(z) ? z : 0 } : null;
 }
+// Zeal 1.5 appearance readers: a finite number or null, and the worn-equipment list (<= 9 entries: 7 material slots,
+// then the primary and secondary item types) or null when any entry is not a finite integer.
+function _pipeNum(v) { return (typeof v === 'number' && Number.isFinite(v)) ? v : null; }
+function _pipeEquipment(v) {
+  if (!Array.isArray(v) || v.length === 0 || v.length > 9) return null;
+  const out = [];
+  for (const x of v) {
+    if (typeof x !== 'number' || !Number.isInteger(x)) return null;
+    out.push(x);
+  }
+  return out;
+}
 // A {id, name, authoritative} candidate off the pipe — the target-of-target
 // keys the drafted Zeal change emits (docs/zeal-tot-pipe.patch). Absent on
 // every released Zeal, so null is the normal case and nothing downstream may
@@ -2211,6 +2223,12 @@ function _zealAbsorb(obj, pid) {
       // database rows with different levels ... Level, class, race and position are what actually separate them").
       // Target Info uses it to tell two same-name mobs apart (FB-80). Omitted with the target, so nulled when absent.
       s.target_level = (typeof inner.target_level === 'number' && inner.target_level > 0 && inner.target_level < 256) ? Math.trunc(inner.target_level) : null;
+      // Zeal 1.5 (PR #264): what the target looks like. Same-name spawns with one level and class can still be
+      // different catalog rows that render differently. Each is nulled when absent (older Zeal, or no target).
+      s.target_texture = _pipeNum(inner.target_texture);
+      s.target_gender  = _pipeNum(inner.target_gender);
+      s.target_size    = _pipeNum(inner.target_size);
+      s.target_equipment = _pipeEquipment(inner.target_equipment);
       // Target of target (drafted Zeal change, docs/zeal-tot-pipe.patch):
       // {id, name, authoritative} for who my target last hit, and who last hit
       // my target. Omitted upstream when there is no fresh candidate, so both
@@ -2336,6 +2354,14 @@ function _zealAbsorb(obj, pid) {
       // `/pipe mimic load|save|next|prev|lock` — overlay sets, for the character who typed it.
       const cmd = overlaySets.parsePipeCommand(text);
       if (cmd) { try { _overlaySetCommand(cmd, character); } catch (e) { appendAgentLog(`[sets] /pipe ${text}: ${e.message}\n`); } }
+    }
+  } else if (type === 8) {                            // item — an item display window was filled (Zeal 1.5, PR #261)
+    const inner = _zealParseData(obj);
+    const id = inner && typeof inner === 'object' ? inner.item_id : null;
+    const nm = inner && typeof inner === 'object' && typeof inner.name === 'string' ? inner.name.trim().slice(0, 120) : '';
+    if (typeof id === 'number' && Number.isInteger(id) && id > 0 && nm) {
+      s.last_item = { item_id: id, name: nm, at: Date.now() };
+      cur.dirty = true;
     }
   } else if (type === 6) {                            // group — this char's group
     // Zeal group payload per member: { name, loc {x,y,z}, heading } always,
