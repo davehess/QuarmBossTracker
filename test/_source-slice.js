@@ -93,4 +93,7 @@ export const stripCss = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '');
 
 // The Pet and Charm overlays load apps/mimic/petsheet.js with a <script src>; a harness that runs their inline
 // <script> in a sandbox has to hand the module in the way the page gets it (as the global WpPetSheet).
+// mobinfo.html reads the shared Target Info helpers off the page's global (a <script> before its own); a block
+// sliced out of it runs in node with no page, so the same global is provided here.
+globalThis.WpTargetInfo = createRequire(import.meta.url)(path.join(ROOT, 'apps', 'mimic', 'targetInfoShared.js'));
 export const WpPetSheet = createRequire(import.meta.url)(path.join(ROOT, 'apps', 'mimic', 'petsheet.js'));

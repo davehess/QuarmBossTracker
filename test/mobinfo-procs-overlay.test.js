@@ -31,10 +31,10 @@ describe('the Procs section', () => {
       { kind: 'range', spell_id: 5, name: 'Arrow Burn', chance: 12.4, summary: '' },
       { kind: 'defensive', spell_id: 6, name: 'Thorns', chance: null, summary: 'snare' },
     ] });
-    expect(out).toContain('Arrow Burn (ranged)');
-    expect(out).toContain('Thorns (when hit)');
+    expect(out).toContain('Arrow Burn</a> (ranged)');   // the name is a PQDI link
+    expect(out).toContain('Thorns</a> (when hit)');
     expect(out).toContain('>12%<');
-    expect(text(out)).toContain('|Arrow Burn (ranged)|12%|—|Thorns (when hit)|—|snare|');
+    expect(text(out)).toContain('|Arrow Burn| (ranged)|12%|—|Thorns| (when hit)|—|snare|');
   });
   it('a spell the catalog could not name still shows, by id', () => {
     expect(render({ procs: [{ kind: 'attack', spell_id: 4242, chance: 10, summary: '' }] })).toContain('Spell #4242');
