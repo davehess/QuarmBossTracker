@@ -272,6 +272,24 @@ guilds signed up: Quarm raids cluster in US evenings, so plan for most guilds ov
 "Disk IO % consumed" on Small for a raid night after the fight feed moves (1% or more = above baseline that day).
 **This means the 2026-10 guess above (Small ~5, Medium ~20, Large ~50 guilds; ~$2-3 per guild-month) was optimistic** by roughly
 3×: plan on **~$8-12 of compute per raiding guild-month** at 5-15 guilds, falling toward ~$5 on the larger, non-bursting sizes.
+
+**First measurement, raid night 2026-11-05 on Small** (one guild, ~53 raiders, ~30 Mimic uploaders, Plane of Water; after the read
+trim; fight files in mode 1, so every snapshot row was still written). Postgres's own counters (`pg_stat_io` reads + writes and
+`pg_stat_wal` bytes), sampled hourly from 7:57 PM to 12:45 AM ET:
+
+| Window (ET) | MB/s (read + write + WAL) | I/O ops/s | Share of Small's 22 MB/s · 1,000 IOPS |
+|---|---|---|---|
+| 7:57–9:00 | 0.36 | 22 | ~2% · ~2% |
+| 9:00–10:00 | 0.36 | 16 | ~2% · ~2% |
+| 10:00–11:00 (two Coirnav attempts) | 0.44 | 25 | ~2% · ~2.5% |
+| 11:00–12:45 (incl. the midnight jobs) | 0.62 | 65 | ~3% · ~6.5% |
+| **Raid window 7:57–11:00** | **0.38** | **21** | **~2% · ~2%** |
+
+⚠ These are Postgres's view, not the dashboard's Disk IO budget: reads may be OS-cache hits (an upper bound), and checkpoint
+fsyncs, temp files and the OS are not in them. They are also far too low to explain Micro running dry on 2026-11-04 (its baseline is
+11 MB/s), so either the read trim (bot 4.0.55) removed most of that night's load or most metered I/O is invisible here. The guild
+lead's dashboard reading of "Disk IO % consumed" for the same night is the number that settles which; until then the guild column
+above stays an estimate.
 The other limits are far away: files in Storage (Pro includes 100 GB; keeping everything is ~3.6 GB per guild-year), database
 size (Small's recommended maximum is 50 GB; a guild's durable rows are ~1.2 GB a year once the feed is out), connections (one bot
 process talks to the database, so 90 direct / 400 pooled on Small is not in play), the bot's memory for live fights (~12 MB per
