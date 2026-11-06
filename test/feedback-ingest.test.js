@@ -65,6 +65,13 @@ describe('what it must not do', () => {
     expect(fn).toContain("typeof p?.log_excerpt === 'string' ? p.log_excerpt.slice(0, 600_000) : null");
   });
 
+  // Not gated on category: an idea keeps its log and screenshots (2026-11-06).
+  it('keeps the log and screenshots whatever the category', () => {
+    expect(fn).not.toMatch(/category[^\n]*\?[^\n]*log_excerpt/);
+    expect(fn).toContain('decodeShots(p?.screenshots)');
+    expect(fn).toContain('row.screenshot_paths = shotPaths');
+  });
+
   // Discord being slow or down must never cost someone their bug report.
   it('answers the agent before it posts to Discord', () => {
     const ackAt  = fn.indexOf("res.end(JSON.stringify({ ok: true, stored: !!saved, screenshots: shotPaths.length }))");

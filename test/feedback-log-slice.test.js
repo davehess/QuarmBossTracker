@@ -211,7 +211,8 @@ describe('the feedback card cannot ship a log by accident', () => {
   // ⚠ The failure this guards against is the worst one available to this
   // platform: quietly uploading someone's log because they typed in a box.
   it('attaches nothing unless the box is ticked', () => {
-    expect(dash).toContain('attach_log: !!(cb && cb.checked && _wpFbKind === \'bug\')');
+    expect(dash).toContain('attach_log: !!(cb && cb.checked)');
+    expect(dash).not.toMatch(/attach_log:[^\n]*_wpFbKind/);
   });
 
   it('previews before it can be sent — the preview route sends nothing', () => {
@@ -227,11 +228,11 @@ describe('the feedback card cannot ship a log by accident', () => {
     expect(dash).toMatch(/first 400 lines/);
   });
 
-  // A log slice explains a bug. Offering it on "please add a dark mode" invites
-  // data we asked for and do not need.
-  it('hides the attach row entirely for ideas, and unticks it', () => {
-    expect(dash).toContain("row.style.display = _wpFbKind === 'bug' ? 'flex' : 'none'");
-    expect(dash).toContain('if (cb) cb.checked = false;');
+  // 2026-11-06: every kind can attach a log, under the same opt-in (unticked, previewed, filtered).
+  it('offers the attach row on every kind and never forces it on', () => {
+    expect(dash).toContain("if (row) row.style.display = 'flex';");
+    expect(dash).not.toMatch(/row\.style\.display = _wpFbKind/);
+    expect(dash).not.toContain('<input type="checkbox" id="wpFbAttach" checked');
   });
 
   // The card holds a half-typed report and the dashboard repaints every ~2s.
