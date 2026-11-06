@@ -3355,6 +3355,12 @@ Personal data lives on each player's PC; the hub keeps the shared raid record. N
   `utils/raidTrack.js`; a parity test feeds both the same frames). Routes `/api/local/track*` feed My replay (nights, 15-minute
   windows, boss kills from this PC's own fight records, the zone map). A character this PC knows is `exclude_from_stats` is
   never written. `WP_LOCAL_TRACK=0` turns it off. Test: `test/local-recorder.test.js`, `test/local-replay.test.js`.
+- **How I died (agent 4.0.70, beta, 2026-11-06).** `_deathNoteEvent` (live tail, beside `_meNoteHit`) keeps the last 60 s of hits
+  on this PC's own characters (≤400 each); on a self death it writes one `death_story` to the local store (90 days / 50 MB): the
+  last 30 s of hits, an attacker summary, and the own-position frames with your target's spot (`_deathNoteFrame`, fed by the track
+  recorder). Id = death time in ms, bumped a millisecond when two characters die in the same second. `/api/local/deaths` and
+  `/api/local/deaths/<id>`; panel `web/local/app/replay/HowIDied.tsx` above My replay. Only your target's position is known; other
+  attackers' are not (the panel says so). Nothing is uploaded. Test: `test/death-story.test.js`.
 - **Rebuild from my logs (3.8.46).** `/api/local/backfill/start|stop|status` and `/api/local/raids`: walks old EverQuest logs
   from a start date and writes `fight`, `raid_session`, `death`, `loot` and `zone_visit` records to the local store (no
   `enqueueUpload`, no network; the opt-in upload backfill is a separate path). Reuses the live tail's privacy filters
