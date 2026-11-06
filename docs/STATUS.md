@@ -6997,6 +6997,16 @@ reused (per-kind envelope, 404 permanent, holds back agent updates while non-emp
 stays 8 h (24 h could pull a previous copy's event in on a reused port). Tests: `test/map-sync-outbox.test.js` (beta), `test/map-sync-dedup.test.js` (main).
 ⚠ Order: deploy the bot, THEN apply the migration (the index with the old bot rejects a repeated batch whole). Shipped 2026-10-26 in that order.
 
+### 🧾 2026-11-06 — Map: your pet shows without targeting it (agent 4.0.73, Mimic beta)
+The guild lead: "Pet needs to show up on the mimic map and doesn't unless you target them." The Map had no pet marker; the pet only
+appeared as the target. New `out.pet` in the map payload (`_mapPetFor`, `packages/wolfpack-logsync/index.js`), drawn by
+`apps/mimic/map.html` as a paw + name in the Walker-mark colour, a thin line from you past 40 units, dimmed with "(last seen Ns)"
+when it is a remembered spot. Position, best first: Zeal `pet_loc` (live), your target when it is the pet (live, remembered),
+the remembered spot for 60 s in the same zone with the same pet id. Local only, nothing uploaded. Mimic's pipe merge
+(`apps/mimic/main.js`) now keeps `pet_loc` / `pet_heading`. ⚠ Depends on a Zeal change: the live pet position without targeting
+needs Zeal to send `pet_loc` ({x,y,z}, like `target_loc`) and `pet_heading` in the player message; until then the pet is live
+while targeted and last-known for 60 s after. Test: `test/map-pet-marker.test.js`. Not tried in game yet.
+
 ### 🧾 2026-11-06 — Charm tracker: a charmed NAMED mob no longer "breaks" 6 s after landing (agent 4.0.72, Mimic beta) — FB-121
 A member (FB-121) charmed Giwin Mirakon with Allure; the tracker called a charm break and then showed "no active charm" while the
 pet window still held him. Cause in `_reconcileGaugeCharms`: a slot-16 pet with no "a/an/the" counts as a charm only while a charm
