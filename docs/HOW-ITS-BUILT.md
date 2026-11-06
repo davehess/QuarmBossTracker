@@ -3654,7 +3654,8 @@ sections (`XPos<res>` blocks, bare Width/Height), rescales source→target
 resolution, drag/snap editor, writes back with `.bak` or defers until logout
 (`defer-save` + background watcher).
 **Zeal bars as they draw** (Mimic beta, 2026-11-05, FB-120): `_raidBarsGrid` lays 71 fake members into the raid-bars box with
-Zeal's own cell math (`ZEAL_FONT_METRICS`, measured from Zeal's `.spritefont` files), `_raidBarsCellsHtml` draws them; `_assistBar`
+Zeal's own cell math (`ZEAL_FONT_METRICS`, measured from Zeal's `.spritefont` files), by class or — with `GroupSort`, or the
+Show panel's view-only `STATE.raidBarsView` — by group with 13 headings (`RAID_FAKE_GROUPS`, `_raidBarsByGroup`), and `_raidBarsCellsHtml` draws them; `_assistBar`
 sizes the assist bar from the same metrics and is shown even with no `[AssistBar]` section. `GemsGameWnd` has its own `gemsgame`
 category. The skin-size scan (`ui-studio-scan-window-defaults`) uses `withDefault`, so `uifiles/default` fills what a skin omits.
 **🎨 Real look** (Mimic beta, 2026-11-05): `apps/mimic/sidlSkin.js` (main) reads the skin's `EQUI_*.xml` into a model — screens,

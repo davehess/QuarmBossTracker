@@ -7001,6 +7001,10 @@ stays 8 h (24 h could pull a previous copy's event in on a reused port). Tests: 
 - **Raid bars** draw 71 fake members (a 72-person raid; Zeal skips you) in Zeal's own grid: cell size from the raid bars' font and
   BarWidth/BarHeight exactly as `RaidBars::LoadBitmapFont` computes it (metrics read from Zeal's `.spritefont` files into
   `ZEAL_FONT_METRICS`), filled top to bottom then the next column; the label says how many fit.
+- **Raid groups** (2026-11-06, the guild lead: *"raid groups for raidbars, where it adds in up to 13 subgroupings"*): with
+  `GroupSort` on (Zeal's `/raidbars groupsort on`) the preview lays the raid out as `RaidBars::QueueByGroup` does — a
+  "Group 1:"…"Group 12:" and "Ungrouped:" heading row each, up to 6 a group, you included, ShowAll's "Empty" rows for a short
+  group. A view-only "🐺 Raid bars" switch in the Show panel previews by class or by group regardless of zeal.ini.
 - **Assist bar** shows at Zeal's default 5,30 even when `zeal.ini` has no `[AssistBar]` ("· not set up"); its size now comes from
   the same font metrics ("ToT: <name>" + health bar).
 - **GemsGameWnd** (the Gems minigame) has its own category, off by default, instead of riding in Hotbar / Cast.
