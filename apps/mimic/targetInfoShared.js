@@ -53,7 +53,7 @@
       var e = list[i];
       if (!e || !e.key || !pgMatches(e, filter)) continue;
       var live = e.key === liveKey;
-      var st = live ? 'now' : (e.killedMs ? pgWhen('killed', now - e.killedMs) : pgWhen('left alive, seen', now - e.lastMs));
+      var st = live ? 'now' : (e.killedMs ? pgWhen('killed', now - e.killedMs) + (e.killer ? ' by ' + e.killer : '') : pgWhen('left alive, seen', now - e.lastMs));
       var zone = e.zoneName || (e.zone != null ? 'zone ' + e.zone : '');
       var line2 = (zone ? zone + ' · ' : '') + st + (e.minHp != null && !e.killedMs ? ' · lowest HP ' + e.minHp + '%' : '');
       rows.push({ key: e.key, name: e.name, line2: line2, killed: !!e.killedMs, live: live, tone: e.killedMs ? 'gold' : 'blue' });

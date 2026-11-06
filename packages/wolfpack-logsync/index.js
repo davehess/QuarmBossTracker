@@ -4197,6 +4197,139 @@ function buffDurationFactorFor(character) {
 // character rather than per machine.
 const _buffSeenByChar = new Set();   // "char|spellLower"
 
+// ── Debuff overwrite (the guild lead, 2026-11-06) ───────────────────────────────────────────────────
+// "Malo AND Malosinia on the same mob": they cannot coexist on the server. The stronger overwrites the
+// weaker, a weaker cast onto a stronger is blocked, and both print the same landing line, so every landing
+// was recorded as having landed. This ports the server's rule for DETRIMENTAL-on-DETRIMENTAL on an NPC
+// (SecretsOTheP/EQMacEmu c2cd265 zone/buffstacking.cpp, Mob::FindAffectSlot) onto the bot catalog's per-spell
+// stacking signature (`st` = [[slot, spa, value]] at the era-cap level, `sws` = IsStackWithSelfAllowed). A
+// catalog without `st` (an older bot) leaves every spell out of this, so behaviour is exactly as before.
+//
+// Ported lines: L414-449 same spell id (the newer replaces the older; a DoT from a DIFFERENT caster coexists,
+// L451-487); L626-668 the effect-slot walk (carried by `st`: ignored SPAs, blanks, DoT/negative-AC and CHA
+// spacers are already left out); L675-687 an old spell in the always-blocks id ranges blocks the new one;
+// L689-695 the value override ids; L696-777 the value comparison (goto flow transcribed in _stackDecide).
+// The walk returns at the FIRST colliding old buff, in slot order: we walk in landing order.
+// Not ported: caster level (the server compares each at its own caster level; we compare both at the
+// catalog's era cap), IsStackBlocked / SE_StackingCommand rules, bard-song and good-effect branches.
+const _STACK_ALWAYS_BLOCKS = (id) => (id >= 775 && id <= 785) || (id >= 1200 && id <= 1250) || (id >= 1900 && id <= 1924)
+  || id === 2079 || id === 2751 || id === 756 || id === 757 || id === 836;
+const _STACK_MINUS_ONE_NEW = (id) => id === 1620 || id === 1816 || id === 833;   // L692: new/old value forced to -1
+const _SPA_ATTACK_SPEED = 11, _SPA_MOVEMENT_SPEED = 3, _SPA_CURRENT_HP = 0;
+// A spell's stacking signature from the catalog, or null when it takes no part (no `st`/`sws`, or charm / fear,
+// which have their own code paths and are never touched here).
+function _stackSigFor(name) {
+  const k = String(name || '').toLowerCase();
+  const e = _spellByNameLower.get(k) || _spellByNameLower.get(k.replace(/'/g, '`')) || _spellByNameLower.get(k.replace(/`/g, "'"));
+  if (!e || (!Array.isArray(e.st) && !e.sws)) return null;
+  if (Array.isArray(e.cc) && (e.cc.includes('charm') || e.cc.includes('fear'))) return null;
+  return { id: Number(e.id), st: Array.isArray(e.st) ? e.st : [], sws: !!e.sws };
+}
+// What `n` (the newly landed spell) does against `o` (already on the target): 'overwrite' | 'blocked' | null.
+function _stackDecide(o, n) {
+  let slot = null;
+  for (const a of n.sig.st) {            // st is in slot order: the first slot both carry with the same SPA
+    const b = o.sig.st.find(x => x[0] === a[0] && x[1] === a[1]);
+    if (b) { slot = { spa: a[1], oldV: Number(b[2]), newV: Number(a[2]) }; break; }
+  }
+  if (!slot) return null;                // nothing collides: they stack
+  if (_STACK_ALWAYS_BLOCKS(o.sig.id)) return 'blocked';                                   // L675-687
+  let ov = slot.oldV, nv = slot.newV;
+  if (_STACK_MINUS_ONE_NEW(n.sig.id) || o.sig.id === 1814) nv = -1;                      // L692
+  if (_STACK_MINUS_ONE_NEW(o.sig.id) || o.sig.id === 1814) ov = -1;                      // L694
+  const incDec = () => {                                                                  // L749-761 OVERWRITE_INCREASE_WITH_DECREASE
+    if (slot.spa !== _SPA_MOVEMENT_SPEED) return (slot.spa !== _SPA_CURRENT_HP || ov >= 0 || nv <= 0) ? 'overwrite' : 'blocked';
+    return nv >= 0 ? 'blocked' : 'overwrite';
+  };
+  if (ov > 0 && nv < 0) return incDec();                                       // L697-701
+  if (ov < 0 && nv > 0) return incDec();                                                  // L744-749
+  if (slot.spa === _SPA_ATTACK_SPEED) {                                                   // L703-731
+    if (nv < 100 && nv <= ov) return 'overwrite';
+    if (ov <= 100) return 'blocked';
+    return nv >= ov ? 'overwrite' : 'blocked';
+  }
+  if (ov < 0) return nv <= ov ? 'overwrite' : 'blocked';                                  // L734-741
+  if (ov === 0) return 'blocked';
+  return nv >= ov ? 'overwrite' : 'blocked';                                              // L711-713
+}
+// Replay a set of landings on ONE target in landing-time order and say what the server would have done.
+// items: [{ name, at (ms), caster?, spawn? }] (the same objects come back as keys). Order-independent: sorted
+// by time, then name, so every client reaches the same answer from the same rows.
+// Returns { ended: Map<item,{at,by}> (overwritten by a later landing), blocked: Set<item> (cannot have landed) }.
+function _stackReplay(items) {
+  const ended = new Map(), blocked = new Set();
+  const seq = [];
+  for (const it of items || []) {
+    if (!it || !(Number(it.at) > 0)) continue;
+    const sig = _stackSigFor(it.name);
+    if (sig) seq.push({ it, sig });
+  }
+  seq.sort((a, b) => (a.it.at - b.it.at) || String(a.it.name).localeCompare(String(b.it.name))
+    || String(a.it.caster || '').localeCompare(String(b.it.caster || '')));
+  const active = [];
+  const sameSpawn = (a, b) => a.spawn == null || b.spawn == null || Number(a.spawn) === Number(b.spawn);
+  for (const cur of seq) {
+    let coexist = false;
+    for (let j = 0; j < active.length; j++) {
+      const o = active[j];
+      if (o.sig.id !== cur.sig.id || !sameSpawn(o.it, cur.it)) continue;
+      const bothKnownSame = o.it.caster && cur.it.caster && String(o.it.caster).toLowerCase() === String(cur.it.caster).toLowerCase();
+      if (cur.sig.sws && !bothKnownSame) { coexist = true; continue; }   // a DoT from another caster stacks with itself
+      ended.set(o.it, { at: cur.it.at, by: cur.it.name });                // same spell again: the newer replaces
+      active.splice(j, 1); j--;
+    }
+    if (coexist) { active.push(cur); continue; }
+    let isBlocked = false;
+    for (let j = 0; j < active.length; j++) {
+      const o = active[j];
+      if (o.sig.id === cur.sig.id || !sameSpawn(o.it, cur.it)) continue;
+      const d = _stackDecide(o, cur);
+      if (!d) continue;
+      if (d === 'blocked') isBlocked = true;
+      else { ended.set(o.it, { at: cur.it.at, by: cur.it.name }); active.splice(j, 1); }
+      break;                                                             // the server returns at the first collision
+    }
+    if (isBlocked) blocked.add(cur.it); else active.push(cur);
+  }
+  return { ended, blocked };
+}
+// Apply the rule to a target's landing map as `entry` (key `newKey`) is about to join it. Returns false when
+// the new landing is blocked by a stronger debuff already there (do not add it). Old landings it overwrites
+// are marked ended at its time, with `overwritten_by`; ones an earlier-timed late arrival would have blocked go.
+function _applyStackToMap(mp, newKey, entry) {
+  const now = Date.now();
+  const items = [];
+  for (const [k, b] of mp) {
+    if (!b || k === newKey || b.worn_off_at || b.is_charm_spell) continue;
+    const dur = (Number(b.dur_ticks) || 0) * 6000;
+    if (dur > 0 && (Number(b.landed_at) || 0) + dur < now) continue;   // ran out on its own already
+    items.push({ name: b.name, at: b.landed_at, caster: b.cast_by || null, spawn: b.target_id, k, b });
+  }
+  const me = { name: entry.name, at: entry.landed_at, caster: entry.cast_by || null, spawn: entry.target_id, k: newKey, b: entry };
+  items.push(me);
+  const { ended, blocked } = _stackReplay(items);
+  for (const [it, why] of ended) { it.b.worn_off_at = why.at; it.b.overwritten_by = why.by; }
+  for (const it of blocked) if (it !== me) mp.delete(it.k);
+  return !blocked.has(me);
+}
+// The same rule over the merged Target info rows (local + the bot's relay): rows ended by a later landing and
+// rows that cannot have landed are dropped, whichever client saw what first.
+function _applyStackToRows(rows) {
+  if (!Array.isArray(rows) || rows.length < 2) return rows;
+  const items = [];
+  for (const r of rows) {
+    if (!r || !r.name || r.fell_off || r.owner || r.good === 1 || r.pacified) continue;
+    items.push({ name: r.name, at: r.observed_at_ms, caster: r.caster || null, spawn: r.target_id, row: r });
+  }
+  if (items.length < 2) return rows;
+  const { ended, blocked } = _stackReplay(items);
+  if (!ended.size && !blocked.size) return rows;
+  const gone = new Set();
+  for (const it of ended.keys()) gone.add(it.row);
+  for (const it of blocked) gone.add(it.row);
+  return rows.filter(r => !gone.has(r));
+}
+
 // Everything we have measured, newest-touched first, for the dashboard table.
 function buffDurationTable() {
   const out = [];
@@ -4268,7 +4401,7 @@ function recordTargetBuffLanding(bcEvt) {
       if (_categorizeBuff(b && b.name) === newCat) mp.delete(k2);
     }
   }
-  mp.set(newKey, {
+  const entry = {
     name: bcEvt.spell_name,
     dur_ticks: _durTicksForLevel(bcEvt.dur_formula, bcEvt.dur_ticks, lvl),
     landed_at: bcEvt.cast_at ? Date.parse(bcEvt.cast_at) : Date.now(),
@@ -4282,7 +4415,12 @@ function recordTargetBuffLanding(bcEvt) {
     // Mob Info prints an owner in brackets, which is for charm and pacify rows.
     cast_by: (bcEvt._selfCast && bcEvt.observer) ? String(bcEvt.observer) : null,
     target_name: String(bcEvt.target),
-  });
+  };
+  // A stronger debuff already there blocks this one (it cannot have landed: the shared landing line was the
+  // stronger spell's), and this one overwrites a weaker one (Malosinia over Malo). See _stackReplay.
+  // (typeof-guarded: the source-slice tests lift this function out without its neighbours.)
+  if (typeof _applyStackToMap === 'function' && !_applyStackToMap(mp, newKey, entry)) { if (mp.size === 0) _buffLandingsByTarget.delete(k); return; }
+  mp.set(newKey, entry);
   // Bound memory: keep the 400 most-recently-touched targets.
   if (_buffLandingsByTarget.size > 400) {
     const oldest = _buffLandingsByTarget.keys().next().value;
@@ -4329,6 +4467,10 @@ function targetBuffsFor(targetLower, wantId) {
     const _shortFx = ((Number(b && b.dur_ticks) || 0) * 6) > 0 && ((Number(b && b.dur_ticks) || 0) * 6) < 60;
     const lingerMs = (_isHotBuff(b && b.name) || _shortFx) ? 6_000 : FELL_OFF_LINGER_MS;
     if (b.worn_off_at) {                                     // explicit "worn off"
+      if (b.overwritten_by) {                                // overwritten by a stronger debuff: gone, not a rebuff cue
+        if (now - b.worn_off_at > lingerMs) mp.delete(k);
+        continue;
+      }
       if (now - b.worn_off_at > lingerMs) { mp.delete(k); continue; }
       fellOff = true; rem = 0;
     } else if (rem <= 0) {                                   // natural expiry
@@ -38367,6 +38509,8 @@ function startWebDashboard(port) {
           try { _tgtHistNoteFromState(character, prevState, _zealState[character], Date.now()); } catch (e) { void e; }
           // Spawn map: first sightings off target_loc, and a mob seen dead starts its respawn window.
           try { _mapNoteState(character, prevState, _zealState[character], Date.now()); } catch (e) { void e; }
+          // Zeal 1.5.0+ death events (pipe type 7): the exact spawn that died and who killed it. Absent on an older Zeal.
+          try { _zealDeathsFromState(character, _zealState[character], Date.now()); } catch (e) { void e; }
           // #205 — group member HP hitting (and holding) zero is death evidence
           // that owes nothing to the log text. Feeds the death registry.
           try { _noteGroupHpFromState(character, st, Date.now()); } catch (e) { void e; }
@@ -46113,6 +46257,28 @@ function _tgtHistNoteSlain(deadName, now = Date.now()) {
   const e = _tgtHist.find(x => !x.restored && !x.killedMs && String(x.name).toLowerCase() === want && now - x.lastMs <= 3 * 60_000);
   if (e && _tgtMarkKilled(e, now, 'slain')) { _trimTargetHistory(now); _tgtChanged(); }
 }
+// A Zeal 1.5 death event for a spawn id: that exact entry died (how 'zeal-death'), with who killed it. A mob nobody
+// targeted gets a row only when one of OUR characters landed the kill: every death in the zone would otherwise push the
+// mobs you actually looked at out of the 50. → true when the list changed.
+function _tgtHistNoteZealDeath(d, zone, now = Date.now(), ours = false) {
+  const id = Number(d && d.spawn_id);
+  if (!(id > 0)) return false;
+  const z = Number.isFinite(Number(zone)) ? Number(zone) : null;
+  let e = _tgtHist.find(x => !x.restored && x.id === id && x.zone === z && (!x.killedMs || now - x.killedMs <= 60_000) && (!d.name || String(x.name).toLowerCase() === String(d.name).toLowerCase()));
+  if (!e && ours && d.name && (d.type == null || Number(d.type) === 1)) {
+    e = { key: (z == null ? 'x' : z) + '#' + id + '#' + now.toString(36) + '#' + String(d.name).toLowerCase(), zone: z, zoneName: _zoneName(z), id,
+          name: String(d.name), ch: '', firstMs: now, lastMs: now, minHp: 0, hp: 0, killedMs: null, killedHow: null };
+    _tgtHist.unshift(e);
+  }
+  if (!e) return false;
+  const marked = _tgtMarkKilled(e, now, 'zeal-death');
+  const killer = d.killer_name ? String(d.killer_name) : null;
+  const named = !!killer && e.killer !== killer;
+  if (named) e.killer = killer;
+  if (!marked && !named) return false;
+  _trimTargetHistory(now); _tgtChanged();
+  return true;
+}
 // Which entry the live target is, for the overlay to skip it while paging (null when it has none).
 function _tgtLiveKey(st, now = Date.now()) {
   if (!st || !st.target_name) return null;
@@ -46789,6 +46955,25 @@ const SPELL_CATALOG_FILE = path.join(__dirname, 'logsync.spell-catalog.json');
 let _itemClickyByNameLower = new Map();
 let _itemClickyMeta = null;
 const ITEM_CLICKY_FILE = path.join(__dirname, 'logsync.item-clickies.json');
+
+// The clicky catalog row for an item NAME, made exact by the item window (Zeal 1.5 pipe type 8: the id of the last item the
+// player inspected). The catalog is keyed by name, so two items sharing a name collapse to one row; when the character's
+// last viewed item has this name and a known id, that id's row wins. Anything else is the name lookup, as before.
+const ZEAL_ITEM_HINT_MS = 30 * 60 * 1000;
+function _clickyEntryFor(character, itemName, now) {
+  const lower = String(itemName || '').toLowerCase();
+  const byName = _itemClickyByNameLower.get(lower);
+  try {
+    const st = _zealState[character];
+    const li = st && st.last_item;
+    if (li && Number(li.item_id) > 0 && String(li.name || '').toLowerCase() === lower
+        && ((now || Date.now()) - Number(li.at || 0)) <= ZEAL_ITEM_HINT_MS
+        && !(byName && Number(byName.id) === Number(li.item_id))) {
+      for (const e of _itemClickyByNameLower.values()) if (e && Number(e.id) === Number(li.item_id)) return e;
+    }
+  } catch (e) { void e; }
+  return byName;
+}
 
 // A spell's name from its id, for the clicky catalog's clickeffect. A scan: clicks are rare.
 function _spellNameById(id) {
@@ -52586,6 +52771,56 @@ function _noteMobDeathFromState(character, prev, next) {
     if (t.unref) t.unref();
   }
 }
+// Zeal 1.5.0 pipe type 7, `death` (the guild lead, 2026-11-06: "ingest the pipe data"). Mimic keeps a ring of the last
+// ~50 deaths (≤5 min) on each character's snapshot as st.deaths = [{spawn_id, name?, type?, level?, killer_id, killer_name?,
+// at, zone}], so every /api/zeal-state frame carries the ring again: an entry already handled is skipped, and the same
+// death heard by two characters on one PC counts once (spawn id + name + zone, within 10 s). A death is exact (the spawn
+// id, the killer) where everything else here infers it, and it covers mobs nobody targeted. It feeds the EXISTING
+// consumers: the spawn map, Target Info's kill log, the charm tracker, and the debuff timers on the dead mob. An older
+// Zeal never sends the message, st.deaths is absent and this returns at the first line. Nothing is uploaded to the bot.
+const ZEAL_DEATH_DEDUPE_MS = 10_000;
+const ZEAL_DEATH_MAX_AGE_MS = 5 * 60_000;
+const _zealDeathSeen = new Map();   // "zone|spawn_id|name" → at (ms) of the death last handled
+// A charm pet's spawn id is dead: the tracker entry goes silently, the way a "slain" line removes it (checkCharmPetDeath), so
+// no "charm break" call is made for a pet that was killed. → the pet names removed.
+function _charmPetDiedById(spawnId) {
+  const id = Number(spawnId);
+  const out = [];
+  if (!(id > 0)) return out;
+  for (const [k, info] of _charmTickTracker) {
+    if (info && Number(info.pet_id) === id) { out.push(info.pet || k); _charmTickTracker.delete(k); }
+  }
+  return out;
+}
+function _zealDeathsFromState(character, st, now = Date.now()) {
+  const list = st && st.deaths;
+  if (!Array.isArray(list) || !list.length) return 0;
+  let handled = 0;
+  for (const d of list) {
+    const id = Number(d && d.spawn_id);
+    if (!(id > 0)) continue;
+    const at = Number.isFinite(Number(d.at)) ? Math.min(Number(d.at), now) : now;
+    if (now - at > ZEAL_DEATH_MAX_AGE_MS) continue;
+    const key = (d.zone != null ? d.zone : st.zone) + '|' + id + '|' + String(d.name || '').toLowerCase();
+    const prev = _zealDeathSeen.get(key);
+    if (prev != null && Math.abs(at - prev) <= ZEAL_DEATH_DEDUPE_MS) continue;
+    _zealDeathSeen.set(key, at);
+    handled++;
+    const zoneId = d.zone != null ? d.zone : st.zone;
+    const killer = d.killer_name ? String(d.killer_name) : '';
+    const ours = !!killer && _watchedCharacters().some(c => String(c).toLowerCase() === killer.toLowerCase());
+    try { _charmPetDiedById(id); } catch (e) { void e; }
+    if (d.type == null || Number(d.type) === 1) {
+      try { _mapNoteZealDeath(_mapZoneShort(zoneId), character, d, at); } catch (e) { void e; }
+      try { _tgtHistNoteZealDeath(d, zoneId, at, ours); } catch (e) { void e; }
+      if (d.name) { try { _dropDebuffTimersOnDeath(d.name, id, at, 'zeal'); } catch (e) { void e; } }
+    }
+  }
+  if (_zealDeathSeen.size > 500) {
+    for (const [k, t] of _zealDeathSeen) if (now - t > ZEAL_DEATH_MAX_AGE_MS) _zealDeathSeen.delete(k);
+  }
+  return handled;
+}
 function _noteMobHealFromState(character, prev, next) {
   if (!character || !prev || !next) return;
   const pn = prev.target_name, nn = next.target_name;
@@ -56524,6 +56759,29 @@ function _mapNoteLogDeath(deadName, character, lineMs, now) {
   }
   _mapNoteDeath(zone, { name: deadName, spawn_id: id, loc, loc_source: src, at: Number.isFinite(lineMs) ? Math.min(lineMs, now) : now, src: 'log', character }, now);
 }
+// A Zeal 1.5 `death` event {spawn_id, name?, type?}: that exact spawn died, whoever was looking at it. The normal kill path
+// (_mapNoteDeath, src 'zeal', so the target-window death a moment earlier or later counts once). A position comes from the
+// sighting _mapNoteDeath reads itself, else the last one remembered for the spawn id; with neither, the death is acted on
+// only when the spawn is already listed alive (_mapProveDead), because a death with no position and no history is a
+// trash mob that would just add "?" markers. A name the event omits is read back from what the map knows of the id.
+// A player or a corpse (type 0, 2, 3) is not a spawn. → true when the map was handed the death.
+function _mapNoteZealDeath(zone, character, d, now) {
+  const id = Number(d && d.spawn_id);
+  if (!zone || !(id > 0)) return false;
+  if (d.type != null && Number(d.type) !== 1) return false;
+  const zd = _mapZoneDoc(zone);
+  const sight = zd.sightings[String(id)];
+  const seenRow = Object.values(zd.seen).find(s => s && s.spawn_id != null && Number(s.spawn_id) === id);
+  const mem = _mapHpMem.zone === zone ? _mapHpMem.m.get(id) : null;
+  const name = d.name || (sight && sight.name) || (seenRow && seenRow.name) || (mem && mem.name) || null;
+  if (!name) { _mapNoteDeath(zone, { name: '', spawn_id: id, at: now, src: 'zeal', character }, now); return false; }   // forgets its health, nothing more
+  const pos = _mapPosMem.zone === zone ? _mapPosMem.m.get(id) : null;
+  if (sight || pos) {
+    _mapNoteDeath(zone, { name, spawn_id: id, loc: pos ? { x: pos.x, y: pos.y, z: pos.z } : null, loc_source: 'target', at: now, src: 'zeal', character }, now);
+    return true;
+  }
+  return !!_mapProveDead(zone, character, id, name, null, now);
+}
 // ── end Spawn map core ──
 
 // GET /api/map-state[?have=<zone>@<generated_at>] - everything map.html draws, in one call a second.
@@ -58809,6 +59067,8 @@ function buildMobInfo() {
     // speed) can arrive from different clients — keep only the most-recently
     // observed occupant of each slot so a stale overwritten buff doesn't linger.
     buffs = _collapseObservedBuffSlots(buffs);
+    // An overwritten debuff drops off whichever client saw which landing (Malo under Malosinia).
+    buffs = _applyStackToRows(buffs);
   }
   // Who cast each effect, from the bot's cast relay (see _attachBuffCasters).
   buffs = _attachBuffCasters(buffs, ctc ? ctc.last_casters : null);
@@ -59982,6 +60242,10 @@ function _serializeZealForWeb() {
       autoattack:  !!st.autoattack,
       loc:         st.loc || null,
       heading:     st.heading != null ? st.heading : null,
+      // Zeal 1.5: the target's look, and the last item window the player opened (null on an older Zeal).
+      target_look: st.target_name ? { texture: st.target_texture != null ? st.target_texture : null, gender: st.target_gender != null ? st.target_gender : null,
+        size: st.target_size != null ? st.target_size : null, equipment: Array.isArray(st.target_equipment) ? st.target_equipment : null } : null,
+      last_item:   st.last_item || null,
       buffs:       Array.isArray(st.buffs) ? st.buffs : [],
       casting:     st.casting || null,
       custom_recent: Array.isArray(st.custom_recent) ? st.custom_recent : [],
@@ -61243,11 +61507,20 @@ function _isMezSpell(name) {
   const e = _spellByNameLower.get(k) || _spellByNameLower.get(k.replace(/'/g, '`'));
   return !!(e && Array.isArray(e.cc) && e.cc.includes('mez'));
 }
-// "Your <spell> spell has worn off." for a mez you cast: that timer ends now (its newest landing by you).
+// A detrimental spell other than charm / fear (their own code paths): the server sends "Your <spell> spell has
+// worn off." to its caster on expiry, a dispel AND an overwrite (spell_effects.cpp:3700-3745).
+function _isOwnDebuffWornOffKind(name) {
+  const k = String(name || '').toLowerCase();
+  const e = _spellByNameLower.get(k) || _spellByNameLower.get(k.replace(/`/g, "'")) || _spellByNameLower.get(k.replace(/'/g, '`'));
+  if (!e || Number(e.good) !== 0) return false;
+  return !(Array.isArray(e.cc) && (e.cc.includes('charm') || e.cc.includes('fear')));
+}
+// "Your <spell> spell has worn off." for a debuff you cast (a mez since 2026-10-13, any detrimental since
+// 2026-11-06): that landing ends now (its newest by you).
 function noteMyMezWornOff(line, character) {
   if (!line || !character || line.indexOf('spell has worn off') === -1) return;
   const m = line.match(/\]\s+Your\s+(.+?)\s+spell has worn off\.\s*$/i);
-  if (!m || /^pet's\s/i.test(m[1]) || !_isMezSpell(m[1])) return;
+  if (!m || /^pet's\s/i.test(m[1]) || !(_isMezSpell(m[1]) || _isOwnDebuffWornOffKind(m[1]))) return;
   const want = m[1].trim().toLowerCase().replace(/`/g, "'"), me = String(character).toLowerCase();
   let best = null;
   for (const mp of _buffLandingsByTarget.values()) {
@@ -65222,7 +65495,7 @@ async function main() {
           const m = line.match(/\]\s+Your\s+(.+?)\s+begins\s+to\s+(?:glow|sparkle|hum|smoke|burn)\b/i);
           if (m) {
             const itemName = m[1];
-            const cat = _itemClickyByNameLower.get(itemName.toLowerCase());
+            const cat = _clickyEntryFor(b.character, itemName, Date.now());
             const castMs = (cat && typeof cat.casttime === 'number' && cat.casttime > 0) ? cat.casttime : null;
             if (b.character) {
               _pendingClickies.set(b.character.toLowerCase(),
@@ -68952,6 +69225,7 @@ module.exports = {
   classifyMovement, observedSpeed, rootActiveOn, withSpellIds, _tgtMoveNote, _tgtMoveResetForTest: () => { _tgtMove.id = null; _tgtMove.pts = []; },
   TGT_HIST_MAX, TGT_HIST_KEEP_MS, _tgtHistNoteFromState, _tgtHistNoteSlain, _targetHistoryPayload, _pastMobInfo,
   _saveTargetHistory, _loadTargetHistory, _trimTargetHistory,
+  _zealDeathsFromState, _charmPetDiedById, _tgtHistNoteZealDeath, _zealDeathSeen,
   _tgtHistForTest: () => _tgtHist, _tgtHistResetForTest: () => { _tgtHist = []; _tgtCur.clear(); },
   // Kite loops (2026-10-15): the Map's summary gate + queue, the guild's loops in, and the queue the summary lands in.
   _kiteLoopSubmit, _kiteLoopBody, _kiteLoopsClean, _kiteLoopsFor, _kiteLoopCache, _handleKiteLoopPost, _handleKiteLoopsGet,
@@ -69057,6 +69331,7 @@ module.exports = {
   _recompilePersonalTriggersForChars, _evaluateZealConditions,
   _builtinTimerRows, _builtinSpellBarColor, _builtinTimerHidden, _charmTickTracker, _buffLandingsByTarget, _meSkillCds,
   _isMezSpell, noteMyMezWornOff,
+  recordTargetBuffLanding, _stackReplay, _applyStackToRows,   // test/debuff-overwrite.test.js
   // Dispel watch (agent 4.0.11) — exported for test/dispel-watch.test.js.
   noteDispelLine, flushDispelWatch, _dispelNoteZealDiff, _dispelState, _dispelGone, _dispelGoneCovers, _dispelWatchEnabled,
   DISPEL_OTHER_TEXTS, DISPEL_YOU_TEXTS,
