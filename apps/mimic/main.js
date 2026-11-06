@@ -2203,6 +2203,9 @@ function _zealAbsorb(obj, pid) {
       // 2 NPC corpse, 3 player corpse). Omitted with the target, so both are nulled when absent, like the ids.
       // Feeds the spawn map (agent _mapNoteState); a pre-1.4.8 Zeal just leaves them null.
       s.target_loc  = _pipeLoc(inner.target_loc);
+      // The pet's own position and facing, same shape as target_loc (a Zeal that sends them; null otherwise). Feeds the Map's pet marker.
+      s.pet_loc     = _pipeLoc(inner.pet_loc);
+      s.pet_heading = (typeof inner.pet_heading === 'number' && Number.isFinite(inner.pet_heading)) ? inner.pet_heading : null;
       s.target_type = (typeof inner.target_type === 'number' && Number.isFinite(inner.target_type)) ? inner.target_type : null;
       // The target's level, from the same Zeal build (named_pipe.cpp: "same-name spawns can be backed by different
       // database rows with different levels ... Level, class, race and position are what actually separate them").

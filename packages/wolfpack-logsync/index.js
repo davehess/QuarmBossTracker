@@ -56209,11 +56209,39 @@ function _mapAeRampage(name, zoneId, character, now) {
     rampage: rp && Number(rp.range) > 0 ? rp : null,
   };
 }
+// Your pet on the Map (the guild lead, 2026-11-06: "Pet needs to show up on the mimic map and doesn't unless you target them").
+// Position, best first: Zeal's pet_loc (a Zeal that sends the pet's own position: live); else your target when it IS the pet
+// (target_loc: live, and remembered); else the remembered spot, kept 60 s for the same pet in the same zone (live: false).
+// Local only, like the rest of the Map: nothing here is uploaded.
+const MAP_PET_KEEP_MS = 60000;
+const _mapPetMem = new Map();   // character (lowercase) -> { zone, id, x, y, z, heading, at }
+function _mapPetFor(character, st, zone, self, now) {
+  const key = String(character).toLowerCase();
+  const id = Number.isFinite(st.pet_id) && st.pet_id > 0 ? st.pet_id : null;
+  const mem = _mapPetMem.get(key);
+  if (!id || !zone || (mem && (mem.zone !== zone || mem.id !== id))) { _mapPetMem.delete(key); if (!id || !zone) return null; }
+  const name = st.pet_name ? String(st.pet_name) : (typeof _petNameForOwner === 'function' ? _petNameForOwner(key) : null);
+  let pos = _mapPos(st.pet_loc, st.pet_heading), live = false, age = 0;
+  if (!pos && st.target_id === id) pos = _mapPos(st.target_loc, st.pet_heading);
+  if (pos) {
+    live = true;
+    const kept = _mapPetMem.get(key);
+    if (pos.heading == null && kept && kept.heading != null) pos.heading = kept.heading;
+    _mapPetMem.set(key, { zone, id, x: pos.x, y: pos.y, z: pos.z, heading: pos.heading, at: now });
+  } else {
+    const kept = _mapPetMem.get(key);
+    if (!kept || now - kept.at > MAP_PET_KEEP_MS) { _mapPetMem.delete(key); return null; }
+    pos = { x: kept.x, y: kept.y, z: kept.z, heading: kept.heading };
+    age = Math.max(0, Math.round((now - kept.at) / 1000));
+  }
+  return { name, id, x: pos.x, y: pos.y, z: pos.z, heading: pos.heading, live, age_s: age,
+    dist: self ? Math.round(_mapDist2(pos, self)) : null };
+}
 function _mapStatePayload(have, now, haveLocal, haveRoute) {
   const character = _mapActiveCharacter(now);
   const st = character ? _zealState[character] : null;
   const out = { zone: null, long_name: null, zone_id: null, version: null, status: character ? 'ok' : 'no-pipe', local_only: _localOnly(),
-    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], engaged: [], unassigned: [], copy: null, cc: [], paths: {}, watched: {}, corpses: [], warders: [], route_ver: null, now };
+    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, pet: null, timers: [], seen: [], engaged: [], unassigned: [], copy: null, cc: [], paths: {}, watched: {}, corpses: [], warders: [], route_ver: null, now };
   if (!st) return out;
   _mapSlowRefresh(now);
   out.zone_id = Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
@@ -56279,6 +56307,7 @@ function _mapStatePayload(have, now, haveLocal, haveRoute) {
       if (reach.rampage) out.target.rampage = reach.rampage;
     }
   }
+  try { out.pet = _mapPetFor(character, st, zone, self, now); } catch { out.pet = null; }
   // The raid's focus mob (_mapFocusTarget), placed only where we truly know it: your own target when it is that mob.
   out.focus = _mapFocusTarget(character);
   if (out.focus && out.target && out.target.x != null && (out.target.type == null || out.target.type === 1)
