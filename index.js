@@ -11334,6 +11334,47 @@ const _SPELL_CATALOG_TTL_MS = 60 * 60 * 1000;
 // giant, dragon), and 3 group teleport / 41 group (all beneficial, and a group is not a mob count).
 const _AE_TARGET_TYPES = new Set([2, 4, 8, 20, 24, 25, 40]);
 const _dsFormulaWarned = new Set();   // spell-catalog DS formulas already logged as unmodeled, once per process
+// ── Debuff stacking signature (the guild lead, 2026-11-06) ────────────────────────────────
+// "Malo AND Malosinia on the same mob" — they cannot coexist on the server; the stronger one
+// overwrites the weaker and a weaker cast onto a stronger is blocked, while both print the same
+// landing line. Ported from SecretsOTheP/EQMacEmu zone/buffstacking.cpp (c2cd265), the NPC-target
+// path Mob::FindAffectSlot: the effect-slot walk at ~L624-668 decides WHICH slot two spells
+// collide on, and these helpers ship what the agent needs to run the value comparison (~L689-777)
+// itself, per detrimental buff: `st` = [[slot, spa, value]] for the slots that can collide, value
+// at the era-cap caster level, and `sws` for IsStackWithSelfAllowed (L106-118).
+// IsSPAIgnoredByStacking (L61-104), as numeric SE_ ids from common/spdat.h: 13 SeeInvis, 24 Stamina,
+// 35 DiseaseCounter, 36 PoisonCounter, 57 Levitate, 65 InfraVision, 66 UltraVision, 79 CurrentHPOnce,
+// 116 CurseCounter, 124-144 the focus/limit family (ImprovedDamage … LimitCastTimeMax), 148 / 149 the
+// stacking commands, 254 Blank.
+const _STACK_IGNORED_SPA = new Set([13, 24, 35, 36, 57, 65, 66, 79, 116, 148, 149, 254]);
+for (let i = 124; i <= 144; i++) _STACK_IGNORED_SPA.add(i);
+const _SPA_CURRENT_HP = 0, _SPA_ARMOR_CLASS = 1, _SPA_CHA = 10, _SPA_BLANK = 254;
+// `valueFn` is the catalog builder's _dsFormulaValue(|base|, formula, level, maxAbs); the sign
+// comes back from base (CalcSpellEffectValue negates a negative-base result). Formula 0 is
+// "the base" like 100. Other formulas (122, 110, 121 … 1-2% of the slots) fall to |base| there.
+function _stackSignature(r, level, valueFn) {
+  if (Number(r.good_effect) !== 0 || !(Number(r.buffduration) > 0)) return null;
+  const rw = r.raw;
+  if (!rw || !Array.isArray(rw.eff) || !Array.isArray(rw.base)) return null;
+  const st = [];
+  for (let i = 0; i < 12 && i < rw.eff.length; i++) {
+    const spa = Number(rw.eff[i]);
+    if (spa === _SPA_BLANK) break;                       // the walk stops at the first blank slot
+    if (_STACK_IGNORED_SPA.has(spa)) continue;
+    const base = Number(rw.base[i]) || 0;
+    if ((spa === _SPA_CURRENT_HP || spa === _SPA_ARMOR_CLASS) && base < 0) continue;   // DoT / negative AC: ignored (L650-655)
+    if (spa === _SPA_CHA && base === 0) continue;                                       // spacer (L657-659)
+    const f = rw.formula && rw.formula[i] != null ? Number(rw.formula[i]) : 100;
+    const mx = rw.max && rw.max[i] != null ? Math.abs(Number(rw.max[i])) : 0;
+    const mag = valueFn(base, f === 0 ? 100 : f, level, mx);
+    st.push([i, spa, base < 0 ? -mag : mag]);
+  }
+  // IsStackWithSelfAllowed: detrimental, has a duration, carries SE_CurrentHP in ANY slot.
+  // (dot_stacking_exempt is not in our mirror — the bard chants / Lifeburn exceptions are missed.)
+  const sws = Number(r.buffdurationformula) !== 0 && rw.eff.slice(0, 12).includes(_SPA_CURRENT_HP);
+  if (!st.length && !sws) return null;
+  return { st: st.length ? st : undefined, sws: sws ? 1 : undefined };
+}
 async function _handleAgentSpellCatalog(req, res, isPublic) {
   if (!isPublic) {
     const identity = await mimicLink.requireAgentAuth(req, res);
@@ -11585,6 +11626,7 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
         if (!Array.isArray(data)) throw new Error('eqemu_spells read failed');
         for (const r of data) {
           const _hm = _healMagnitude(r);
+          const _sig = _stackSignature(r, _dsLevel, _dsFormulaValue);
           // Live bot-side name→amount map so a relayed heal cast that arrives
           // WITHOUT an amount (a healer on a pre-v7 catalog) can still be
           // attributed — only the BOT needs to be current. Populated as a side
@@ -11657,11 +11699,16 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
             // with NO `ae` anywhere is the agent's cue that the bot predates v9 and it keeps the
             // old chip-everything behaviour rather than hiding every chip.
             ae:         _AE_TARGET_TYPES.has(Number(r.targettype)) ? true : undefined,
+            // Debuff stacking signature (_stackSignature) — which effect slots can collide with
+            // another debuff and their value at the era-cap level, so the agent can drop an
+            // overwritten Malo from Target info. Detrimental timed spells only; absent = none.
+            st:  _sig ? _sig.st : undefined,
+            sws: _sig ? _sig.sws : undefined,
           });
         }
       }
       const body = JSON.stringify({
-        version: 9,   // v9: adds `ae` (area-spell flag) — FB-57 Melody AE chip · v8: adds `npc` (NPC-castable flag) — #206 instant-mechanic index
+        version: 9,   // `st`/`sws` (debuff stacking signature) ride v9 — the ETag, a hash of the body, is what makes agents refetch · v9: adds `ae` (area-spell flag) — FB-57 Melody AE chip · v8: adds `npc` (NPC-castable flag) — #206 instant-mechanic index
         fetched_at: new Date().toISOString(),
         count: entries.length,
         entries,
