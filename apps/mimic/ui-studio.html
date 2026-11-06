@@ -76,6 +76,8 @@
   .win .rb-cells{position:absolute;inset:0;overflow:hidden;pointer-events:none}
   .win .rb-cell{position:absolute}
   .win .rb-name{white-space:nowrap;overflow:hidden;font-family:Arial,sans-serif;text-shadow:1px 1px 0 rgba(0,0,0,0.9)}
+  .win .rb-label{color:var(--wp-text)}
+  .win .rb-empty{color:var(--wp-dim)}
   .win .rb-bar{background:rgba(0,0,0,0.6)}
   .win .rb-bar i{display:block;height:100%;background:var(--wp-red)}
   .win:hover{filter:brightness(1.4);box-shadow:0 0 6px rgba(88,166,255,0.5)}
@@ -282,6 +284,8 @@
       <h3>👁 Show</h3>
       <p class="hint">Toggle window groups. View-only — Save still writes every window.</p>
       <label class="look-toggle" title="Draw each window from your UI skin's own XML and textures, at its in-game size"><input type="checkbox" id="realLook"> 🎨 Real look</label>
+      <label class="look-toggle" title="How the raid bars preview lays out a full raid. View only: Zeal's own setting is /raidbars groupsort">🐺 Raid bars
+        <select id="raidBarsView"><option value="">as zeal.ini</option><option value="class">by class</option><option value="group">by group</option></select></label>
       <div class="fbtns">
         <button id="filterAll">All</button>
         <button id="filterNone">None</button>
@@ -520,14 +524,46 @@
     bw = Math.max(10, Math.min(150, bw)); bh = Math.max(4, Math.min(50, bh));
     var gw = Math.max(tx + 0.25, bw + 5);
     var gh = Math.max(ty + Math.max(0, ls - ty) + 1 + bh + 0.25, bh + 2);
-    var cells = [], x = 0, y = 0;
-    for (var i = 0; i < RAID_FAKE_MEMBERS; i++) {
+    var cells = [], x = 0, y = 0, full = false;
+    // One grid slot: the next row, or the top of the next column; false once a column would run past the box.
+    function slot(c){
+      if (full) return false;
       if (y + gh > boxH) { y = 0; x += gw; }
-      if (x + gw > boxW) break;
-      cells.push({ x: x, y: y });
-      y += gh;
+      if (x + gw > boxW) { full = true; return false; }
+      c.x = x; c.y = y; cells.push(c); y += gh;
+      return true;
     }
-    return { gw: gw, gh: gh, bw: bw, bh: bh, nameH: ty, lineGap: Math.max(ty, ls), cells: cells, fit: cells.length };
+    var members = 0, total;
+    if (_raidBarsByGroup(props)) {
+      // RaidBars::QueueByGroup: groups 1-12 then Ungrouped, each with its label row, up to 6 a group, leader first; you are
+      // included here (QueueByClass skips you). ShowAll pads a short group with "Empty" rows (never Ungrouped).
+      total = 72;
+      var showAll = /^(true|1)$/i.test(String(p.ShowAll == null ? '' : p.ShowAll).trim());
+      for (var gi = 0; gi < RAID_FAKE_GROUPS.length && !full; gi++) {
+        var n = RAID_FAKE_GROUPS[gi], ungrouped = gi === 12;
+        if (!n) continue;
+        if (!slot({ type: 'label', text: ungrouped ? 'Ungrouped:' : 'Group ' + (gi + 1) + ': ', labelDy: gh - ls - 2 })) break;
+        for (var mi = 0; mi < n; mi++) {
+          if (!slot({ type: 'member', n: members + 1, leader: !ungrouped && mi === 0 })) break;
+          members++;
+        }
+        if (showAll && !ungrouped) for (var ei = n; ei < 6; ei++) if (!slot({ type: 'empty' })) break;
+      }
+    } else {
+      total = RAID_FAKE_MEMBERS;
+      for (var i = 0; i < RAID_FAKE_MEMBERS; i++) { if (!slot({ type: 'member', n: i + 1 })) break; members++; }
+    }
+    return { gw: gw, gh: gh, bw: bw, bh: bh, nameH: ty, lineGap: Math.max(ty, ls), cells: cells, fit: members, total: total };
+  }
+  // A 72-person raid as Zeal's group view would show it: groups 1-11 full, group 12 short, and a few ungrouped, so all 13
+  // headings appear (the guild lead, 2026-11-06: "raid groups for raidbars, where it adds in up to 13 subgroupings").
+  var RAID_FAKE_GROUPS = [6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 3, 3];
+  // By group when zeal.ini says GroupSort (Zeal's /raidbars groupsort), unless the Show panel's preview switch overrides it.
+  function _raidBarsByGroup(props){
+    var view = (typeof STATE !== 'undefined' && STATE) ? STATE.raidBarsView : null;
+    if (view === 'group') return true;
+    if (view === 'class') return false;
+    return /^(true|1)$/i.test(String((props && props.GroupSort) == null ? '' : props.GroupSort).trim());
   }
   function _zealBarWindows(parsed, srcW, srcH, fxX, fxY){
     var out = [];
@@ -553,6 +589,9 @@
           { toEdgeR: toR, toEdgeB: toB },
           [{ label: 'Kept in', value: 'zeal.ini [RaidBars]' },
            { label: 'Box', value: (toR || toB) ? 'runs to the screen edge until you size it here' : 'set by /raidbars position' },
+           { label: 'Layout', value: /^(true|1)$/i.test(String(p.GroupSort == null ? '' : p.GroupSort).trim())
+               ? 'by group (GroupSort on): Group 1-12 and Ungrouped headings, up to 6 a group, you included'
+               : 'by class (GroupSort off; /raidbars groupsort on switches it)' },
            { label: 'Rows', value: 'drawn as a full raid of ' + RAID_FAKE_MEMBERS + ' (Zeal leaves you out), sized from font '
                + (p.Font || 'Default') + (font.known ? '' : ' (not one Zeal ships — sized as Default)')
                + (p.BarWidth || p.BarHeight ? ', bar ' + (p.BarWidth || 'auto') + '×' + (p.BarHeight || 'auto') : '') }]));
@@ -590,11 +629,21 @@
     var fs = Math.max(5, Math.round(g.nameH * scale));
     var out = '<div class="rb-cells">';
     for (var i = 0; i < g.cells.length; i++) {
-      var c = g.cells[i], hp = 100 - ((i * 37) % 70);
-      out += '<div class="rb-cell" style="left:' + (c.x * scale).toFixed(1) + 'px;top:' + (c.y * scale).toFixed(1) + 'px;width:'
-          + (g.gw * scale).toFixed(1) + 'px">'
-          + '<div class="rb-name" style="font-size:' + fs + 'px;line-height:' + (g.lineGap * scale).toFixed(1) + 'px;color:hsl('
-          + ((i * 47) % 360) + ',70%,75%)">Raider' + (i < 9 ? '0' : '') + (i + 1) + '</div>'
+      var c = g.cells[i];
+      var pos = 'left:' + (c.x * scale).toFixed(1) + 'px;top:' + (c.y * scale).toFixed(1) + 'px;width:' + (g.gw * scale).toFixed(1) + 'px';
+      var nameStyle = 'font-size:' + fs + 'px;line-height:' + (g.lineGap * scale).toFixed(1) + 'px;';
+      if (c.type === 'label') {   // "Group N:" / "Ungrouped:" in white, at the bottom of its row as Zeal pads it
+        out += '<div class="rb-cell" style="' + pos + ';padding-top:' + Math.max(0, c.labelDy * scale).toFixed(1) + 'px">'
+            + '<div class="rb-name rb-label" style="' + nameStyle + '">' + escapeHtml(c.text) + '</div></div>';
+        continue;
+      }
+      if (c.type === 'empty') {
+        out += '<div class="rb-cell" style="' + pos + '"><div class="rb-name rb-empty" style="' + nameStyle + '">Empty</div></div>';
+        continue;
+      }
+      var n = c.n, hp = 100 - ((n * 37) % 70);
+      out += '<div class="rb-cell" style="' + pos + '">'
+          + '<div class="rb-name" style="' + nameStyle + 'color:hsl(' + ((n * 47) % 360) + ',70%,75%)">Raider' + (n < 10 ? '0' : '') + n + '</div>'
           + '<div class="rb-bar" style="width:' + (g.bw * scale).toFixed(1) + 'px;height:' + Math.max(1, g.bh * scale).toFixed(1)
           + 'px;margin-top:' + (scale).toFixed(1) + 'px"><i style="width:' + hp + '%"></i></div></div>';
     }
@@ -1523,8 +1572,8 @@
         lbl = disp + (idx != null ? ' (Chat ' + idx + ')' : '');
       }
       if (w.zealBar === 'raidbars') {
-        var rbFit = _raidBarsGrid(w.w, w.h, w.props).fit;
-        lbl += ' · ' + rbFit + ' of ' + RAID_FAKE_MEMBERS + ' fit';
+        var rbG = _raidBarsGrid(w.w, w.h, w.props);
+        lbl += ' · ' + (_raidBarsByGroup(w.props) ? 'by group · ' : '') + rbG.fit + ' of ' + rbG.total + ' fit';
       }
       items.push({ i: i, sx: sx, sy: sy, sw: sw, sh: sh, lbl: lbl, chars: lbl.length });
     }
@@ -1623,6 +1672,18 @@
     });
     if (STATE.look) renderStage();
   }
+  // Raid bars preview: by class, by group, or as zeal.ini's GroupSort says (view only; never written).
+  (function(){
+    var sel = document.getElementById('raidBarsView');
+    STATE.raidBarsView = '';
+    try { STATE.raidBarsView = localStorage.getItem('uiStudio.raidBarsView') || ''; } catch (e) { /* storage blocked */ }
+    sel.value = STATE.raidBarsView;
+    sel.addEventListener('change', function(){
+      STATE.raidBarsView = sel.value;
+      try { localStorage.setItem('uiStudio.raidBarsView', sel.value); } catch (e) { /* not remembered */ }
+      if (STATE.windows.length) renderStage();
+    });
+  })();
   (function(){
     var box = document.getElementById('realLook');
     box.checked = STATE.look;

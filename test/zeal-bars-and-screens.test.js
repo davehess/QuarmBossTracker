@@ -94,7 +94,7 @@ describe('raid bars draw a full raid laid out like Zeal does', () => {
     expect([g.gw, g.gh, g.bw, g.bh]).toEqual([76.25, 21.25, 68, 8]);
     expect(z.RAID_FAKE_MEMBERS).toBe(71);
     expect(g.fit).toBe(71);
-    expect(g.cells[46]).toEqual({ x: 76.25, y: 0 });   // 46 rows fit in 980, so the 47th starts column two
+    expect(g.cells[46]).toMatchObject({ type: 'member', x: 76.25, y: 0 });   // 46 rows fit in 980, so the 47th starts column two
   });
   it('a small box shows how many will not fit', () => {
     const g = z._raidBarsGrid(300, 400, {});
@@ -104,6 +104,30 @@ describe('raid bars draw a full raid laid out like Zeal does', () => {
     const g = z._raidBarsGrid(1000, 1000, { Font: 'arial_16', BarWidth: '100' });
     expect([g.gw, g.gh, g.bw, g.bh]).toEqual([154.25, 39.25, 100, 13]);
     expect(z._raidBarsGrid(1000, 1000, { Font: 'not_a_font' }).gw).toBe(76.25);   // sized as Default
+  });
+
+  // The guild lead, 2026-11-06: "raid groups for raidbars, where it adds in up to 13 subgroupings (one per group and
+  // ungrouped)". RaidBars::QueueByGroup: a label row per group, up to 6 members, Ungrouped last, you included.
+  it('GroupSort lays out 13 headed groups of a full 72', () => {
+    const g = z._raidBarsGrid(1880, 980, { GroupSort: 'TRUE' });
+    const labels = g.cells.filter(c => c.type === 'label').map(c => c.text.trim());
+    expect(labels).toEqual(['Group 1:', 'Group 2:', 'Group 3:', 'Group 4:', 'Group 5:', 'Group 6:', 'Group 7:', 'Group 8:',
+      'Group 9:', 'Group 10:', 'Group 11:', 'Group 12:', 'Ungrouped:']);
+    expect([g.fit, g.total]).toEqual([72, 72]);
+    expect(g.cells[0]).toMatchObject({ type: 'label', x: 0, y: 0, labelDy: 7.25 });   // gh - line spacing - 2
+    expect(g.cells.slice(1, 7).every(c => c.type === 'member')).toBe(true);
+    expect(g.cells[7]).toMatchObject({ type: 'label', text: 'Group 2: ' });
+  });
+  it('by group, a small box stops mid-group, and ShowAll pads a short group with Empty rows but not Ungrouped', () => {
+    expect(z._raidBarsGrid(300, 400, { GroupSort: '1' }).fit).toBe(46);   // 54 slots: 7 full groups + a label + 4
+    const all = z._raidBarsGrid(1880, 980, { GroupSort: 'TRUE', ShowAll: 'TRUE' });
+    const types = all.cells.map(c => c.type === 'label' ? c.text.trim() : c.type);
+    const g12 = types.indexOf('Group 12:'), ung = types.indexOf('Ungrouped:');
+    expect(types.slice(g12 + 1, ung)).toEqual(['member', 'member', 'member', 'empty', 'empty', 'empty']);
+    expect(types.slice(ung + 1)).toEqual(['member', 'member', 'member']);
+  });
+  it('GroupSort off keeps the class layout (71, you left out)', () => {
+    expect(z._raidBarsGrid(1880, 980, { GroupSort: 'FALSE' })).toMatchObject({ fit: 71, total: 71 });
   });
 
   it('is wired: loaded from zeal.ini, saved through _zealBarEdits, no grip on a fixed size, in the Zeal filter', () => {
