@@ -6997,6 +6997,14 @@ reused (per-kind envelope, 404 permanent, holds back agent updates while non-emp
 stays 8 h (24 h could pull a previous copy's event in on a reused port). Tests: `test/map-sync-outbox.test.js` (beta), `test/map-sync-dedup.test.js` (main).
 ⚠ Order: deploy the bot, THEN apply the migration (the index with the old bot rejects a repeated batch whole). Shipped 2026-10-26 in that order.
 
+### 🧾 2026-11-06 — Charm tracker: a charmed NAMED mob no longer "breaks" 6 s after landing (agent 4.0.72, Mimic beta) — FB-121
+A member (FB-121) charmed Giwin Mirakon with Allure; the tracker called a charm break and then showed "no active charm" while the
+pet window still held him. Cause in `_reconcileGaugeCharms`: a slot-16 pet with no "a/an/the" counts as a charm only while a charm
+cast is pending (or the owner is a bard), and the land consumes that cast, so the next pass left the pet out of the live set and
+the 6 s gauge rule fired a break. Fix: a slot-16 name that is already an ACTIVE charm of the same owner stays accepted. A real
+break (the pet leaves the gauge) still fires after 6 s. Every named charm by a non-bard had this since the named-mob path was
+added (2026-06-21). Test: `test/charm-named-pet-hold.test.js` (fails without the fix). Not tried in game yet.
+
 ### 🧾 2026-11-06 — Target info: run speed and ROOTED, PQDI spell links, the kill log on the canvas (agent 4.0.71, Mimic beta)
 The guild lead: *"add run speed for mobs to target info. if run speed is zero list it as ROOTED"*, *"make it so spell names are a
 link to the PQDI entry"*, *"there isn't parity with the kill log on the target info and canvas mode"*.
