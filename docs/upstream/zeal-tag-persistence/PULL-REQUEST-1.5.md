@@ -1,5 +1,8 @@
 # Tag PRs for Zeal 1.5.0 (filing text, 2026-11-06)
 
+> **Filed 2026-11-06 by the guild lead from the `-1.5` branches (option A, old branch names left alone): PR 272
+> (persistence + corpses) and PR 273 (name check).**
+
 Upstream tagged **v1.5.0-alpha0** (`004fa3c`) on 2026-11-05 with our PRs 246 (UI cursor), 253 (popflags) and 254
 (`/pipedelay`) inside. The two tag changes were rebased onto it so they can go in before 1.5.0 is final.
 
