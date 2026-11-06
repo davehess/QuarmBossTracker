@@ -580,7 +580,7 @@
   // The HUD's short names for its cooldowns (me.html CD_SHORT), for the ring's cooldown arc.
   var CD_SHORT = { 'Flying Kick': 'FK', 'Round Kick': 'RK', 'Dragon Punch': 'DP', 'Eagle Strike': 'ES', 'Tiger Claw': 'TC',
     'Kick': 'KICK', 'Bash': 'BASH', 'Backstab': 'BS', 'Mend': 'MEND', 'Taunt': 'TNT', 'Harm Touch': 'HT',
-    'Feign Death': 'FD', 'Lay on Hands': 'LOH', 'Boastful Bellow': 'BB', 'Shield': 'SHLD' };
+    'Feign Death': 'FD', 'Lay on Hands': 'LOH', 'Boastful Bellow': 'BB', 'Shield': 'SHLD', 'Purify Body': 'PURE' };
 
   var PARTS = [];
   function P(id, cat, label, src, kind, get, sample, extra) {
@@ -677,7 +677,7 @@
     },
     { items: [{ name: 'Mend', short: 'MEND', ready: true, text: 'ready', color: C.green },
       { name: 'Feign Death', short: 'FD', frac: 0.7, text: '0:07', color: C.orange }] }, { short: 'Cooldowns' });
-  [['ability', 'Combat ability'], ['mend', 'Mend'], ['taunt', 'Taunt'], ['shield', 'Shield'], ['fd', 'Feign Death'], ['loh', 'Lay on Hands'], ['ht', 'Harm Touch'], ['disc', 'Discipline']]
+  [['ability', 'Combat ability'], ['mend', 'Mend'], ['taunt', 'Taunt'], ['shield', 'Shield'], ['fd', 'Feign Death'], ['loh', 'Lay on Hands'], ['ht', 'Harm Touch'], ['purify', 'Purify Body'], ['disc', 'Discipline']]
     .forEach(function (k) {
       P('me.cd_' + k[0], 'me', k[1] + ' cooldown', 'me', 'countdown',
         function (d, at) { return cdView(cd(d, k[0]), at); }, cdSample(k[1], 23000, 60000), { short: k[1] });

@@ -16206,6 +16206,15 @@ const _ME_SKILL_LINES = [
   // you and so needs your name — _meNoteShield matches it. The refusal ("You can use the ability
   // /shield again in …") is read by _meNoteAaRefusal.
   { key: 'shield', label: 'Shield', secs: 180, est: false, rx: null },
+  // Purify Body, the monk AA (the guild lead, 2026-11-06: "add in purification of body as for the monk AAs and take into account
+  // the hastened purification as well ... as purify on the hud"). Reuse 4320 s from Quarm's aa_actions row for AA 233;
+  // Hastened Purification of the Body (AA 495, 3 ranks) takes 10% a rank off it (zone/aa.cpp CalcAAReuseTimer:
+  // reuse × (100 − rank × redux_rate) / 100) → 3888 / 3456 / 3024 s; docs/data/class-abilities.json. The AA casts spell 2742,
+  // whose landing on you is "You feel light wash over you, purifying your very soul." — the SAME line a cleric's Purify Soul
+  // prints on its target, so the line counts only for a monk (_meSkillStartsFor) and a `/pipe purify` hotkey line is the
+  // exact press. The rank is not on the pipe: a monk 63+ is taken as 3/3 until a refusal ("You can use the ability Purify
+  // Body again in …") after a known press shows the real reuse (_meNoteAaRefusal → _mePurifyRank).
+  { key: 'purify', label: 'Purify Body', secs: 4320, est: true, aa: true, monk: true, rx: /^You feel light wash over you, purifying your very soul\.$/ },
 ];
 const _ME_SKILL_BY_KEY = new Map(_ME_SKILL_LINES.map(s => [s.key, s]));
 // The cooldowns each class always sees, even before the first use this
@@ -16216,7 +16225,7 @@ const _ME_SKILL_BY_KEY = new Map(_ME_SKILL_LINES.map(s => [s.key, s]));
 // "I lost my discipline timer" — it vanished a minute after coming ready, and
 // on every agent restart).
 const _ME_CLASS_CDS = {
-  Monk: ['ability', 'mend', 'fd', 'disc'],
+  Monk: ['ability', 'mend', 'fd', 'purify', 'disc'],
   Warrior: ['ability', 'taunt', 'shield', 'disc'],
   Paladin: ['loh', 'disc'],
   'Shadow Knight': ['ht', 'disc'],
@@ -16224,9 +16233,34 @@ const _ME_CLASS_CDS = {
 };
 const _meAbility = new Map();    // charLower → { name, base, at, gaps }
 const _meSkillCds = new Map();   // charLower → Map(key → { label, at, secs, est })
-// A skill's reuse for THIS character. Only Feign Death varies: 10 s, or 5 s
-// for a monk of 59+ (Rapid Feign 3/3 assumed — see above).
+// A line that is also another class's landing (Purify Body = a cleric's Purify Soul on you) starts the timer only for a
+// monk, or while the class is not known yet; _meCooldowns drops the slot for a class it cannot belong to.
+function _meClassQuick(cl) {
+  const zst = _meZealFor(cl);
+  return normalizeClass((zst && _meLabel(zst, 3)) || _raidClassByName.get(cl) || '') || null;
+}
+function _meSkillStartsFor(cl, s) {
+  if (!s.monk) return true;
+  const cls = _meClassQuick(cl);
+  return !cls || cls === 'Monk';
+}
+// Hastened Purification of the Body ranks a refusal has shown (charLower → 0..3); unknown means 3/3 at 63+.
+const _mePurifyRank = new Map();
+const _ME_PURIFY_STEP = 432;   // 10% of 4320 s a rank
+// Purify Body's reuse for this monk: the learned rank, else 3/3 from 63 (Hastened Purification of the Body is a PoP AA).
+function _mePurifySecs(cl) {
+  let rank = _mePurifyRank.get(cl);
+  if (rank == null) {
+    const zst = _meZealFor(cl);
+    const level = zst ? _meNum(_meLabel(zst, 2)) : null;
+    rank = level != null && level >= 63 ? 3 : 0;
+  }
+  return 4320 - Math.max(0, Math.min(3, rank)) * _ME_PURIFY_STEP;
+}
+// A skill's reuse for THIS character. Feign Death: 10 s, or 5 s for a monk of 59+ (Rapid Feign 3/3 assumed — see above).
+// Purify Body: its Hastened Purification rank (_mePurifySecs).
 function _meSkillSecs(cl, s) {
+  if (s.key === 'purify') return _mePurifySecs(cl);
   if (s.key !== 'fd') return s.secs;
   const zst = _meZealFor(cl);
   const level = zst ? _meNum(_meLabel(zst, 2)) : null;
@@ -16237,7 +16271,7 @@ function _meStartSkill(cl, key, atMs) {
   if (!s) return;
   let mp = _meSkillCds.get(cl);
   if (!mp) { mp = new Map(); _meSkillCds.set(cl, mp); }
-  mp.set(key, { label: s.label, at: atMs, secs: _meSkillSecs(cl, s), est: s.est });
+  mp.set(key, { label: s.label, at: atMs, secs: _meSkillSecs(cl, s), est: s.key === 'purify' ? !_mePurifyRank.has(cl) : s.est });
   _meTimersSave();
 }
 // A landed Boastful Bellow. Everyone near the mob sees "<mob> is shaken by a loud
@@ -16307,6 +16341,7 @@ const _ME_FD_FAIL_SHOW_MS = 5000;   // the ✗ stays this long after the timer r
 const _ME_PIPE_WORDS = {
   'fd': 'fd', 'feign': 'fd', 'feign death': 'fd', 'mend': 'mend', 'taunt': 'taunt',
   'loh': 'loh', 'lay on hands': 'loh', 'ht': 'ht', 'harm touch': 'ht',
+  'purify': 'purify', 'purify body': 'purify', 'pb': 'purify',
 };
 const _mePipeSeen = new Map();   // charLower → newest custom_recent `at` already read
 function _meNotePipeCooldowns(cl, st) {
@@ -16348,6 +16383,7 @@ function _meCooldowns(cl, now, cls) {
   const m = _meSkillCds.get(cl);
   if (m) {
     for (const [k, c] of m) {
+      if (k === 'purify' && cls && cls !== 'Monk') continue;   // a cleric's Purify Soul landing, not this character's AA
       const endAt = c.at + c.secs * 1000;
       const row = { key: k, label: c.label, ms_left: Math.max(0, endAt - now), total_ms: c.secs * 1000, est: c.est, seen: true,
         failed: !!(c.failed && c.failed >= c.at && now - endAt <= _ME_FD_FAIL_SHOW_MS) };
@@ -16501,6 +16537,7 @@ function _meNoteAaRefusal(cl, msg, atMs) {
   // again in %u minute(s) %u seconds.", client_packet.cpp Handle_OP_Shielding) — it sets the Shield timer.
   const known = m[1].toLowerCase() === '/shield' ? _ME_SKILL_BY_KEY.get('shield')
     : _ME_SKILL_LINES.find(s => s.aa && s.label.toLowerCase() === m[1].toLowerCase());
+  if (known && known.key === 'purify') { _meNotePurifyRefusal(cl, atMs, left); return true; }
   if (known) { _meStartSkill(cl, known.key, atMs + left - known.secs * 1000); return true; }
   const e = _meAaSlot(cl, m[1]);
   e.name = m[1];   // the server's spelling over a /pipe line's
@@ -16513,6 +16550,23 @@ function _meNoteAaRefusal(cl, msg, atMs) {
   }
   _meTimersSave();
   return true;
+}
+// A Purify Body refusal: the exact time left. After a use we saw (the landing or a /pipe press, inside the longest reuse), the
+// press-to-ready span gives the Hastened Purification rank — 4320 s less 432 a rank — which every later use then counts with.
+// Without a use we know of, the timer is set back from the refusal at the current rank.
+function _meNotePurifyRefusal(cl, atMs, leftMs) {
+  const readyAt = atMs + leftMs;
+  const mp = _meSkillCds.get(cl);
+  const cur = mp && mp.get('purify');
+  if (cur && cur.at < atMs && atMs - cur.at < 4320 * 1000 + 60000) {
+    const total = (readyAt - cur.at) / 1000;
+    const rank = Math.round((4320 - total) / _ME_PURIFY_STEP);
+    if (rank >= 0 && rank <= 3 && Math.abs(4320 - rank * _ME_PURIFY_STEP - total) <= 60) _mePurifyRank.set(cl, rank);
+  }
+  _meStartSkill(cl, 'purify', readyAt - _mePurifySecs(cl) * 1000);
+  const c = _meSkillCds.get(cl).get('purify');
+  c.est = !_mePurifyRank.has(cl);
+  _meTimersSave();
 }
 function _meNoteAaPress(cl, name, atMs) {
   const e = _meAaSlot(cl, name);
@@ -16724,6 +16778,7 @@ function _meTimersLoad() {
       if (!e || typeof e !== 'object') continue;
       if (e.disc && e.disc.at + e.disc.total_ms > now - _ME_TIMER_KEEP_MS && !_meDiscs.has(cl)) _meDiscs.set(cl, e.disc);
       if (e.refusal && e.refusal.at > now && !_discReadyAt.has(cl)) _discReadyAt.set(cl, e.refusal);
+      if (Number.isInteger(e.purifyRank) && e.purifyRank >= 0 && e.purifyRank <= 3 && !_mePurifyRank.has(cl)) _mePurifyRank.set(cl, e.purifyRank);
       for (const [k, c] of Object.entries(e.skills || {})) {
         if (!c || !(c.at + c.secs * 1000 > now - _ME_TIMER_KEEP_MS)) continue;
         let mp = _meSkillCds.get(cl);
@@ -16754,6 +16809,7 @@ function _meTimersSave() {
       const slot = (cl) => (out[cl] = out[cl] || {});
       for (const [cl, d] of _meDiscs) if (d.at + d.total_ms > now - _ME_TIMER_KEEP_MS) slot(cl).disc = d;
       for (const [cl, r] of _discReadyAt) if (r.at > now) slot(cl).refusal = r;
+      for (const [cl, r] of _mePurifyRank) slot(cl).purifyRank = r;   // the Hastened Purification rank, kept for good
       for (const [cl, mp] of _meSkillCds) {
         for (const [k, c] of mp) if (c.at + c.secs * 1000 > now - _ME_TIMER_KEEP_MS) (slot(cl).skills = slot(cl).skills || {})[k] = c;
       }
@@ -16971,6 +17027,7 @@ function _meNoteRawLine(line, character) {
     if (m) { _meNoteAbility(cl, m[1].toLowerCase(), now); return; }
     for (const s of _ME_SKILL_LINES) {
       if (!s.rx || !s.rx.test(msg)) continue;
+      if (!_meSkillStartsFor(cl, s)) continue;
       _meStartSkill(cl, s.key, now);
       return;
     }

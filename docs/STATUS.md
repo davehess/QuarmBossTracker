@@ -6997,6 +6997,15 @@ reused (per-kind envelope, 404 permanent, holds back agent updates while non-emp
 stays 8 h (24 h could pull a previous copy's event in on a reused port). Tests: `test/map-sync-outbox.test.js` (beta), `test/map-sync-dedup.test.js` (main).
 ⚠ Order: deploy the bot, THEN apply the migration (the index with the old bot rejects a repeated batch whole). Shipped 2026-10-26 in that order.
 
+### 🧾 2026-11-06 — Purify Body on the HUD, with Hastened Purification (agent 4.0.68, Mimic beta)
+The guild lead: *"add in purification of body as for the monk AAs and take into account the hastened purification as well ...
+as purify on the hud"*. A monk's HUD cooldowns gain **PURE** (Purify Body, always shown for a monk). Reuse 4320 s (Quarm
+aa_actions, AA 233) less 10% a Hastened Purification of the Body rank (AA 495; zone/aa.cpp CalcAAReuseTimer) → 3888 / 3456 /
+3024 s. Starts on the landing line (shared with a cleric's Purify Soul, so it counts only for a monk) or a `/pipe purify` hotkey
+press. The rank is not on the pipe: 63+ is taken as 3/3 (marked est) until a "You can use the ability Purify Body again in …"
+refusal after a known use shows the real reuse; the learned rank is kept across restarts (`purifyRank` in the HUD timer file).
+⚠ A cleric's Purify Soul landing on a monk also starts it (same line). Tests: `test/me-hud-timers.test.js`.
+
 ### 🧾 2026-11-06 — Mimic Map draws the planned raid route (Mimic beta)
 The guild lead, mid-raid: *"mimic map should display the path"*. A "Planned route" layer (on by default, Map settings) draws the
 Elemental Planes planner's locked path for the zone you are in: dashed gold line, numbered stops (bosses red), full boss clear by
