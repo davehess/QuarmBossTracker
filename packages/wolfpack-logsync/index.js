@@ -2266,6 +2266,11 @@ function _reconcileGaugeCharms() {
       if (/^(?:an?|the)\s+/i.test(txt)) return true;
       if (_hasPendingCharmSpell(ch, now))   return true;
       if (_gaugeOwnerIsBard(ch))            return true;   // bards can't summon — slot 16 IS a charm
+      // A named charm already open for this owner stays a charm while it holds slot 16. The cast
+      // that let it in is consumed when it lands, so without this the next pass read the pet as
+      // gone and called a break 6s later while it was still charmed (FB-121, Giwin Mirakon).
+      const open = _charmTickTracker.get(txt.toLowerCase());
+      if (open && open.is_active && String(open.owner || '').toLowerCase() === ownerLower) return true;
       return false;
     });
     if (!petG) continue;
