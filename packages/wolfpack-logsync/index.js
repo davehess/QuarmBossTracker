@@ -36925,6 +36925,7 @@ function startWebDashboard(port) {
       }
       // This PC's own recorded positions (local-first; the store block above module.exports). Answered from disk, never uploaded.
       if (_localTrackRoute(req, res)) return;
+      if (_localDeathsRoute(req, res)) return;   // How I died: this PC's death stories, from disk
       // Rebuild from my logs (the block above module.exports): start / stop / status, and the raids it found. Local only.
       if (await _localBackfillRoute(req, res)) return;
       // Capture latest PoP flags, Seer and Maelin messages (dashboard button): the website's "Sync from my logs" reader, started here.
@@ -65670,6 +65671,8 @@ async function main() {
         if (ev) {
           // Me HUD: damage in/out feed for this character.
           try { _meNoteHit(b.character, ev); } catch { void 0; }
+          // How I died: the rolling incoming-hit buffer, and the death story on your own death (local store only).
+          try { _deathNoteEvent(b.character, ev); } catch { void 0; }
           // #142 — tank-buster detection off the ~4000 non-melee damage line
           // (Rage of Ssraeshza, spell 2310). Fires "TANK BUSTER" + (re)arms the
           // 60s cadence countdown. Local-only, live tail; keyed off the boss +
@@ -65757,6 +65760,7 @@ const _LSTORE_INDEX_WRITE_MS = 5000;
 const _LSTORE_POLICY = {
   track_minute:   { retainDays: 90, maxBytes: 400 * _LSTORE_MB },
   track_presence: { retainDays: 90, maxBytes: 25 * _LSTORE_MB },
+  death_story:    { retainDays: 90, maxBytes: 50 * _LSTORE_MB },   // "How I died": the last 30 s before each of your deaths
   hub_encounter:  { retainDays: 120, maxBytes: 64 * _LSTORE_MB },   // the guild's merged encounters, for My parses' difference
   hub_state:      { retainDays: 30, maxBytes: 4 * _LSTORE_MB },
 };
@@ -66203,8 +66207,9 @@ function _localTrackContext(nowMs) {
 function _localTrackTick(nowMs = Date.now()) {
   if (!_isUploaderInstance) return null;   // another instance on this machine owns the folder
   try {
-    const frame = _localTrackFrame(nowMs, _localTrackContext(nowMs));
-    if (frame) _localTrackPush(frame);
+    const ctx = _localTrackContext(nowMs);
+    const frame = _localTrackFrame(nowMs, ctx);
+    if (frame) { _localTrackPush(frame); _deathNoteFrame(frame, ctx.active); }
     return frame;
   } catch { return null; }
 }
@@ -66359,6 +66364,116 @@ function _localTrackRoute(req, res) {
   return true;
 }
 function _localTrackSetStoreForTest(st) { _localTrack.store = st; }
+
+// ── How I died (the guild lead, 2026-11-06: "I just got destroyed by a few mobs and it looked like I wasn't anywhere
+// near them"). A rolling 60 s buffer of the hits THIS PC's character takes, fed from the same live-tail spot as the Me
+// HUD (_meNoteHit). On the character's own death one `death_story` record is written to the local store: the last 30 s
+// of hits, who did how much, and the position frames the recorder above took. Local only: nothing here is queued,
+// uploaded or relayed, and an exclude_from_stats character records nothing.
+const DEATH_BUFFER_MS = 60_000, DEATH_BUFFER_MAX = 400, DEATH_STORY_MS = 30_000, DEATH_FRAMES_MAX = 60;
+const _deathHits = new Map();       // charLower -> [{ t, attacker, amount, kind }]
+const _deathLast = new Map();       // charLower -> ms of the last story written (a death prints two lines)
+let _deathFrames = [];              // the active character's own frames: { t, x, y, z, h, hp, target }
+function _deathExcluded(character) {
+  const p = stats && stats.characterPrefs && stats.characterPrefs[String(character).toLowerCase()];
+  return !!(p && p.exclude_from_stats);
+}
+function _deathNoteFrame(frame, active) {
+  if (!frame || !active) return;
+  const k = String(active).toLowerCase();
+  const me = (frame.rows || []).find(r => r && String(r.name).toLowerCase() === k);
+  if (!me || !Number.isFinite(me.x) || !Number.isFinite(me.y)) return;
+  const m = frame.mobs && frame.mobs[0];
+  _deathFrames.push({ t: frame.t, c: k, x: me.x, y: me.y, z: me.z || 0, h: me.h == null ? null : me.h, hp: me.hp == null ? null : me.hp,
+    target: m ? { name: m.name, x: m.x, y: m.y, z: m.z || 0 } : null });
+  if (_deathFrames.length > DEATH_FRAMES_MAX) _deathFrames = _deathFrames.slice(-DEATH_FRAMES_MAX);
+}
+// Called for every parsed event of a live-tail line. Records an incoming hit, or writes the story on a self death.
+function _deathNoteEvent(character, ev, o = {}) {
+  if (!character || !ev || _deathExcluded(character)) return null;
+  const cl = String(character).toLowerCase();
+  const t = Number.isFinite(o.now) ? o.now : (ev.ts ? Date.parse(ev.ts) : Date.now());
+  if (ev.type === 'damage' && ev.amount > 0) {
+    const isYou = (s) => s != null && (/^you$/i.test(s) || String(s).toLowerCase() === cl);
+    if (!((ev.attacker == null && ev.defender == null) || isYou(ev.defender))) return null;
+    const ab = String(ev.ability || '').trim().toLowerCase();
+    const kind = ab === 'dot' ? 'dot' : ab === 'non-melee' ? 'non-melee' : ev.spellName ? 'spell' : 'melee';
+    let arr = _deathHits.get(cl);
+    if (!arr) { arr = []; _deathHits.set(cl, arr); }
+    arr.push({ t, attacker: ev.attacker ? String(ev.attacker) : null, amount: ev.amount, kind, ...(kind === 'melee' && ab ? { verb: ab } : {}) });
+    const cut = t - DEATH_BUFFER_MS;
+    let drop = 0;
+    while (drop < arr.length && arr[drop].t < cut) drop++;
+    if (drop || arr.length > DEATH_BUFFER_MAX) arr.splice(0, Math.max(drop, arr.length - DEATH_BUFFER_MAX));
+    return null;
+  }
+  if (ev.type === 'death' && ev.defender == null && !(ev.attacker && /^You$/i.test(ev.attacker))) {
+    if (t - (_deathLast.get(cl) || 0) < 15_000 && _deathLast.has(cl)) return null;
+    _deathLast.set(cl, t);
+    const st = _zealState[character] || _zealState[Object.keys(_zealState).find(n => n.toLowerCase() === cl)] || null;
+    const story = _deathBuildStory({ character, at: t, killer: ev.attacker || null, hits: _deathHits.get(cl) || [],
+      frames: _deathFrames.filter(f => f.c === cl), zone: st ? _mapZoneShort(st.zone) : null, target: st && st.target_name ? String(st.target_name) : null });
+    // The id is the death time in ms; two of this PC's characters dying in the same second (one AE on a multibox) take the
+    // next free millisecond instead of overwriting each other.
+    try {
+      const store = _deathStore();
+      let key = t;
+      while (store.get('death_story', String(key)) && key < t + 1000) key++;
+      story.id = String(key);
+      store.put('death_story', story.id, story, { ts: t });
+    } catch { void 0; }
+    return story;
+  }
+  return null;
+}
+function _deathStore() { return _localTrack.store || _localStoreDefault(); }
+// Pure: the story record from the buffers.
+function _deathBuildStory(c) {
+  const from = c.at - DEATH_STORY_MS;
+  const hits = c.hits.filter(h => h.t >= from && h.t <= c.at + 1000).map(h => ({ ...h }));
+  const by = new Map();
+  for (const h of hits) {
+    const k = h.attacker || 'unknown (non-melee / DoT)';
+    let a = by.get(k);
+    if (!a) by.set(k, a = { name: k, total: 0, hits: 0, max: 0, kinds: [], first_t: h.t, last_t: h.t });
+    a.total += h.amount; a.hits++; a.max = Math.max(a.max, h.amount);
+    if (!a.kinds.includes(h.kind)) a.kinds.push(h.kind);
+    a.last_t = Math.max(a.last_t, h.t); a.first_t = Math.min(a.first_t, h.t);
+  }
+  const attackers = [...by.values()].sort((a, b) => b.total - a.total);
+  const killer = c.killer || (hits.length ? hits[hits.length - 1].attacker : null);
+  const frames = c.frames.filter(f => f.t >= from && f.t <= c.at + 3000).map(({ c: _c, ...f }) => f);
+  return { at: c.at, character: c.character, zone: c.zone || null, killer, target: c.target || null,
+    total: hits.reduce((s, h) => s + h.amount, 0), hits, attackers, frames };
+}
+
+// GET /api/local/deaths[?since=<ms>&limit=<n>]  -> { deaths:[{id,at,character,zone,killer,total,top:[{name,total}]}] } newest first
+// GET /api/local/deaths/<id>                    -> the whole death_story. Answered from disk; nothing is uploaded.
+function _localDeathsRoute(req, res) {
+  if (!req || req.method !== 'GET' || !req.url || req.url.indexOf('/api/local/deaths') !== 0) return false;
+  let u;
+  try { u = new URL(req.url, 'http://x'); } catch { return false; }
+  const m = u.pathname.match(/^\/api\/local\/deaths(?:\/(\d{1,16}))?$/);
+  if (!m) return false;
+  let out;
+  try {
+    const store = _deathStore();
+    if (m[1]) {
+      const rec = store.get('death_story', m[1]);
+      out = rec ? { status: 200, body: rec } : { status: 404, body: { error: 'not found' } };
+    } else {
+      const since = Number(u.searchParams.get('since'));
+      const limit = Math.min(200, Math.max(1, Math.trunc(Number(u.searchParams.get('limit'))) || 50));
+      const rows = store.scan('death_story', { since: Number.isFinite(since) && since > 0 ? since : Date.now() - 90 * 86400_000 }).reverse().slice(0, limit)
+        .map(e => ({ id: e.id, at: e.rec.at, character: e.rec.character, zone: e.rec.zone, killer: e.rec.killer, total: e.rec.total,
+          top: (e.rec.attackers || []).slice(0, 3).map(a => ({ name: a.name, total: a.total })) }));
+      out = { status: 200, body: { deaths: rows } };
+    }
+  } catch { out = { status: 500, body: { error: 'local deaths unavailable' } }; }
+  res.writeHead(out.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  res.end(JSON.stringify(out.body));
+  return true;
+}
 
 // ── Track backfill: the bot asks for the minutes it missed ─────────────────────────────────────────────────
 // The tuning map carries track_backfill_id / track_backfill_from_s / track_backfill_to_s (set by an officer after the
@@ -68668,7 +68783,7 @@ module.exports = {
   AGENT_VERSION,
   // Local store + own position recorder (2026-10-21): see the block above module.exports.
   _trackBackfillRun, _trackBackfillSeen, _applyTuningResponse, _localStore, _localStoreOpen, _localTrackFrame, _localTrackMinuteRow, _localTrackNightKey, _localTrackTick, _localTrackClose, _localTrackPush,
-  _localTrackNights, _localTrackWindow, _localTrackBosses, _localTrackMap, _mapPaths, _localTrackRoute, _localTrackSetStoreForTest, _localRecorderStart, _localRecorderStop,
+  _localTrackNights, _localTrackWindow, _localTrackBosses, _localTrackMap, _mapPaths, _localTrackRoute, _localTrackSetStoreForTest, _deathNoteEvent, _deathNoteFrame, _deathBuildStory, _localDeathsRoute, _deathHits, _deathLast, _deathPrefsForTest: (p) => { stats.characterPrefs = p; }, _localRecorderStart, _localRecorderStop,
   // My parses on the local site + the guild's record kept beside it (2026-10-21): see the block above module.exports.
   _localParsesAnswer, _localParsesRoute, _localFights, _localFoldPlayers, _localParseDiff, _localHubMatch, _localHubClean, _localHubApply, _localHubEncounters, _localHubSync,
   _localHubStatus, _localHubResetForTest, LOCAL_HUB_KIND, LOCAL_HUB_STATE_KIND, LOCAL_HUB_MATCH_MS,

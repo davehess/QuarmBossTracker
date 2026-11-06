@@ -6997,6 +6997,12 @@ reused (per-kind envelope, 404 permanent, holds back agent updates while non-emp
 stays 8 h (24 h could pull a previous copy's event in on a reused port). Tests: `test/map-sync-outbox.test.js` (beta), `test/map-sync-dedup.test.js` (main).
 ⚠ Order: deploy the bot, THEN apply the migration (the index with the old bot rejects a repeated batch whole). Shipped 2026-10-26 in that order.
 
+### 🧾 2026-11-06 — "How I died" in My replay (agent 4.0.70, Mimic beta)
+The guild lead: *"I just got destroyed by a few mobs and it looked like I wasn't anywhere near them"* → *"build the how I died
+panel"*. After each death, My replay (tray → 🎬 My replay) shows the last 30 s: damage taken per second by attacker with your HP and
+the killing blow, a table of who hit you, and your path with your target's position and distance. On this PC only, never uploaded.
+Other attackers' positions are not known (Zeal reports only your target's). Covers deaths after the update, not earlier ones.
+
 ### 🧾 2026-11-06 — Purify Body on the HUD, with Hastened Purification (agent 4.0.68, Mimic beta)
 The guild lead: *"add in purification of body as for the monk AAs and take into account the hastened purification as well ...
 as purify on the hud"*. A monk's HUD cooldowns gain **PURE** (Purify Body, always shown for a monk). Reuse 4320 s (Quarm
