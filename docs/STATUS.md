@@ -6997,6 +6997,13 @@ reused (per-kind envelope, 404 permanent, holds back agent updates while non-emp
 stays 8 h (24 h could pull a previous copy's event in on a reused port). Tests: `test/map-sync-outbox.test.js` (beta), `test/map-sync-dedup.test.js` (main).
 ⚠ Order: deploy the bot, THEN apply the migration (the index with the old bot rejects a repeated batch whole). Shipped 2026-10-26 in that order.
 
+### 🧾 2026-11-06 — Mimic Map draws the planned raid route (Mimic beta)
+The guild lead, mid-raid: *"mimic map should display the path"*. A "Planned route" layer (on by default, Map settings) draws the
+Elemental Planes planner's locked path for the zone you are in: dashed gold line, numbered stops (bosses red), full boss clear by
+default with a "Planned route path" choice of full or minimal. Data: `apps/mimic/raidRoutes.json`, exported from the planner
+(Zeal map frame; Air's legs are straight, an order of fights), handed to the page by main (`get-raid-routes` →
+`window.mimic.getRaidRoutes`). Re-export it when the planner's paths change. Tests: `test/map-planned-route.test.js`.
+
 ### 🧾 2026-11-06 — Feedback of every kind can attach a log slice (agent 4.0.67, beta)
 The guild lead: *"feedback that isn't a bug should also be able to take screenshots and include logs"*. Screenshots were already
 open to every kind on every surface, and the bot already stored `log_excerpt` for any category; the one gate was the agent

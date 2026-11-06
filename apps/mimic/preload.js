@@ -1454,6 +1454,7 @@ contextBridge.exposeInMainWorld('mimic', {
   agentPost:        (route, body) => ipcRenderer.invoke('agent-post', route, body),
   saveConfig:    (cfg) => ipcRenderer.invoke('save-config', cfg),
   getAgentPort:  () => ipcRenderer.invoke('get-agent-port'),
+  getRaidRoutes: () => ipcRenderer.invoke('get-raid-routes'),
   eqSetupForMe:  () => ipcRenderer.invoke('eq-setup-for-me'),
   relaunchAgent: () => ipcRenderer.invoke('relaunch-agent'),
   // Live per-process CPU + memory, so "how much does Mimic cost?" is answered by

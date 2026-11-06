@@ -14715,6 +14715,15 @@ ipcMain.handle('overlay-setup-code', (_e, opts) => _getSetupCode(opts));
 ipcMain.handle('overlay-setup-import', () => _importSetupFile());
 ipcMain.handle('overlay-setup-enter-code', () => _enterSetupCode());
 ipcMain.handle('get-agent-port', () => agentPort);
+// The planned raid routes shipped with Mimic (raidRoutes.json) for the Map's "Planned route" layer: map.html is a file:// page, so main
+// reads the file once and hands it over (null when it is missing or unreadable; the layer then draws nothing).
+let _raidRoutesCache;
+ipcMain.handle('get-raid-routes', () => {
+  if (_raidRoutesCache === undefined) {
+    try { _raidRoutesCache = JSON.parse(fs.readFileSync(path.join(__dirname, 'raidRoutes.json'), 'utf8')); } catch (e) { _raidRoutesCache = null; }
+  }
+  return _raidRoutesCache;
+});
 // "Set up for me" from Settings — bridge to the agent's single writer
 // (POST /api/eq-setup → _applyEqSetup). Routed through main (Node, no CORS) so
 // Settings can READ the full result (incl. the "EQ is running" warning); a raw
