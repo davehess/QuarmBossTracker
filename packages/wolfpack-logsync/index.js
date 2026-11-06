@@ -60377,9 +60377,10 @@ function _coirnavNoteLine(line, character, now) {
   const cl = String(character).toLowerCase();
   const zm = line.indexOf(' have entered ') !== -1 ? CHAT_ZONE_RX.exec(line) : null;
   if (zm) {
-    const z = zm[1].trim().toLowerCase();
-    _coirnavLogZone.set(cl, z);
-    if (z !== 'plane of water') _coirnavState.delete(cl);
+    // Zoning out does NOT end the row: a death sends you to your bind point while the event (and its server clock) runs on,
+    // and the raid still needs the clock (the guild lead, 2026-11-05: "I died and lost the timer, it should persist through
+    // the timer"). The row still ends on its own at the deadline (+ grace), on success, or after the banish retry.
+    _coirnavLogZone.set(cl, zm[1].trim().toLowerCase());
     return;
   }
   if (line.indexOf('Coirnav') === -1 && line.indexOf('Triumvirate') === -1 && line.indexOf('fiend') === -1) return;
