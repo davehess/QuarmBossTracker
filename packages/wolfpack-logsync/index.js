@@ -4197,6 +4197,139 @@ function buffDurationFactorFor(character) {
 // character rather than per machine.
 const _buffSeenByChar = new Set();   // "char|spellLower"
 
+// ── Debuff overwrite (the guild lead, 2026-11-06) ───────────────────────────────────────────────────
+// "Malo AND Malosinia on the same mob": they cannot coexist on the server. The stronger overwrites the
+// weaker, a weaker cast onto a stronger is blocked, and both print the same landing line, so every landing
+// was recorded as having landed. This ports the server's rule for DETRIMENTAL-on-DETRIMENTAL on an NPC
+// (SecretsOTheP/EQMacEmu c2cd265 zone/buffstacking.cpp, Mob::FindAffectSlot) onto the bot catalog's per-spell
+// stacking signature (`st` = [[slot, spa, value]] at the era-cap level, `sws` = IsStackWithSelfAllowed). A
+// catalog without `st` (an older bot) leaves every spell out of this, so behaviour is exactly as before.
+//
+// Ported lines: L414-449 same spell id (the newer replaces the older; a DoT from a DIFFERENT caster coexists,
+// L451-487); L626-668 the effect-slot walk (carried by `st`: ignored SPAs, blanks, DoT/negative-AC and CHA
+// spacers are already left out); L675-687 an old spell in the always-blocks id ranges blocks the new one;
+// L689-695 the value override ids; L696-777 the value comparison (goto flow transcribed in _stackDecide).
+// The walk returns at the FIRST colliding old buff, in slot order: we walk in landing order.
+// Not ported: caster level (the server compares each at its own caster level; we compare both at the
+// catalog's era cap), IsStackBlocked / SE_StackingCommand rules, bard-song and good-effect branches.
+const _STACK_ALWAYS_BLOCKS = (id) => (id >= 775 && id <= 785) || (id >= 1200 && id <= 1250) || (id >= 1900 && id <= 1924)
+  || id === 2079 || id === 2751 || id === 756 || id === 757 || id === 836;
+const _STACK_MINUS_ONE_NEW = (id) => id === 1620 || id === 1816 || id === 833;   // L692: new/old value forced to -1
+const _SPA_ATTACK_SPEED = 11, _SPA_MOVEMENT_SPEED = 3, _SPA_CURRENT_HP = 0;
+// A spell's stacking signature from the catalog, or null when it takes no part (no `st`/`sws`, or charm / fear,
+// which have their own code paths and are never touched here).
+function _stackSigFor(name) {
+  const k = String(name || '').toLowerCase();
+  const e = _spellByNameLower.get(k) || _spellByNameLower.get(k.replace(/'/g, '`')) || _spellByNameLower.get(k.replace(/`/g, "'"));
+  if (!e || (!Array.isArray(e.st) && !e.sws)) return null;
+  if (Array.isArray(e.cc) && (e.cc.includes('charm') || e.cc.includes('fear'))) return null;
+  return { id: Number(e.id), st: Array.isArray(e.st) ? e.st : [], sws: !!e.sws };
+}
+// What `n` (the newly landed spell) does against `o` (already on the target): 'overwrite' | 'blocked' | null.
+function _stackDecide(o, n) {
+  let slot = null;
+  for (const a of n.sig.st) {            // st is in slot order: the first slot both carry with the same SPA
+    const b = o.sig.st.find(x => x[0] === a[0] && x[1] === a[1]);
+    if (b) { slot = { spa: a[1], oldV: Number(b[2]), newV: Number(a[2]) }; break; }
+  }
+  if (!slot) return null;                // nothing collides: they stack
+  if (_STACK_ALWAYS_BLOCKS(o.sig.id)) return 'blocked';                                   // L675-687
+  let ov = slot.oldV, nv = slot.newV;
+  if (_STACK_MINUS_ONE_NEW(n.sig.id) || o.sig.id === 1814) nv = -1;                      // L692
+  if (_STACK_MINUS_ONE_NEW(o.sig.id) || o.sig.id === 1814) ov = -1;                      // L694
+  const incDec = () => {                                                                  // L749-761 OVERWRITE_INCREASE_WITH_DECREASE
+    if (slot.spa !== _SPA_MOVEMENT_SPEED) return (slot.spa !== _SPA_CURRENT_HP || ov >= 0 || nv <= 0) ? 'overwrite' : 'blocked';
+    return nv >= 0 ? 'blocked' : 'overwrite';
+  };
+  if (ov > 0 && nv < 0) return incDec();                                       // L697-701
+  if (ov < 0 && nv > 0) return incDec();                                                  // L744-749
+  if (slot.spa === _SPA_ATTACK_SPEED) {                                                   // L703-731
+    if (nv < 100 && nv <= ov) return 'overwrite';
+    if (ov <= 100) return 'blocked';
+    return nv >= ov ? 'overwrite' : 'blocked';
+  }
+  if (ov < 0) return nv <= ov ? 'overwrite' : 'blocked';                                  // L734-741
+  if (ov === 0) return 'blocked';
+  return nv >= ov ? 'overwrite' : 'blocked';                                              // L711-713
+}
+// Replay a set of landings on ONE target in landing-time order and say what the server would have done.
+// items: [{ name, at (ms), caster?, spawn? }] (the same objects come back as keys). Order-independent: sorted
+// by time, then name, so every client reaches the same answer from the same rows.
+// Returns { ended: Map<item,{at,by}> (overwritten by a later landing), blocked: Set<item> (cannot have landed) }.
+function _stackReplay(items) {
+  const ended = new Map(), blocked = new Set();
+  const seq = [];
+  for (const it of items || []) {
+    if (!it || !(Number(it.at) > 0)) continue;
+    const sig = _stackSigFor(it.name);
+    if (sig) seq.push({ it, sig });
+  }
+  seq.sort((a, b) => (a.it.at - b.it.at) || String(a.it.name).localeCompare(String(b.it.name))
+    || String(a.it.caster || '').localeCompare(String(b.it.caster || '')));
+  const active = [];
+  const sameSpawn = (a, b) => a.spawn == null || b.spawn == null || Number(a.spawn) === Number(b.spawn);
+  for (const cur of seq) {
+    let coexist = false;
+    for (let j = 0; j < active.length; j++) {
+      const o = active[j];
+      if (o.sig.id !== cur.sig.id || !sameSpawn(o.it, cur.it)) continue;
+      const bothKnownSame = o.it.caster && cur.it.caster && String(o.it.caster).toLowerCase() === String(cur.it.caster).toLowerCase();
+      if (cur.sig.sws && !bothKnownSame) { coexist = true; continue; }   // a DoT from another caster stacks with itself
+      ended.set(o.it, { at: cur.it.at, by: cur.it.name });                // same spell again: the newer replaces
+      active.splice(j, 1); j--;
+    }
+    if (coexist) { active.push(cur); continue; }
+    let isBlocked = false;
+    for (let j = 0; j < active.length; j++) {
+      const o = active[j];
+      if (o.sig.id === cur.sig.id || !sameSpawn(o.it, cur.it)) continue;
+      const d = _stackDecide(o, cur);
+      if (!d) continue;
+      if (d === 'blocked') isBlocked = true;
+      else { ended.set(o.it, { at: cur.it.at, by: cur.it.name }); active.splice(j, 1); }
+      break;                                                             // the server returns at the first collision
+    }
+    if (isBlocked) blocked.add(cur.it); else active.push(cur);
+  }
+  return { ended, blocked };
+}
+// Apply the rule to a target's landing map as `entry` (key `newKey`) is about to join it. Returns false when
+// the new landing is blocked by a stronger debuff already there (do not add it). Old landings it overwrites
+// are marked ended at its time, with `overwritten_by`; ones an earlier-timed late arrival would have blocked go.
+function _applyStackToMap(mp, newKey, entry) {
+  const now = Date.now();
+  const items = [];
+  for (const [k, b] of mp) {
+    if (!b || k === newKey || b.worn_off_at || b.is_charm_spell) continue;
+    const dur = (Number(b.dur_ticks) || 0) * 6000;
+    if (dur > 0 && (Number(b.landed_at) || 0) + dur < now) continue;   // ran out on its own already
+    items.push({ name: b.name, at: b.landed_at, caster: b.cast_by || null, spawn: b.target_id, k, b });
+  }
+  const me = { name: entry.name, at: entry.landed_at, caster: entry.cast_by || null, spawn: entry.target_id, k: newKey, b: entry };
+  items.push(me);
+  const { ended, blocked } = _stackReplay(items);
+  for (const [it, why] of ended) { it.b.worn_off_at = why.at; it.b.overwritten_by = why.by; }
+  for (const it of blocked) if (it !== me) mp.delete(it.k);
+  return !blocked.has(me);
+}
+// The same rule over the merged Target info rows (local + the bot's relay): rows ended by a later landing and
+// rows that cannot have landed are dropped, whichever client saw what first.
+function _applyStackToRows(rows) {
+  if (!Array.isArray(rows) || rows.length < 2) return rows;
+  const items = [];
+  for (const r of rows) {
+    if (!r || !r.name || r.fell_off || r.owner || r.good === 1 || r.pacified) continue;
+    items.push({ name: r.name, at: r.observed_at_ms, caster: r.caster || null, spawn: r.target_id, row: r });
+  }
+  if (items.length < 2) return rows;
+  const { ended, blocked } = _stackReplay(items);
+  if (!ended.size && !blocked.size) return rows;
+  const gone = new Set();
+  for (const it of ended.keys()) gone.add(it.row);
+  for (const it of blocked) gone.add(it.row);
+  return rows.filter(r => !gone.has(r));
+}
+
 // Everything we have measured, newest-touched first, for the dashboard table.
 function buffDurationTable() {
   const out = [];
@@ -4268,7 +4401,7 @@ function recordTargetBuffLanding(bcEvt) {
       if (_categorizeBuff(b && b.name) === newCat) mp.delete(k2);
     }
   }
-  mp.set(newKey, {
+  const entry = {
     name: bcEvt.spell_name,
     dur_ticks: _durTicksForLevel(bcEvt.dur_formula, bcEvt.dur_ticks, lvl),
     landed_at: bcEvt.cast_at ? Date.parse(bcEvt.cast_at) : Date.now(),
@@ -4282,7 +4415,12 @@ function recordTargetBuffLanding(bcEvt) {
     // Mob Info prints an owner in brackets, which is for charm and pacify rows.
     cast_by: (bcEvt._selfCast && bcEvt.observer) ? String(bcEvt.observer) : null,
     target_name: String(bcEvt.target),
-  });
+  };
+  // A stronger debuff already there blocks this one (it cannot have landed: the shared landing line was the
+  // stronger spell's), and this one overwrites a weaker one (Malosinia over Malo). See _stackReplay.
+  // (typeof-guarded: the source-slice tests lift this function out without its neighbours.)
+  if (typeof _applyStackToMap === 'function' && !_applyStackToMap(mp, newKey, entry)) { if (mp.size === 0) _buffLandingsByTarget.delete(k); return; }
+  mp.set(newKey, entry);
   // Bound memory: keep the 400 most-recently-touched targets.
   if (_buffLandingsByTarget.size > 400) {
     const oldest = _buffLandingsByTarget.keys().next().value;
@@ -4329,6 +4467,10 @@ function targetBuffsFor(targetLower, wantId) {
     const _shortFx = ((Number(b && b.dur_ticks) || 0) * 6) > 0 && ((Number(b && b.dur_ticks) || 0) * 6) < 60;
     const lingerMs = (_isHotBuff(b && b.name) || _shortFx) ? 6_000 : FELL_OFF_LINGER_MS;
     if (b.worn_off_at) {                                     // explicit "worn off"
+      if (b.overwritten_by) {                                // overwritten by a stronger debuff: gone, not a rebuff cue
+        if (now - b.worn_off_at > lingerMs) mp.delete(k);
+        continue;
+      }
       if (now - b.worn_off_at > lingerMs) { mp.delete(k); continue; }
       fellOff = true; rem = 0;
     } else if (rem <= 0) {                                   // natural expiry
@@ -58809,6 +58951,8 @@ function buildMobInfo() {
     // speed) can arrive from different clients — keep only the most-recently
     // observed occupant of each slot so a stale overwritten buff doesn't linger.
     buffs = _collapseObservedBuffSlots(buffs);
+    // An overwritten debuff drops off whichever client saw which landing (Malo under Malosinia).
+    buffs = _applyStackToRows(buffs);
   }
   // Who cast each effect, from the bot's cast relay (see _attachBuffCasters).
   buffs = _attachBuffCasters(buffs, ctc ? ctc.last_casters : null);
@@ -61243,11 +61387,20 @@ function _isMezSpell(name) {
   const e = _spellByNameLower.get(k) || _spellByNameLower.get(k.replace(/'/g, '`'));
   return !!(e && Array.isArray(e.cc) && e.cc.includes('mez'));
 }
-// "Your <spell> spell has worn off." for a mez you cast: that timer ends now (its newest landing by you).
+// A detrimental spell other than charm / fear (their own code paths): the server sends "Your <spell> spell has
+// worn off." to its caster on expiry, a dispel AND an overwrite (spell_effects.cpp:3700-3745).
+function _isOwnDebuffWornOffKind(name) {
+  const k = String(name || '').toLowerCase();
+  const e = _spellByNameLower.get(k) || _spellByNameLower.get(k.replace(/`/g, "'")) || _spellByNameLower.get(k.replace(/'/g, '`'));
+  if (!e || Number(e.good) !== 0) return false;
+  return !(Array.isArray(e.cc) && (e.cc.includes('charm') || e.cc.includes('fear')));
+}
+// "Your <spell> spell has worn off." for a debuff you cast (a mez since 2026-10-13, any detrimental since
+// 2026-11-06): that landing ends now (its newest by you).
 function noteMyMezWornOff(line, character) {
   if (!line || !character || line.indexOf('spell has worn off') === -1) return;
   const m = line.match(/\]\s+Your\s+(.+?)\s+spell has worn off\.\s*$/i);
-  if (!m || /^pet's\s/i.test(m[1]) || !_isMezSpell(m[1])) return;
+  if (!m || /^pet's\s/i.test(m[1]) || !(_isMezSpell(m[1]) || _isOwnDebuffWornOffKind(m[1]))) return;
   const want = m[1].trim().toLowerCase().replace(/`/g, "'"), me = String(character).toLowerCase();
   let best = null;
   for (const mp of _buffLandingsByTarget.values()) {
@@ -69057,6 +69210,7 @@ module.exports = {
   _recompilePersonalTriggersForChars, _evaluateZealConditions,
   _builtinTimerRows, _builtinSpellBarColor, _builtinTimerHidden, _charmTickTracker, _buffLandingsByTarget, _meSkillCds,
   _isMezSpell, noteMyMezWornOff,
+  recordTargetBuffLanding, _stackReplay, _applyStackToRows,   // test/debuff-overwrite.test.js
   // Dispel watch (agent 4.0.11) — exported for test/dispel-watch.test.js.
   noteDispelLine, flushDispelWatch, _dispelNoteZealDiff, _dispelState, _dispelGone, _dispelGoneCovers, _dispelWatchEnabled,
   DISPEL_OTHER_TEXTS, DISPEL_YOU_TEXTS,

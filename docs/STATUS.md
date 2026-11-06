@@ -103,6 +103,19 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧾 Target info: an overwritten debuff drops off (agent 4.0.74 beta · bot 4.0.58; branches `draft/debuff-overwrite` and
+  `draft/stack-sig-main`, local drafts not yet pushed, 2026-11-06).** The guild lead saw Malo and Malosinia listed together; on the
+  server Malosinia overwrites Malo and a Malo cast after it is blocked, and both print the same landing line. One generic rule,
+  ported from EQMacEmu `zone/buffstacking.cpp` (`Mob::FindAffectSlot`, NPC target; lines ported are named in the comment above
+  `_stackDecide`), covers the ~40 same-text families (Tashan line, Malo line, slows, roots, snares, poisons, Choke...). **Bot:**
+  `/api/agent/spell-catalog` entries for detrimental timed spells carry `st` ([[slot, spa, value]] at the era-cap level) and `sws`
+  (a DoT that stacks with itself from another caster). **Agent:** `_stackReplay` replays a target's landings in time order;
+  `recordTargetBuffLanding` marks the overwritten one ended (`worn_off_at`, `overwritten_by`; hidden, not a rebuff cue) or drops a
+  blocked one, and the merged Target info rows (local + relay) get the same replay so every client agrees. "Your <spell> spell has
+  worn off." now ends the caster's own landing for ANY detrimental (was mez only; charm and fear untouched). **Depends on the bot
+  catalog:** an agent that gets a catalog without `st` behaves exactly as before (tested). Not ported: per-caster level, the
+  stacking-command rules, `dot_stacking_exempt`. Tests: `test/spell-catalog-stack-signature.test.js`, `test/debuff-overwrite.test.js`.
+
 - **🧪 Fight files: a fight's per-second snapshots go to Storage as one file, not Postgres rows (bot 4.0.56; branch `fight-files`, not
   yet pushed, 2026-11-05; DECISIONS §538; the guild lead: "do A, keep everything").** `encounter_threat_snapshots` was 2.6 GB (53% of
   the database) and ~12.5k inserts + 2.9k updates per two raid hours. `utils/fightFiles.js` holds a fight's snapshots in the bot's
