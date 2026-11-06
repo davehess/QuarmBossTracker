@@ -43,6 +43,13 @@ Nothing to do in the normal case: a new upstream release becomes the base on the
 - **One of ours conflicts with the new release**: rebase that branch onto the new upstream tag, re-test, put the new sha
   in `approved.txt`. Until then the previous Wolf Pack build stays up (it is on the older release).
 
+**Ready for 1.5.0 (2026-11-06).** The base is `releases/latest`, which skips prereleases, so v1.5.0-alpha0 changes
+nothing yet. When upstream publishes a non-prerelease 1.5.x, both cases above hit at once: the popflags (`d36a336`) and
+`/pipedelay` (`488ec48`) lines go empty (PRs 253 and 254 are in 1.5), and the two tag lines conflict. Replace
+`approved.txt`'s four picks with the two 1.5 rebases, `d75d153e337723ebfe1cadd8a2355fc620aac0c8` (branch
+`pr/tag-name-check-1.5`) and `606e4283369ffc156b1c91ed020848e288e8fa76` (branch `pr/tag-persist-corpses-1.5`). Both
+apply cleanly on v1.5.0-alpha0 in either order, and GitHub compiled them together.
+
 ## Adding or changing a change
 
 1. Build the change on its own branch on the fork, one commit, based on upstream (`pr/*` or `fix/*`, the same branch the
