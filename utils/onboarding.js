@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.58': [
+    'Mimic can now tell when one debuff replaces another on a mob (Malosinia over Malo, Tashanian over Tashani, and the other look-alike debuffs), so Target info stops listing both. Needs the Mimic beta that pairs with it.',
+  ],
   '4.0.57': [
     'Fixed: an event announced for later now really clears from the queue once it opens, so ending that raid session no longer lets the bot open it again.',
   ],
