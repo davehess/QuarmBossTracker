@@ -3411,6 +3411,28 @@ parity checklist in `CLAUDE.md` (✕ hide, ✥ move + context menu,
 hover-interact handshake, dashboard toggle row, visibility fn) — most beta
 bugs were a missing item from that list.
 
+- **Weave timer: when to press a monk's bandolier weave (Mimic beta draft, 2026-11-07, the guild lead: "A on HUD but slim ... on the
+  right side of the HUD circle where Mana or Stamina would be ... then also add it to the box HUD ... a canvas element can also
+  exist as Weaving timer ... it needs to be local so that it's as close to real time as possible"):** Mimic only DISPLAYS timing;
+  it never presses a key. **Engine:** `apps/mimic/weave.js`, in the MAIN process, fed from the raw Zeal pipe objects in `main.js`'s
+  `onEvent` (the same handler as `_zealAbsorb`), so a swing is stamped at arrival, not on the log's one-second stamps. It reads
+  only chat objects (type 0) on colour 265 / 267 that start "You " (your hits and misses) and `Loading bandolier set [...]` on any
+  colour, groups lines within 250 ms as one round, sorts a swing by its verb (2H list default crush/crushes; fist list default
+  punch/punches/hit/hits/strike/strikes; a kick is neither), keeps the median of the last 6 round-to-round 2H intervals (the
+  configured delay until 3 samples), derives haste = delay x100 / interval and the fist interval = hand-to-hand delay x100 / haste,
+  and pushes `weave-state` (<= one per 33 ms while a fight is live, one final idle, "needs-zeal" after 5 s of no pipe). The mechanic
+  and the delay tables are the server's own (SecretsOTheP/EQMacEmu c2cd265: `attack.cpp` SetAttackTimer / GetHandToHandDelay,
+  `timer.cpp` Timer::SetDuration, `inventory.cpp` swap), cited in the file's header. Window = `[max(last2H, lastFist + fistInterval),
+  last2H + fistInterval - margin]`; a press is the macro's loads within 1.2 s; outcome landed / clip / miss per press, tally reset
+  after 12 s idle. **Renderers:** `weaveDraw.js` paints any `<canvas data-wp-weave="lane|highway">` from the state, re-deriving the
+  windows each frame (`WpWeave.zones`), asking for animation frames only while a fight is live. `me.html`: a `weave` HUD part
+  (auto = Monk and Beastlord, on, off) puts a slim vertical lane where the mana / endurance arc is (the arc's bar is skipped, its
+  label stays) and a column at the Box's right edge; settings (2H delay, margin, race, epic, tally, verb lists) live in the ⚙
+  builder under "Weave timer" and ride to main with the character's level and class (`setWeaveConfig`). `parts.js`: kind `weave`,
+  piece `me.weave` ("Weaving timer", modes Timing highway / Upright lane), drawn by the same painter on the Canvas. IPC:
+  `onWeaveState` / `setWeaveConfig` in `preload.js` (frames included). The agent is untouched: its log-derived swing timer is a
+  period only, so with no pipe the lane says "needs Zeal". Tests `test/weave-engine.test.js`.
+
 - **"EverQuest won't start unless you change your time zone?" — fix EQ file creation dates (Mimic beta draft, 2026-11-03,
   the guild lead):** players on the Project Quarm Discord found that a few game files carry an invalid creation date, and the
   game then only starts after the Windows time zone is changed. `apps/mimic/eqFileDates.js` (zero deps; file system and

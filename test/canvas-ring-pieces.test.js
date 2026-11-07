@@ -166,7 +166,7 @@ describe('a Ring arc piece draws its arc as the ring does', () => {
   });
   it('a Ring arc is a way to draw any piece (kinds: gauge, countdown, value, list), with a default arc when it has none', () => {
     for (const k of ['gauge', 'countdown', 'value', 'list']) expect(W.MODES[k].map(m => m[0]), k).toContain('seg');
-    for (const d of W.PARTS) {
+    for (const d of W.PARTS.filter(p => p.kind !== 'weave')) {   // the Weaving timer is a canvas of its own, not a value on an arc
       const s = typeof d.sample === 'function' ? d.sample(1_000_000) : d.sample;
       const html = W.render(d, 'seg', s, 1_000_000, { uid: 'x' + d.id });
       expect(html, d.id).toMatch(/^<div class="pt pt-seg"><svg viewBox="[-\d. ]+"/);

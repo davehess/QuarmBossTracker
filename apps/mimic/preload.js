@@ -1558,6 +1558,11 @@ contextBridge.exposeInMainWorld('mimic', {
   // Overlay lock state — main pushes this to overlay renderers so they can
   // show/hide their drag handle.
   onOverlayLocked: (cb)   => ipcRenderer.on('overlay-locked', (_e, locked) => cb(locked)),
+  // The Weave timer (apps/mimic/weave.js, in the main process): the engine's state, straight from the Zeal pipe,
+  // ~30×/s while a fight is on. Subscribing asks main to send this window (and its frames: the Canvas draws panels in
+  // iframes); setWeaveConfig is the HUD builder's settings plus the character's level and race.
+  onWeaveState:   (cb)    => { ipcRenderer.send('weave-subscribe'); ipcRenderer.on('weave-state', (_e, st) => cb(st)); },
+  setWeaveConfig: (cfg)   => ipcRenderer.send('weave-config', cfg),
   // Setup-mode state — pushed to each overlay with its identifying key so
   // the renderer can show the per-window control strip (opacity slider, etc.)
   onSetupMode:      (cb)         => ipcRenderer.on('setup-mode', (_e, payload) => cb(payload)),

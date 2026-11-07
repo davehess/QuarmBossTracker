@@ -1924,8 +1924,8 @@ describe('the in-game picker', () => {
     expect(css).toContain('#builder .bsticky{position:sticky;top:0;');
     expect(css).toMatch(/#builder\{[^}]*overflow-y:auto;/);
     expect(meHtml).toMatch(/<div class="bsticky">[\s\S]*?id="builder-all" data-size="all"[\s\S]*?data-reset="all"[\s\S]*?<\/div>\s*<\/div>\s*<div id="builder-list">/);
-    // every row renders a reset, checkbox rows and select rows alike
-    expect((body.match(/<button type="button" class="brs" data-reset="' \+ it\[0\] \+ '"/g) || []).length).toBe(2);
+    // every row renders a reset, checkbox rows, select rows and (the Weave timer's verb lists) text rows alike
+    expect((body.match(/<button type="button" class="brs" data-reset="' \+ it\[0\] \+ '"/g) || []).length).toBe(3);
     // ↺ restores the line's shipped on/off and drops its own size
     expect(body).toMatch(/delete sizes\[k\];\s*hudParts\.sizes = sizes;\s*if \(k in HUD_DEFAULTS && k !== 'sizes'\) hudParts\[k\] = HUD_DEFAULTS\[k\];/);
     // the panel the window grows by is the panel CSS draws

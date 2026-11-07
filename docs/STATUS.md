@@ -103,6 +103,16 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧾 Weave timer: a slim lane on the HUD ring and Box, and a Weaving timer Canvas piece (Mimic beta draft, 2026-11-07).** The guild lead, for a
+  monk's kick + two `/bandolier load` weave: "A on HUD but slim ... right side of the HUD circle where Mana or Stamina would be, scroll
+  vertically ... also add it to the box HUD ... a canvas element can also exist as Weaving timer ... it needs to be local". New
+  `apps/mimic/weave.js` (engine, main process, fed from the Zeal pipe at arrival time; server-script mechanic and hand-to-hand
+  tables cited in its header), `weaveDraw.js` (canvas painter, RAF only while a fight is live), a `weave` HUD part in `me.html`
+  (auto = Monk and Beastlord), piece `me.weave` in `parts.js`, `onWeaveState` / `setWeaveConfig` in `preload.js`. Agent unchanged,
+  Mimic stays parked (beta numbers the build). **Open:** the monk's fist verb is a guess (three listed, configurable) and wants one
+  real log line; colours 265 / 267 and the bandolier text are from the pipe docs and the agent's own parser, unverified live;
+  a monk's default HUD now trades its endurance arc for the lane (label stays) — the guild lead to confirm. Docs: `HOW-ITS-BUILT.md`
+  "Weave timer". Tests `test/weave-engine.test.js`.
 - **🧾 Target info: an overwritten debuff drops off (agent 4.0.74 beta · bot 4.0.58 on main, 2026-11-06).** The guild lead saw Malo and Malosinia listed together; on the
   server Malosinia overwrites Malo and a Malo cast after it is blocked, and both print the same landing line. One generic rule,
   ported from EQMacEmu `zone/buffstacking.cpp` (`Mob::FindAffectSlot`, NPC target; lines ported are named in the comment above

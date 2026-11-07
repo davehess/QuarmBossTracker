@@ -61,12 +61,15 @@
                 ['readout', 'Readout'], ['big', 'Big number'], ['badge', 'Badge'], ['seg', 'Ring arc']],
     value:     [['readout', 'Readout'], ['big', 'Big number'], ['badge', 'Badge'], ['seg', 'Ring arc']],
     list:      [['rows', 'Rows'], ['chips', 'Chips'], ['inline', 'One line'], ['columns', 'Columns'], ['seg', 'Ring arc']],
+    // The Weave timer: a horizontal timing highway, or the slim upright lane the HUD ring and Box carry.
+    weave:     [['highway', 'Timing highway'], ['lane', 'Upright lane']],
   };
   var DEFAULT_SIZE = {
     bar: [220, 34], thin: [220, 18], vbar: [40, 120], ring: [96, 96], arc: [140, 90], readout: [200, 22],
     big: [120, 52], badge: [60, 60], pips: [180, 30],
     rows: [260, 150], chips: [260, 48], inline: [320, 22], columns: [300, 90],
     seg: [190, 52],   // DEFAULT_ARC's box (segBox) at about 0.7×, for a Ring arc placed on its own
+    highway: [320, 60], lane: [28, 150],
   };
   // What any piece can also set, whatever its mode: its label shown or not, how thick its bar or
   // ring is, its own colour, and where its text sits. Offered in the piece's menu.
@@ -412,8 +415,19 @@
     return '<div class="pt pt-seg"><svg viewBox="' + box.map(f1).join(' ') + '" preserveAspectRatio="xMidYMid meet">' + h + '</svg></div>';
   }
 
+  // The Weave timer (apps/mimic/weave.js times it in Mimic's main process; weaveDraw.js paints these canvases). The piece
+  // is just a <canvas>: its HTML is identical on every poll, so the canvas is never rebuilt and the painter keeps drawing
+  // it. data-wp-char/-cls/-level say whose lane it is (the painter tells the engine, so a lone Canvas piece with no HUD
+  // open still knows the class and level).
+  function rWeave(style) {
+    return function (part, v) {
+      return '<div class="pt pt-weave"><canvas data-wp-weave="' + style + '" data-wp-char="' + esc(v.char) + '" data-wp-cls="' + esc(v.cls)
+        + '" data-wp-level="' + esc(v.level) + '"></canvas></div>';
+    };
+  }
+
   var RENDER = { bar: rBar, thin: rThin, vbar: rVbar, ring: rRing, arc: rArc, readout: rReadout, big: rBig, badge: rBadge,
-    pips: rPips, rows: rRows, chips: rChips, inline: rInline, columns: rColumns, seg: rSeg };
+    pips: rPips, rows: rRows, chips: rChips, inline: rInline, columns: rColumns, seg: rSeg, highway: rWeave('highway'), lane: rWeave('lane') };
 
   // The one entry point: a piece, the mode it is drawn in, its view, and the piece's own
   // options ({ nolabel, thick, color, align }).
@@ -459,6 +473,7 @@
     + '.pt-chips{display:flex;flex-wrap:wrap;gap:3px;align-items:center;align-content:flex-start}'
     + '.pt-chip{padding:0 5px;border:1px solid;border-radius:9px;background:rgba(var(--wp-bg-rgb),0.7);white-space:nowrap}'
     + '.pt-none{opacity:0.55}'
+    + '.pt-weave{padding:0}.pt-weave canvas{display:block;width:100%;height:100%}'
     // Regen per tick (FB-90): the words, and the glow at the fill's edge for the last second before the tick.
     + '.pt-rg{color:' + C.green + ';font-weight:700;font-variant-numeric:tabular-nums}'
     + '.pt-track.rgp .pt-fill{animation:ptrg 1s ease-in-out}'
@@ -727,6 +742,12 @@
   P('tick.swing', 'timers', 'Swing timer', 'me', 'countdown',
     function (d, at) { var s = d.character && d.swing; return s && !s.idle && num(s.ms_left) != null && num(s.period_ms) ? { endAt: at + s.ms_left, period: s.period_ms, label: 'Swing', color: C.gold } : null; },
     function (now) { return { endAt: now + 1300, period: 2400, label: 'Swing', color: C.gold }; }, { short: 'Swing' });
+  // The Weave timer (the guild lead, 2026-11-07: "a canvas element can also exist as Weaving timer"). The numbers do not
+  // come from /api/me: Mimic's main process pushes them from the Zeal pipe (weave.js), so this piece reads 'me' only for
+  // WHO is playing — it exists while a character is logged in, and carries their class and level to the painter.
+  P('me.weave', 'me', 'Weaving timer', 'me', 'weave',
+    function (d) { return d.character ? { char: d.character, cls: d['class'] || '', level: num(d.level) != null ? d.level : '' } : null; },
+    { char: '', cls: '', level: '' }, { short: 'Weave', note: 'Needs Zeal running. Shows when to press the weave macro; it never presses anything.' });
   function timerRows(d, at, group) {
     var ts = (d && d.activeTimers) || [];
     return { items: ts.filter(function (t) { return !group || t.group === group; }).slice(0, 12).map(function (t) {

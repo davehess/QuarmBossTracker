@@ -30,6 +30,7 @@ const net   = require('net');
 const http  = require('http');
 const { spawn } = require('child_process');
 const { startZealWatch, chatLineOf } = require('./zealPipe');
+const { createWeaveHub } = require('./weave');
 const zealUpdater = require('./zealUpdater');
 const uiPacks = require('./uiPacks');
 const eqFileDates = require('./eqFileDates');
@@ -3038,6 +3039,7 @@ function startZealCapture() {
         try { _zealAbsorb(obj, pid); } catch (e) { void e; }
         try { _mapDirect.note(obj); } catch (e) { void e; }   // the Map's direct position path (a no-op unless it is up)
         try { _zealChatNote(obj); } catch (e) { void e; }     // the Chat overlay's channels (a no-op unless it is open)
+        try { _weaveHub.note(obj); } catch (e) { void e; }    // the Weave timer: your swings and bandolier loads, timed at arrival (a no-op unless a lane is listening)
       },
     });
     setInterval(_flushZealToAgent, 2000);
@@ -15735,6 +15737,36 @@ ipcMain.handle('clock-resync', async () => {
 });
 
 // Local status only — no network. Feeds the Settings "Zeal" card on open.
+// ── The Weave timer (apps/mimic/weave.js) ───────────────────────────────────────────────────────────────────────────
+// The engine runs HERE so a swing is timed the instant the pipe delivers it — not on the log's one-second stamps, not
+// after the agent's poll. It reads the pipe objects the onEvent handler above hands it, ignores everything but YOUR melee
+// lines (colours 265/267) and bandolier loads, and pushes its state to the windows that asked (me.html's lane, the Canvas
+// piece). What goes to the Chat overlay and the agent is untouched, and nothing here presses a key: it only displays timing.
+const _weaveSubs = new Set();   // webContents that called onWeaveState
+function _weaveSend(st) {
+  for (const wc of [..._weaveSubs]) {
+    try {
+      if (wc.isDestroyed()) { _weaveSubs.delete(wc); continue; }
+      // The Canvas draws panels in iframes (the preload runs in each), and webContents.send reaches only the top frame.
+      const frames = wc.mainFrame ? wc.mainFrame.framesInSubtree : [];
+      if (frames && frames.length) for (const f of frames) { try { f.send('weave-state', st); } catch { /* frame gone */ } }
+      else wc.send('weave-state', st);
+    } catch { /* mid-close */ }
+  }
+  _weaveHub.setEnabled(_weaveSubs.size > 0);
+}
+const _weaveHub = createWeaveHub({ send: _weaveSend });
+ipcMain.on('weave-subscribe', (e) => {
+  const wc = e.sender;
+  if (_weaveSubs.has(wc)) return;
+  _weaveSubs.add(wc);
+  wc.once('destroyed', () => { _weaveSubs.delete(wc); _weaveHub.setEnabled(_weaveSubs.size > 0); });
+  _weaveHub.setEnabled(true);
+  for (const st of _weaveHub.snapshots()) _weaveSend(st);   // a window that opens mid-fight starts from where it is
+});
+ipcMain.on('weave-config', (_e, c) => { try { if (c && typeof c.character === 'string') _weaveHub.setConfig(c.character, c); } catch { /* a bad config must never throw into main */ } });
+setInterval(() => { try { _weaveHub.tick(); } catch { /* never throw from a timer */ } }, 50);
+
 ipcMain.handle('zeal-status', () => {
   try {
     const cfg = loadConfig();

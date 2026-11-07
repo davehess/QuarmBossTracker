@@ -114,6 +114,7 @@ describe('a class with mana: mana is the right arc, endurance the thin arc under
 
 describe('a class with no mana: endurance takes the right arc, and the Endurance part owns it', () => {
   it('draws endurance on the right by default, never mana', () => {
+    R.hudParts.weave = 'off';   // a monk's default is the Weave timer lane in that arc's place (test/weave-engine.test.js)
     const h = R.renderHud(monk);
     expect(hasBlueArc(h)).toBe(false);
     expect(hasOrangeArc(h)).toBe(true);
