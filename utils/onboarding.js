@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.59': [
+    'Target info now knows the HP percent each mob enrages at, so the Mimic beta can warn you just before that mob\'s own enrage instead of at one fixed number.',
+  ],
   '4.0.58': [
     'Mimic can now tell when one debuff replaces another on a mob (Malosinia over Malo, Tashanian over Tashani, and the other look-alike debuffs), so Target info stops listing both. Needs the Mimic beta that pairs with it.',
   ],

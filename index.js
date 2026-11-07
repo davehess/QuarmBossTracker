@@ -18011,6 +18011,8 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
         rooted:   move.rooted,
         flees:    move.flees,
         flee_pct: move.flee_pct,
+        // HP% this body enrages at (ability 2 param0); null = the server default. The agent warns ahead of it.
+        enrage_pct: mobSpecials.enragePct(r),
         // #171 warning flags = UNION across the real same-name variants (the
         // L56 Maestro rampages, the L53 doesn't — the raider needs the merged
         // set). Placeholder rows are excluded whenever a real row exists, so

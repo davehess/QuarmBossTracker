@@ -271,6 +271,15 @@ function deriveMovement(row) {
   };
 }
 
+// The HP% a mob enrages at, off the PRIMARY row. EQEmu's Mob::StartEnrage reads param0 of ability 2 when it is
+// above 0 and otherwise uses the server rule default, so a bare `2,1` is null (server default), never a guess.
+function enragePct(row) {
+  const e = parseSpecials(row && row.special_abilities).get(2);
+  if (!e) return null;
+  const p = Number(e.params && e.params[0]);
+  return Number.isFinite(p) && p > 0 ? p : null;
+}
+
 // Deterministic "which body is the mob" ordering: highest level wins, then the
 // widest level band, then the biggest HP pool, then the lowest id so a tie can
 // never flip between requests (the whole point of replacing limit=1).
@@ -452,6 +461,7 @@ module.exports = {
   isPlaceholder,
   decodeSpecialLabels,
   deriveMovement,
+  enragePct,
   pickAndMergeMobRows,
   levelBodies,
   zoneIdOf,
