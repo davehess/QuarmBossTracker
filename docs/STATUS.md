@@ -112,7 +112,10 @@ next touch one rather than assuming a missing row means a missing doc.
   Mimic stays parked (beta numbers the build). **Open:** the monk's fist verb is a guess (three listed, configurable) and wants one
   real log line; colours 265 / 267 and the bandolier text are from the pipe docs and the agent's own parser, unverified live;
   a monk's default HUD now trades its endurance arc for the lane (label stays) — the guild lead to confirm. Docs: `HOW-ITS-BUILT.md`
-  "Weave timer". Tests `test/weave-engine.test.js`.
+  "Weave timer". Tests `test/weave-engine.test.js`. **Curved on the ring (2026-11-07,** *"please curve the line to match the arc
+  for the circle"***):** the ring's canvas covers the ring square and `weaveDraw.js` `drawArc` strokes the lane along the right arc
+  (R 172, 56°-124°, `data-wp-weave="arc"`); the Box keeps the straight column (its height spelled out: a canvas with top + bottom
+  and `height:auto` keeps its pixel height).
 - **🧾 Target info: an overwritten debuff drops off (agent 4.0.74 beta · bot 4.0.58 on main, 2026-11-06).** The guild lead saw Malo and Malosinia listed together; on the
   server Malosinia overwrites Malo and a Malo cast after it is blocked, and both print the same landing line. One generic rule,
   ported from EQMacEmu `zone/buffstacking.cpp` (`Mob::FindAffectSlot`, NPC target; lines ported are named in the comment above

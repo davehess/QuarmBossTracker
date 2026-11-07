@@ -1,6 +1,6 @@
-// weaveDraw.js — draws the Weave timer onto any <canvas data-wp-weave="lane|highway"> on the page, from the state
-// the main process pushes (apps/mimic/weave.js, window.mimic.onWeaveState). me.html's HUD ring and Box carry a
-// "lane"; the Timers canvas's "Weaving timer" piece is a "highway".
+// weaveDraw.js — draws the Weave timer onto any <canvas data-wp-weave="arc|lane|highway"> on the page, from the state
+// the main process pushes (apps/mimic/weave.js, window.mimic.onWeaveState). me.html's HUD ring carries an "arc" (the
+// lane curved along the ring), the Box a straight "lane"; the Timers canvas's "Weaving timer" piece is a "highway".
 //
 // The state carries the engine's numbers (last 2H swing, last fist round, the measured interval), not a picture, so
 // every frame here re-derives the windows at the current time with WpWeave.zones — the lane scrolls smoothly
@@ -110,6 +110,50 @@
     glyph(c, ctx, st, now, w / 2, h - gh / 2 - 1, gh);
   }
 
+  // ── The curved lane (HUD ring) ─────────────────────────────────────────────────────────────────────────────
+  // The guild lead, 2026-11-07: "please curve the line to match the arc for the circle". The canvas covers the ring's
+  // 400-unit square and the lane runs along the right arc (data-wp-arc = "radius startDeg endDeg", degrees clockwise
+  // from 12 o'clock, me.html's own geometry). The future is at the top of the arc; windows travel down it to the hit
+  // tick near the bottom end, and the last outcome sits just past that end.
+  function drawArc(c, f, st, live, now, cv) {
+    var ctx = f.ctx, s = Math.min(f.w, f.h) / 400, g = String(cv.getAttribute('data-wp-arc') || '172 56 124').split(/\s+/).map(Number);
+    var R = g[0] * s, a0 = g[1], a1 = g[2], band = 9 * s, cx = f.w / 2, cy = f.h / 2;
+    var rad = function (deg) { return (deg - 90) * Math.PI / 180; };
+    var hitA = a1 - 5;
+    var arc = function (from, to, color, alpha, width) {
+      if (!(to > from)) return;
+      ctx.globalAlpha = alpha; ctx.strokeStyle = color; ctx.lineWidth = width || band;
+      ctx.beginPath(); ctx.arc(cx, cy, R, rad(from), rad(to)); ctx.stroke();
+    };
+    var tick = function (deg, color, width, half) {
+      var a = rad(deg), r0 = R - half, r1 = R + half;
+      ctx.globalAlpha = 1; ctx.strokeStyle = color; ctx.lineWidth = width;
+      ctx.beginPath(); ctx.moveTo(cx + r0 * Math.cos(a), cy + r0 * Math.sin(a)); ctx.lineTo(cx + r1 * Math.cos(a), cy + r1 * Math.sin(a)); ctx.stroke();
+    };
+    var gx = function (deg) { return [cx + R * Math.cos(rad(deg)), cy + R * Math.sin(rad(deg))]; };
+    ctx.save();
+    ctx.lineCap = 'butt';
+    arc(a0, a1, c.dim, live ? 0.3 : 0.16);
+    var gp = gx(a1 + 7), gpx = Math.max(9, 14 * s);
+    if (!live) {
+      ctx.restore();
+      glyph(c, ctx, st, now, gp[0], gp[1], gpx);
+      return;
+    }
+    var z = WV.zones(st.core, now, 3);
+    if (!z) { ctx.restore(); return; }
+    var dpm = (hitA - a0) / (2 * st.core.interval2H);
+    var aOf = function (t) { return hitA - (t - now) * dpm; };
+    z.zones.forEach(function (zn) {
+      var from = Math.max(a0, aOf(zn.end)), to = Math.min(hitA, aOf(zn.start)), cur = zn.start <= now && now < zn.end;
+      arc(from, to, c[KIND_COLOR[zn.kind]], cur ? 0.95 : 0.42);
+    });
+    z.swings.forEach(function (sw) { var a = aOf(sw.at); if (a >= a0 && a <= hitA) tick(a, c.orange, 1.5, band / 2); });
+    tick(hitA, c.text, 1.5, band / 2 + 2 * s);
+    ctx.restore();
+    glyph(c, ctx, st, now, gp[0], gp[1], gpx);
+  }
+
   // ── The timing highway (the Canvas piece) ──────────────────────────────────────────────────────────────────
   // Boxes scroll right to left into the gold hit zone; under them the offhand (fist) cooldown; CLIPPED flashes
   // red; the fight tally at the right.
@@ -183,7 +227,8 @@
     if (!f) return false;
     subscribe(); announce(cv);
     var st = pick(cv), live = liveOf(st, now), c = theme();
-    (cv.getAttribute('data-wp-weave') === 'highway' ? drawHighway : drawLane)(c, f, st, live, now);
+    var kind = cv.getAttribute('data-wp-weave');
+    (kind === 'highway' ? drawHighway : kind === 'arc' ? drawArc : drawLane)(c, f, st, live, now, cv);
     return live;
   }
   function frame() {

@@ -123,11 +123,13 @@
   #builder select,#builder button,#builder input[type=text]{background:rgba(var(--wp-panel-rgb),.9);color:var(--text);border:1px solid var(--border);
     border-radius:4px;font:inherit;font-size:10px;padding:1px 6px;cursor:pointer}
   #builder input[type=text]{cursor:text;min-width:0}
-  /* The Weave timer lane (weaveDraw.js paints it). On the ring it sits where the mana arc is, placed in px by layoutWeave;
+  /* The Weave timer lane (weaveDraw.js paints it). On the ring it covers the ring's square and curves along the mana arc
+     (placed in px by layoutWeave);
      in the Box it is a slim column at the right edge, and the rows give it room. Never clickable. */
   #weavecv{display:none;position:absolute;pointer-events:none;z-index:6}
   body.wv-on #weavecv{display:block}
-  body:not(.hud).wv-on #weavecv{right:3px;top:26px;bottom:6px;width:16px;height:auto}
+  /* height spelled out: a canvas is a replaced element, so top + bottom with height:auto would keep its pixel height */
+  body:not(.hud).wv-on #weavecv{right:3px;top:26px;width:16px;height:calc(100% - 32px)}
   body:not(.hud).wv-on #body{padding-right:22px}
   body:not(.hud) .card{position:relative}
   body:not(.hud).wv-on .card{min-height:150px}   /* a short Box still gives the lane room to scroll */
@@ -2005,12 +2007,19 @@
     var cfg = JSON.stringify(weaveConfig(s));
     if (cfg !== _weaveCfgSent) { _weaveCfgSent = cfg; try { window.mimic.setWeaveConfig(JSON.parse(cfg)); } catch (e) {} }
     if (cv.getAttribute('data-wp-char') !== s.character) cv.setAttribute('data-wp-char', s.character);
+    // The ring curves the lane along its right arc (the guild lead, 2026-11-07: "please curve the line to match the arc
+    // for the circle"): the canvas covers the ring's square and weaveDraw.js paints the arc at the ring's own radius and
+    // angles (renderHud: R 172, 56° to 124°). The Box keeps the straight column.
+    var kind = isHud(style) ? 'arc' : 'lane';
+    // A switch between the two drops the ring's square placement, so the Box's CSS column applies again.
+    if (cv.getAttribute('data-wp-weave') !== kind) { cv.setAttribute('data-wp-weave', kind); cv.removeAttribute('style'); _weaveBox = ''; }
+    if (kind === 'arc' && cv.getAttribute('data-wp-arc') !== '172 56 124') cv.setAttribute('data-wp-arc', '172 56 124');
     if (!isHud(style)) { if (_weaveBox) { cv.removeAttribute('style'); _weaveBox = ''; } return; }   // the Box places it in CSS
     var sv = document.getElementById('hudsvg'), card = cv.parentNode;
     if (!sv) return;
     var r = sv.getBoundingClientRect(), c = card.getBoundingClientRect(), side = Math.min(r.width, r.height);
-    var box = [Math.round(r.left - c.left + (r.width - side) / 2 + side * 353 / 400), Math.round(r.top - c.top + (r.height - side) / 2 + side * 112 / 400),
-      Math.round(side * 14 / 400), Math.round(side * 176 / 400)];
+    var box = [Math.round(r.left - c.left + (r.width - side) / 2), Math.round(r.top - c.top + (r.height - side) / 2),
+      Math.round(side), Math.round(side)];
     var key = box.join(',');
     if (key === _weaveBox) return;
     _weaveBox = key;

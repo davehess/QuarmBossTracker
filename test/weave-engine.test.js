@@ -441,6 +441,34 @@ describe('wiring', () => {
     expect(meScript).toContain("['weave', 'Lane on the right (auto = Monk and Beastlord)', ['auto', 'on', 'off']]");
     expect(meHtml).toMatch(/<\/script>\s*<script src="weave.js"><\/script>\s*<script src="weaveDraw.js"><\/script>\s*<\/body>/);
   });
+  // The guild lead, 2026-11-07: "please curve the line to match the arc for the circle". The ring's canvas is an "arc":
+  // the real painter, on a stand-in canvas, strokes arcs at the ring's radius inside the right arc's 56°-124° span.
+  it('on the ring the lane is drawn along the right arc, at the ring\'s radius and angles', () => {
+    expect(meScript).toContain("var kind = isHud(style) ? 'arc' : 'lane';");
+    expect(meScript).toContain("cv.setAttribute('data-wp-arc', '172 56 124')");
+    const calls = [];
+    const ctx = new Proxy({ arc: (x, y, r, a, b) => calls.push({ x, y, r, a, b }) }, { get: (t, k) => (k in t ? t[k] : () => {}), set: () => true });
+    const attrs = { 'data-wp-weave': 'arc', 'data-wp-arc': '172 56 124', 'data-wp-char': 'Aldenmar' };
+    const cv = { clientWidth: 400, clientHeight: 400, width: 0, height: 0, getAttribute: (k) => attrs[k] || null, getContext: () => ctx };
+    let queued = null;
+    const win = { WpWeave: W, devicePixelRatio: 1, requestAnimationFrame: (fn) => { queued = fn; return 1; },
+      getComputedStyle: () => ({ getPropertyValue: () => '', fontFamily: 'monospace' }),
+      document: { querySelectorAll: () => [cv], documentElement: {}, body: {} } };
+    // eslint-disable-next-line no-new-func
+    new Function('window', readSource(path.join(MIMIC, 'weaveDraw.js')))(win);
+    const now = Date.now();
+    win.WpWeaveDraw._onState({ character: 'Aldenmar', active: true, source: 'zeal',
+      core: { last2H: now - 300, lastFist: null, interval2H: IV, haste: 1.7, fistInterval: 2600 / 1.7, marginMs: 150 } });
+    queued();
+    expect(calls.length).toBeGreaterThan(1);                          // the track and at least one window
+    const deg = (rad) => rad * 180 / Math.PI + 90;
+    for (const c of calls) {
+      expect(c.r).toBeCloseTo(172, 5);
+      expect([c.x, c.y]).toEqual([200, 200]);
+      expect(deg(c.a)).toBeGreaterThanOrEqual(56 - 1e-9);
+      expect(deg(c.b)).toBeLessThanOrEqual(124 + 1e-9);
+    }
+  });
   it('the painter asks for frames only while a fight is live, and the lane never takes clicks', () => {
     const draw = src('weaveDraw.js');
     expect(draw).toContain('if (any) raf = root.requestAnimationFrame(frame);');
