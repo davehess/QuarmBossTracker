@@ -1371,6 +1371,14 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   `<mob> has become ENRAGED.` / `<mob> is no longer enraged.` line; `evaluateTriggersAgainstLine` hands it to
   `_fireTriggerActions` (`_enrageMobCtx`), which stamps `enrage_mob` on the fire (so the same 🔇 buttons appear) and, when
   `_enrageMuted`, skips the text, voice and sound actions. Guild and personal triggers alike; a relayed fire is not covered.
+- **Ahead of each mob's own enrage % (agent 4.0.77 beta, 2026-11-07):** `ENRAGE_OTHER_PCT` and `ENRAGE_WARN_PCT` are gone.
+  `_enrageWarnPct` = the mob's enrage point + 3 (boss) or + 2 (other); the point is `_enrageAtPct`: the median of the last five
+  observed (`_enrageObserved`, `enrage_observed.json` beside the stats file, from `_enrageNoteStart`), else the mob-info
+  `enrage_pct` (bot 4.0.59, `mobSpecials.enragePct`), else 9. The HUD's `enrage_pct` and the Tank card's `threshold_pct` use it.
+- **ENRAGED off the Zeal pipe (agent 4.0.77 beta):** Mimic `main.js` `_zealFastLineNote` (via `zealPipe.js` `enrageLineOf`) posts
+  only the two server lines to `/api/zeal-fast-line`; the agent's `zealFastLineTake` evaluates them like a log line and
+  `_tailTriggerEval` skips the log copy's trigger evaluation (`_fastLines`, 6 s). Tests: `test/enrage-warn-threshold.test.js`,
+  `test/enrage-fast-line.test.js`.
 
 ### Dispel callouts — your debuff dispelled off a mob, your buffs dispelled (agent 4.0.11 beta, 2026-10-23)
 - **What:** "Your Malosini was dispelled off Rizlona — recast" to the caster of each stripped debuff, and one "Buffs dispelled:
@@ -3897,7 +3905,7 @@ drawn above the DS badge, builder part `procs`. The Box layout (`renderA`) draws
 under the target, `procs 3 · stuns 2 · DS 24` (`mineHtml`; `mineOf` and `dsMark` are shared with the ring). A
 monk's Dragon Punch is not a proc: its spell, Dragon Force, prints an anonymous hit beside the swing and the
 landing line "<mob> is stricken by the force of a dragon." takes it back out (`_meNoteDragonForce`, FB-60).
-HUD (`me.html`): enrage zone 12% since agent 3.7.84 (`ENRAGE_WARN_PCT`, spoken by `_tickEnrageWarn`
+HUD (`me.html`): enrage zone 12% since agent 3.7.84 (per mob since 4.0.77: `_enrageWarnPct`, spoken by `_tickEnrageWarn`
 on a 250 ms tick; "Enrage soon" is priority 2 in `triggers.html` `_speakPriority`, beside CH GO),
 cleared by `enrage_ended`; DS button thorns / lava (`_dsKindOf`, `ds.kind`); rampage +
 under-25% arcs (`_meSideArcs` → `rampage`, `low_hp`); clicky counters (`_meClickies`

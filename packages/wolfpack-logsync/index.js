@@ -16984,11 +16984,89 @@ const _meEnraged = new Map();   // mobLower → until
 // 12% since 2026-10-05 (the guild lead: '"Enrage Soon" goes off WAY too late. it should be hitting
 // at 12-10% of mob hp left'): the warning now lands as the target shows 12%, checked four times a
 // second, and the trigger window speaks it ahead of anything else in its queue.
-const ENRAGE_WARN_PCT = 12;
 // 2026-10-19 (the guild lead: "enrage soon callouts are too often, maybe just restrict them to bosses.
 // enrage needs to pop off at 9% on other mobs. should be muteable per mob/this session/permanently"):
-// a boss keeps "Enrage soon" at 12%; any other mob that can enrage gets one short "<mob> enraging" at 9%.
-const ENRAGE_OTHER_PCT = 9;
+// a boss keeps "Enrage soon"; any other mob that can enrage gets one short "<mob> enraging".
+// 2026-11-07 (the guild lead: "enrage calls have all been late lately"): the 9% for other mobs was the
+// server's own enrage point (EQEmu StartEnrageValue), so it spoke AFTER the ENRAGED line. The warning is
+// now AHEAD of each mob's OWN enrage %: 3 points early for a boss, 2 for any other mob. That % is, best
+// first: what this PC has seen the mob enrage at (median of its last 5, once two are known), the catalog's
+// own value (mob-info `enrage_pct`, ability 2 param0), then the server default.
+const ENRAGE_DEFAULT_PCT = 9;
+const ENRAGE_BOSS_LEAD = 3;
+const ENRAGE_OTHER_LEAD = 2;
+const ENRAGE_OBS_KEEP = 5;      // observations kept per mob
+const ENRAGE_OBS_MAX_MOBS = 400;
+const _enrageObserved = new Map();   // mobKey → [pct, …] (newest last)
+let _enrageObsLoaded = false;
+function _enrageObsPath() {
+  const f = (typeof STATS_FILE === 'string') ? STATS_FILE : '';
+  return f ? path.join(path.dirname(f), 'enrage_observed.json') : null;
+}
+function _enrageObsLoad() {
+  if (_enrageObsLoaded) return;
+  _enrageObsLoaded = true;
+  try {
+    const p = _enrageObsPath();
+    if (!p) return;
+    const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+    for (const [k, arr] of Object.entries((j && j.mobs) || {})) {
+      const a = (Array.isArray(arr) ? arr : []).map(Number).filter(n => n > 0 && n <= 50).slice(-ENRAGE_OBS_KEEP);
+      if (a.length && !_enrageObserved.has(k)) _enrageObserved.set(k, a);
+    }
+  } catch { void 0; }
+}
+function _enrageObsSave() {
+  try {
+    const p = _enrageObsPath();
+    if (!p) return;
+    const mobs = {};
+    for (const [k, a] of _enrageObserved) mobs[k] = a;
+    fs.writeFileSync(p + '.tmp', JSON.stringify({ version: 1, mobs }));
+    fs.renameSync(p + '.tmp', p);
+  } catch { void 0; }
+}
+// The median of what this PC has seen the mob enrage at, or null until it has seen two.
+function _enrageObservedPct(mobKey) {
+  _enrageObsLoad();
+  const a = _enrageObserved.get(mobKey);
+  if (!a || a.length < 2) return null;
+  const s = [...a].sort((x, y) => x - y);
+  const mid = s.length >> 1;
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+function _enrageCatalogPct(name, zoneId) {
+  const c = _mobInfoByName.get(_mobInfoCacheKey(name, zoneId)) || _mobInfoByName.get(_mobInfoCacheKey(name, null));
+  const p = Number(c && c.mob && c.mob.enrage_pct);
+  return p > 0 ? p : null;
+}
+// The HP % this mob enrages at, as far as we know.
+function _enrageAtPct(name, zoneId) {
+  return _enrageObservedPct(_enrageMobKey(name)) || _enrageCatalogPct(name, zoneId) || ENRAGE_DEFAULT_PCT;
+}
+// The HP % the warning is spoken at: ahead of the mob's own enrage point.
+function _enrageWarnPct(name, zoneId, boss) {
+  return _enrageAtPct(name, zoneId) + (boss ? ENRAGE_BOSS_LEAD : ENRAGE_OTHER_LEAD);
+}
+// An enrage START was heard for `mob` (from the pipe or the log): if it is the active character's own target and the
+// gauge is fresh, remember its HP % at that moment. Returns the % kept, else null. Local only; nothing is uploaded.
+function _enrageNoteStart(character, mob, nowMs) {
+  const st = _meZealFor(String(character || '').toLowerCase());
+  if (!st || !st.target_name || _enrageMobKey(st.target_name) !== _enrageMobKey(mob)) return null;
+  if (nowMs - (st.updatedAt || 0) > 3000) return null;
+  const tgtG = st.target_hp_pct == null ? _meGauge(st, 6) : null;
+  const hp = Number(st.target_hp_pct != null ? st.target_hp_pct : (tgtG ? tgtG.pct : NaN));
+  if (!(hp > 0 && hp <= 50)) return null;
+  _enrageObsLoad();
+  const k = _enrageMobKey(mob);
+  const a = _enrageObserved.get(k) || [];
+  a.push(Math.round(hp * 10) / 10);
+  _enrageObserved.delete(k);
+  _enrageObserved.set(k, a.slice(-ENRAGE_OBS_KEEP));
+  if (_enrageObserved.size > ENRAGE_OBS_MAX_MOBS) _enrageObserved.delete(_enrageObserved.keys().next().value);
+  _enrageObsSave();
+  return hp;
+}
 const _meEnrageEnded = new Map();   // mobLower → when its enrage ended
 const _enrageWarned = new Map();    // "mobLower#spawnid" → when "Enrage soon" was spoken
 // Mutes. This session (gone at restart): one mob by name, or every enrage callout. Always: a rule
@@ -17032,12 +17110,14 @@ function _tickEnrageWarn(nowMs) {
   const hp = Number(st.target_hp_pct != null ? st.target_hp_pct : (tgtG ? tgtG.pct : NaN));
   const name = String(st.target_name).replace(/^#/, '').replace(/_/g, ' ').trim();
   const key = name.toLowerCase() + '#' + (Number.isFinite(st.target_id) ? st.target_id : '');
-  if (hp > 20) { _enrageWarned.delete(key); return; }   // a fresh mob of the same name re-arms it
-  if (!(hp > 0 && hp <= ENRAGE_WARN_PCT) || _enrageWarned.has(key)) return;
   const zoneId = (st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
+  // The mob's own enrage point, and the earliest the warning can be (a boss's lead is the larger one).
+  const maxWarn = _enrageAtPct(name, zoneId) + ENRAGE_BOSS_LEAD;
+  if (hp > 20 && hp > maxWarn + 8) { _enrageWarned.delete(key); return; }   // a fresh mob of the same name re-arms it
+  if (!(hp > 0 && hp <= maxWarn) || _enrageWarned.has(key)) return;
   if (!_mobCanEnrage(st.target_name, zoneId)) return;
   const boss = _enrageIsBoss(st.target_name, zoneId);
-  if (!boss && hp > ENRAGE_OTHER_PCT) return;   // not a boss: wait for 9%
+  if (hp > _enrageWarnPct(name, zoneId, boss)) return;   // not yet: a boss at its enrage % + 3, any other mob at + 2
   const mobKey = _enrageMobKey(name);
   if (_enrageMuted(mobKey)) return;
   _enrageWarned.set(key, nowMs);
@@ -17381,7 +17461,7 @@ function _meTargetExtras(st, active, now) {
     enraged: !!(until && until > now),
     // Its enrage has come and gone: the HUD stops marking the enrage zone red.
     enrage_ended: !(until && until > now) && _meEnrageEnded.has(tl),
-    enrage_pct: ENRAGE_WARN_PCT,
+    enrage_pct: _enrageWarnPct(st.target_name, zoneId, _enrageIsBoss(st.target_name, zoneId)),
     level, level_max, level_src, class: klass,
     // The mob's own resists, for the line under its name (the guild lead,
     // round eight: "Put their resists below their name").
@@ -18287,7 +18367,7 @@ function _serializeTankState() {
   const enrage = {
     boss_name:        bossName,
     enrages:          _isEnrageBoss(bossName),
-    threshold_pct:    ENRAGE_WARN_PCT,   // 12% (the guild lead: 8%, then 10%, "WAY too late")
+    threshold_pct:    _enrageWarnPct(bossName, null, true),   // its own enrage % + 3 (12 by default; the guild lead: 8%, then 10%, "WAY too late")
     warn_pct:         15,                // warn the tank starting at 15%
     target_hp_pct:    targetHpPct,
     // Enraged now; or its enrage has already ended (the warning box stops flashing red).
@@ -38398,6 +38478,16 @@ function startWebDashboard(port) {
         catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid json' })); }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, kept: zealChatTake(payload) }));
+      }
+      // The server's ENRAGED / no-longer-enraged lines, straight off the Zeal pipe from Mimic (same machine; the router's local
+      // guard applies). Body: { character, text, at }. Fires the line now; see "The server's ENRAGED lines straight off the Zeal pipe".
+      if (req.url === '/api/zeal-fast-line' && req.method === 'POST') {
+        const body = await _readBody(req, 8 * 1024);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid json' })); }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(zealFastLineTake(payload)));
       }
       // Throttled live-state snapshot from Mimic (≈3-4/sec, not the raw event
       // stream). Drives gauge-condition triggers. Body:
@@ -62904,6 +62994,81 @@ function evaluateTriggersAgainstLine(line, tsMs, fileChar) {
   }
 }
 
+// ── The server's ENRAGED lines straight off the Zeal pipe (the guild lead, 2026-11-07: "enrage calls have all been late
+// lately"). Zeal prints the line (colour 306, USERCOLOR_NPC_ENRAGE) the instant the client does; the log FILE gets it a
+// poll later (up to a second, more when the disk is slow). Mimic forwards ONLY these two lines to POST /api/zeal-fast-line,
+// whether or not any overlay is open, and this runs the line through the same trigger evaluation the log tail uses, so
+// "Enrage (Begin)" speaks at once. The log tail's copy of the same line then arrives and must NOT fire again: it is skipped
+// for trigger evaluation (every other parser still reads it) when a pipe copy of the same text for the same character came
+// in within FAST_LINE_DUP_MS. The fire dedupe key cannot do this job: its captures carry the log timestamp, so the two
+// copies differ. One pipe copy cancels one log copy (two same-name mobs enraging together are two lines of each).
+const FAST_LINE_DUP_MS = 6000;
+const _FAST_LINE_RX = /^(.{1,120}?) (has become ENRAGED|is no longer enraged)\.$/;
+const _fastLines = new Map();   // "<character lower>|<text lower>" → [arrivedAt, …]
+function _fastLinePrune(now) {
+  for (const [k, arr] of _fastLines) {
+    while (arr.length && now - arr[0] > FAST_LINE_DUP_MS) arr.shift();
+    if (!arr.length) _fastLines.delete(k);
+  }
+}
+// True (and spends one pipe copy) when the log line is the second copy of a line the pipe already fired.
+function _fastLineDup(character, line, now) {
+  if (!_fastLines.size) return false;
+  const body = _chatLogBody(line);
+  if (!body) return false;
+  const k = String(character || '').toLowerCase() + '|' + body.toLowerCase();
+  const arr = _fastLines.get(k);
+  if (!arr) return false;
+  _fastLinePrune(now);
+  const a = _fastLines.get(k);
+  if (!a || !a.length) return false;
+  a.shift();
+  if (!a.length) _fastLines.delete(k);
+  return true;
+}
+// A start line heard for the active character's own target: learn the HP % it enraged at, and say so in the journal.
+function _enrageLearn(character, mob, nowMs) {
+  const pct = _enrageNoteStart(character, mob, nowMs);
+  if (pct == null) return null;
+  const seen = (_enrageObserved.get(_enrageMobKey(mob)) || []).length;
+  _journalTrigger({ trigger: 'Enrage (observed)', scope: 'enrage', checkpoint: TJ.DISPATCHED, label: 'observed',
+                    stopped: false, reason: String(mob).slice(0, 60) + ' enraged at ' + Math.round(pct * 10) / 10 + '% (seen ' + seen + ')' });
+  return pct;
+}
+// POST /api/zeal-fast-line  { character, text, at } → fires the line now. Returns { ok, fired }.
+function zealFastLineTake(payload, now) {
+  const t = now == null ? Date.now() : now;
+  const character = payload && typeof payload.character === 'string' ? payload.character.trim() : '';
+  const text = payload && typeof payload.text === 'string' ? payload.text.trim() : '';
+  if (!character || character.length > 40 || !text || text.length > 200) return { ok: false, fired: false };
+  const m = _FAST_LINE_RX.exec(text);
+  if (!m) return { ok: false, fired: false };
+  _fastLinePrune(t);
+  const k = character.toLowerCase() + '|' + text.toLowerCase();
+  const arr = _fastLines.get(k) || [];
+  arr.push(t);
+  _fastLines.set(k, arr);
+  if (_fastLines.size > 200) _fastLines.delete(_fastLines.keys().next().value);
+  const line = '[' + _eqStamp(new Date(t)) + '] ' + text;
+  try { evaluateTriggersAgainstLine(line, t, character); } catch (e) { void e; }
+  // The enrage state the tail would set (the HUD's red outline). The fight timeline's noteRaidLine stays with the log copy,
+  // which carries the log's own time, so the fight has one ENRAGED event, not two.
+  try { _meNoteRawLine(line, character); } catch (e) { void e; }
+  if (m[2] === 'has become ENRAGED') { try { _enrageLearn(character, m[1], t); } catch (e) { void e; } }
+  return { ok: true, fired: true };
+}
+// What the log tail does with a line's trigger evaluation: skip it when the pipe already fired this line, else evaluate it
+// and (for an enrage start the pipe did not send) learn the HP % from it, when the line is fresh.
+function _tailTriggerEval(line, tsMs, character) {
+  const now = Date.now();
+  if (_fastLineDup(character, line, now)) return;
+  evaluateTriggersAgainstLine(line, tsMs, character);
+  if (line.endsWith(' has become ENRAGED.') && Math.abs(now - tsMs) <= 15_000) {
+    const m = /^\[[^\]]*\]\s+(.+?) has become ENRAGED\.$/.exec(line);
+    if (m) { try { _enrageLearn(character, m[1], now); } catch (e) { void e; } }
+  }
+}
+
 // Fire a trigger's actions WITHOUT requiring a live-line match. Used by both:
 //   • evaluateTriggersAgainstLine (the live evaluator)
 //   • POST /api/triggers/fire (the dashboard's "Test" / "Preview" buttons)
@@ -66018,7 +66183,7 @@ async function main() {
         // precompiled regex set; usually < 50 entries, < 50µs each. NPC speech
         // is let through as well (npcSpeechLine), for scripted boss events.
         if (triggerVisibleLine(line, dropPatterns) || npcSpeechLine(line)) {
-          try { evaluateTriggersAgainstLine(line, ts ? ts.getTime() : Date.now(), b.character); } catch {}
+          try { _tailTriggerEval(line, ts ? ts.getTime() : Date.now(), b.character); } catch {}
         }
         // A DoT's repeating damage lands on the mob's own 6s tick — the charm
         // overlay's "mob tick" (_noteDotTickLine).
@@ -69310,6 +69475,8 @@ module.exports = {
   DAMAGE_ALERT_COOLDOWN_MS,
   _damageAlertEnabledForTest: () => _damageAlertEnabled,
   evaluateTriggersAgainstLine, SLOW_SPELLS, _isSlowSpell,
+  // Enrage warnings per mob + the pipe fast path (2026-11-07) — exported for test/enrage-warn-threshold.test.js and test/enrage-fast-line.test.js.
+  zealFastLineTake, _tailTriggerEval, _fastLines, _eqStampForTest: _eqStamp, _meTargetExtras, _enrageObserved, _enrageWarnPct, _enrageAtPct, _enrageNoteStart, _triggerJournal,
   // #136 raid callout allow-list — exported for the scratchpad fixture.
   _fireTriggerActions, _calloutAllowedToSpeak, _calloutScopeGated, _CALLOUT_ALLOW_CATEGORIES,
   _setCurrentBossForTest: (name) => { stats.currentEncounterThreat = name ? { bossName: name } : null; },

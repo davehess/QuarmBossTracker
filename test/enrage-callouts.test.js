@@ -75,11 +75,11 @@ describe('who is warned, and where', () => {
     expect(enrageFires()).toHaveLength(1);
     expect(enrageFires()[0].tts).toBe('Enrage soon');
   });
-  it('any other mob: nothing at 12% or 10%, one short "<mob> enraging" at 9%, once', () => {
+  it('any other mob: nothing at 12%, one short "<mob> enraging" at 11% (2 ahead of its 9% enrage), once', () => {
     catalog(GNOLL, { boss: false });
-    tick(GNOLL, 12); tick(GNOLL, 10);
+    tick(GNOLL, 12);
     expect(enrageFires()).toHaveLength(0);
-    tick(GNOLL, 9); tick(GNOLL, 7); tick(GNOLL, 3);
+    tick(GNOLL, 11); tick(GNOLL, 9); tick(GNOLL, 3);
     const f = enrageFires();
     expect(f).toHaveLength(1);
     expect(f[0].tts).toBe('a gnoll warlord enraging');
