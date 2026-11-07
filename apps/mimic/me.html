@@ -120,8 +120,17 @@
   #builder label{display:flex;align-items:center;gap:7px;padding:2px 0;cursor:pointer}
   #builder label .bl{flex:1;min-width:0}
   #builder .bsz{width:54px;flex:none;margin:0;accent-color:var(--wp-blue);cursor:ew-resize}
-  #builder select,#builder button{background:rgba(var(--wp-panel-rgb),.9);color:var(--text);border:1px solid var(--border);
+  #builder select,#builder button,#builder input[type=text]{background:rgba(var(--wp-panel-rgb),.9);color:var(--text);border:1px solid var(--border);
     border-radius:4px;font:inherit;font-size:10px;padding:1px 6px;cursor:pointer}
+  #builder input[type=text]{cursor:text;min-width:0}
+  /* The Weave timer lane (weaveDraw.js paints it). On the ring it sits where the mana arc is, placed in px by layoutWeave;
+     in the Box it is a slim column at the right edge, and the rows give it room. Never clickable. */
+  #weavecv{display:none;position:absolute;pointer-events:none;z-index:6}
+  body.wv-on #weavecv{display:block}
+  body:not(.hud).wv-on #weavecv{right:3px;top:26px;bottom:6px;width:16px;height:auto}
+  body:not(.hud).wv-on #body{padding-right:22px}
+  body:not(.hud) .card{position:relative}
+  body:not(.hud).wv-on .card{min-height:150px}   /* a short Box still gives the lane room to scroll */
   #builder .bfoot{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
   /* The clicky picker (FB-65): a tickable row per clicky — name and kind, charges, "Recharged". */
   #builder .cpk-note{font-size:10px;margin:2px 0 3px 4px}
@@ -274,6 +283,7 @@
       </div>
       <div id="body"></div>
       <svg id="hudlanes" viewBox="0 0 400 400" preserveAspectRatio="xMidYMid meet" aria-hidden="true"></svg>
+      <canvas id="weavecv" data-wp-weave="lane" aria-hidden="true"></canvas>
       <div id="empty" style="display:none">Log a character in with Zeal running and this fills in.</div>
     </div>
   </div>
@@ -921,10 +931,18 @@
   // below; the ⚙ in its corner switches each on or off, saved on this
   // computer. Every part has a fixed place on the ring, so switching one off
   // leaves a gap rather than moving the others under the player's eye.
+  var WEAVE_DELAYS = [20, 22, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 38, 40, 42, 45];
   var HUD_PARTS = [
     ['Target', [['target', 'Name, health, level, class'], ['tot', 'Its target (on top)'], ['tres', 'Its resists'], ['status', 'Slow · F/R · summon · enrage']]],
     ['You', [['hp', 'Health'], ['mana', 'Mana (right arc)'], ['end', 'Endurance (thin arc; right arc with no mana)'], ['regen', 'Regen per tick (+N, glows before the tick)'], ['dps', 'Damage per second (in · out)'], ['focus', 'Class number (CHs left…)']]],
     ['Timers', [['cooldowns', 'Cooldowns'], ['tick', 'Server tick'], ['swing', 'Swing timer'], ['cast', 'Cast bar (in the swing\'s place)']]],
+    // The Weave timer (the guild lead, 2026-11-07): a slim vertical lane on the right of the ring, where the mana
+    // arc is, timing a monk's bandolier weave. apps/mimic/weave.js runs it in Mimic's main process from the Zeal pipe.
+    ['Weave timer', [['weave', 'Lane on the right (auto = Monk and Beastlord)', ['auto', 'on', 'off']],
+      ['weaveDelay', 'Your 2H weapon delay', WEAVE_DELAYS], ['weaveMargin', 'Swap margin (ms)', [50, 100, 150, 200, 250, 300]],
+      ['weaveRace', 'Monk race (Iksar fists are slower)', ['human', 'iksar']], ['weaveEpic', 'Celestial Fists equipped'],
+      ['weaveTally', 'Fight tally (on the wide Canvas piece)'],
+      ['weave2hVerbs', '2H swing verbs', 'text'], ['weaveFistVerbs', 'Fist verbs', 'text']]],
     ['Hits', [['hitsIn', 'Hits on you (left)'], ['hitsOut', 'Your hits (right)'], ['ds', 'Damage shield'],
       ['procs', 'Procs and stuns/aggro on target'],
       ['rounds', 'Rounds listed', [3, 4, 5, 6, 8]], ['split', 'Newest rounds hit by hit', [1, 2, 3]],
@@ -941,7 +959,15 @@
   var HUD_WEIGHTS = { thin: 0.55, normal: 0.8, bold: 1 };
   var HUD_DEFAULTS = { target: 1, tot: 1, status: 1, hp: 1, mana: 1, end: 1, regen: 1, dps: 1, focus: 1, tick: 1, swing: 1, cast: 1, cooldowns: 1,
     hitsIn: 1, hitsOut: 1, ds: 1, procs: 1, rounds: 5, split: 2, hitsSide: 'inside', resists: 1, tres: 1, weight: 'thin',
-    track: 1, trackShow: 'all', ramp: 1, lowhp: 1, clickies: 1, clickyRows: 1, clickyPick: [], sizes: {} };
+    track: 1, trackShow: 'all', ramp: 1, lowhp: 1, clickies: 1, clickyRows: 1, clickyPick: [], sizes: {},
+    weave: 'auto', weaveDelay: 30, weaveMargin: 150, weaveRace: 'human', weaveEpic: 0, weaveTally: 1,
+    weave2hVerbs: 'crush, crushes', weaveFistVerbs: 'punch, punches, hit, hits, strike, strikes' };
+  // The Weave timer lane is on when picked, or by default for the two classes that hand-to-hand weave. It takes the right
+  // arc's place (the mana or endurance BAR; the label beside it stays).
+  function weaveOn(s){
+    var w = hudParts.weave;
+    return w === 'on' || (w !== 'off' && /^(monk|beastlord)$/i.test(String((s && s['class']) || '')));
+  }
   // Text size per part, from the small slider beside it in the builder (the
   // guild lead, round six: "small sliders next to each of the hud's elements for
   // font size"). 1 = as designed; kept to 0.7–1.6 so a label cannot swallow
@@ -1581,11 +1607,13 @@
     // The right arc belongs to Mana, or to Endurance for a class with none (d.right.part); each part
     // switches only its own drawing (FB-12). Endurance on a class WITH mana is the thin arc under health.
     if (p[d.right.part] && d.right.pct != null) {
-      h += gauge(R, 56, 124, d.right.pct / 100, d.right.color, 6 * W, true);
+      // With the Weave timer lane on, the lane (a canvas over the ring, layoutWeave) takes the arc's place; the label stays.
+      var lane = weaveOn(s);
+      if (!lane) h += gauge(R, 56, 124, d.right.pct / 100, d.right.color, 6 * W, true);
       // Fitted to the arc (68°): a bard's three counts with the damage out beside them is longer than
       // "MANA 45%" ever was, and a label the arc cuts off reads as a different number.
       var rl = rightLabel(d, p.dps, p.focus, rg);
-      if (rg && rg.mana && d.right.part === 'mana') h += regenEdge(R, 124 - 68 * Math.max(0, Math.min(1, d.right.pct / 100)), W, rg.pulse);
+      if (!lane && rg && rg.mana && d.right.part === 'mana') h += regenEdge(R, 124 - 68 * Math.max(0, Math.min(1, d.right.pct / 100)), W, rg.pulse);
       h += ringLabel('hrt', R + 10, 56, 124, rl, fitSize(11 * sz(d.right.part), plainLen(rl), 68, R + 10));
     }
     if (p.end && !d.noMana && d.end != null) h += gauge(R - 10, 240, 300, d.end / 100, 'var(--orange)', 2 * W);
@@ -1746,7 +1774,10 @@
     HUD_PARTS.forEach(function(g){
       h += '<div class="grp">' + esc(g[0]) + '</div>';
       g[1].forEach(function(it){
-        if (it[2]) {
+        if (it[2] === 'text') {
+          h += '<label><span class="bl">' + esc(it[1]) + '</span><input type="text" data-part="' + it[0] + '" value="' + esc(hudParts[it[0]]) + '" maxlength="80" spellcheck="false" style="width:120px">'
+            + '<button type="button" class="brs" data-reset="' + it[0] + '" title="Back to default">↺</button></label>';
+        } else if (it[2]) {
           h += '<label><span class="bl">' + esc(it[1]) + '</span><select data-part="' + it[0] + '">'
             + it[2].map(function(v){ return '<option value="' + v + '"' + (String(hudParts[it[0]]) === String(v) ? ' selected' : '') + '>' + v + '</option>'; }).join('')
             + '</select><button type="button" class="brs" data-reset="' + it[0] + '" title="Back to default">↺</button></label>';
@@ -1954,6 +1985,39 @@
     reshapeForHits(was, hudParts.hitsSide);
     renderBuilder(); saveParts();
   });
+  // ── the Weave timer lane ───────────────────────────────────────────────────
+  // The engine lives in Mimic's main process (weave.js, fed straight from the Zeal pipe); weaveDraw.js paints the lane
+  // from the states it pushes. This page only (1) tells main who this is and how they weave, and (2) puts the canvas
+  // where the ring's mana arc would be: x 353–367, y 112–288 of the 400-unit ring, in px from the ring's own box.
+  var _weaveCfgSent = '', _weaveBox = '';
+  function weaveConfig(s){
+    var p = hudParts;
+    return { character: s.character, cls: String(s['class'] || '').toLowerCase(), level: s.level, race: p.weaveRace, epic: !!p.weaveEpic,
+      twoHDelay: p.weaveDelay, marginMs: p.weaveMargin, showTally: !!p.weaveTally, twoVerbs: p.weave2hVerbs, fistVerbs: p.weaveFistVerbs };
+  }
+  function layoutWeave(s){
+    var cv = document.getElementById('weavecv');
+    if (!cv) return;
+    var on = !!(s && s.character) && weaveOn(s);
+    document.body.classList.toggle('wv-on', on);
+    if (!on) return;
+    if (window.WpWeaveDraw) WpWeaveDraw.start();   // idempotent; the scripts load after this one, before the first poll answers
+    var cfg = JSON.stringify(weaveConfig(s));
+    if (cfg !== _weaveCfgSent) { _weaveCfgSent = cfg; try { window.mimic.setWeaveConfig(JSON.parse(cfg)); } catch (e) {} }
+    if (cv.getAttribute('data-wp-char') !== s.character) cv.setAttribute('data-wp-char', s.character);
+    if (!isHud(style)) { if (_weaveBox) { cv.removeAttribute('style'); _weaveBox = ''; } return; }   // the Box places it in CSS
+    var sv = document.getElementById('hudsvg'), card = cv.parentNode;
+    if (!sv) return;
+    var r = sv.getBoundingClientRect(), c = card.getBoundingClientRect(), side = Math.min(r.width, r.height);
+    var box = [Math.round(r.left - c.left + (r.width - side) / 2 + side * 353 / 400), Math.round(r.top - c.top + (r.height - side) / 2 + side * 112 / 400),
+      Math.round(side * 14 / 400), Math.round(side * 176 / 400)];
+    var key = box.join(',');
+    if (key === _weaveBox) return;
+    _weaveBox = key;
+    cv.style.left = box[0] + 'px'; cv.style.top = box[1] + 'px'; cv.style.width = box[2] + 'px'; cv.style.height = box[3] + 'px';
+    cv.style.right = 'auto'; cv.style.bottom = 'auto';
+    if (window.WpWeaveDraw) WpWeaveDraw.redraw();
+  }
   function render(s){
     var html = '';
     if (s && s.character) useCharacterParts(s.character);
@@ -1974,6 +2038,7 @@
       // A HUD is sized to its window, not the other way round.
       if (!isHud(style)) _requestAutoHeight();
     }
+    layoutWeave(s);
     if (!builderEl.hidden) refreshClickyPicker();
   }
   function _requestAutoHeight(){
@@ -1998,4 +2063,6 @@
   // write when nothing visible moved.
   setInterval(function(){ if (isHud(style) && _last && _last.character) render(_last); }, 100);
 </script>
+<script src="weave.js"></script>
+<script src="weaveDraw.js"></script>
 </body></html>
