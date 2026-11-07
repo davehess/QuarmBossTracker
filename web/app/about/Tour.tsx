@@ -230,6 +230,23 @@ function StatsBand({ s }: { s: AboutStats }) {
   );
 }
 
+// A guildmate in guild chat, 2026-11-07 (the guild lead: "guildy testimonial", and yes to using it). Quoted without
+// the character name: this page is public. It is also the line the platform holds to: Mimic shows, you press.
+function Testimonial() {
+  return (
+    <section>
+      <Reveal>
+        <figure className="max-w-2xl mx-auto text-center">
+          <blockquote className="text-lg sm:text-2xl leading-snug text-green">
+            &ldquo;our guild has a tool that does pretty much everything, but play the game for you&rdquo;
+          </blockquote>
+          <figcaption className="mt-3 text-xs sm:text-sm text-dim">a guildmate, in guild chat</figcaption>
+        </figure>
+      </Reveal>
+    </section>
+  );
+}
+
 function Close() {
   return (
     <section>
@@ -315,6 +332,7 @@ export function AboutTour({ s }: { s: AboutStats }) {
       </ol>
 
       <StatsBand s={s} />
+      <Testimonial />
       <Close />
     </div>
   );
