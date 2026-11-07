@@ -29,7 +29,7 @@ const fs    = require('fs');
 const net   = require('net');
 const http  = require('http');
 const { spawn } = require('child_process');
-const { startZealWatch, chatLineOf } = require('./zealPipe');
+const { startZealWatch, chatLineOf, enrageLineOf } = require('./zealPipe');
 const { createWeaveHub } = require('./weave');
 const zealUpdater = require('./zealUpdater');
 const uiPacks = require('./uiPacks');
@@ -2028,6 +2028,23 @@ function _zealChatNote(obj) {
   else if (!_zealChatTimer) _zealChatTimer = setTimeout(_flushZealChat, 100);
 }
 
+// The server's ENRAGED / no-longer-enraged lines go to the agent the moment Zeal prints them (the guild lead, 2026-11-07: "enrage
+// calls have all been late lately"), not when the log file catches up. Only those two lines, and not behind the Chat overlay's
+// gate: they are the mob's own announcements, not chat. The agent runs them through its trigger evaluation and skips the log copy.
+function _zealFastLineNote(obj) {
+  if (!agentPort) return;
+  const l = enrageLineOf(obj);
+  if (!l) return;
+  const body = JSON.stringify(l);
+  const req = http.request({
+    host: '127.0.0.1', port: agentPort, path: '/api/zeal-fast-line', method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    timeout: 3000,
+  }, (res) => { res.resume(); });
+  req.on('error', () => {}); req.on('timeout', () => req.destroy());
+  req.write(body); req.end();
+}
+
 // Live Zeal state per character, parsed from the gauge(2)/player(3) stream.
 // Drives gauge-condition triggers. We keep the running state here in Mimic
 // (cheap — updated per event) and push a condensed snapshot to the agent at a
@@ -3039,6 +3056,7 @@ function startZealCapture() {
         try { _zealAbsorb(obj, pid); } catch (e) { void e; }
         try { _mapDirect.note(obj); } catch (e) { void e; }   // the Map's direct position path (a no-op unless it is up)
         try { _zealChatNote(obj); } catch (e) { void e; }     // the Chat overlay's channels (a no-op unless it is open)
+        try { _zealFastLineNote(obj); } catch (e) { void e; } // the server's two enrage lines, to the agent at once
         try { _weaveHub.note(obj); } catch (e) { void e; }    // the Weave timer: your swings and bandolier loads, timed at arrival (a no-op unless a lane is listening)
       },
     });

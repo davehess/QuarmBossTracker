@@ -474,7 +474,7 @@ describe('target read-outs', () => {
     h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: ['Enrage'] } });
     say(h, 'Aldenmar', 'a gnoll warlord has become ENRAGED.');
     let t = h._meTargetExtras(st(), 'Aldenmar', clock);
-    expect(t).toMatchObject({ enraged: true, enrage_ended: false, enrage_pct: 12 });
+    expect(t).toMatchObject({ enraged: true, enrage_ended: false, enrage_pct: 11 });   // a non-boss: its 9% enrage point + 2
     say(h, 'Aldenmar', 'a gnoll warlord is no longer enraged.');
     t = h._meTargetExtras(st(), 'Aldenmar', clock);
     expect(t).toMatchObject({ enraged: false, enrage_ended: true });   // the red goes
