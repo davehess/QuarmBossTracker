@@ -156,6 +156,12 @@ next touch one rather than assuming a missing row means a missing doc.
   bot-facing payloads (no upload carries deaths today; `bosskill` / encounter end could use `killer_name`, not changed), the
   EncounterBuilder's charm sessions (no `pet_died` end reason yet), `_ownPetRecs` (keeps the pet id after death by design) and the
   log-line paths (they stay as the fallback). Test: `test/zeal-death-events.test.js`.
+- **🧾 2026-11-08 — Mimic 3.0.8 stable (agent 4.0.77).** The guild lead: "let's push beta mimic to main". Graduated file by
+  file from beta: the weave timer, enrage warnings ahead of each mob's own enrage % plus ENRAGED off the Zeal pipe, the
+  debuff-overwrite rule, Zeal 1.5 death / item / target-look ingest, the pet on the Map, How I died, the charm-tracker fix
+  (FB-121), UI Studio Real look and raid groups (FB-120), the Social chip (FB-118), the Win7 build and its fixed download
+  link. The website previews still on beta (admin sidebar, raidmimic landing, guild-first About, /spectator variants, the
+  About quote) did not graduate. Roadmap entry `mimic-3-0-8-2026-11-08`, web 2.1.109.
 
 - **🧪 Fight files: a fight's per-second snapshots go to Storage as one file, not Postgres rows (bot 4.0.56; branch `fight-files`, not
   yet pushed, 2026-11-05; DECISIONS §538; the guild lead: "do A, keep everything").** `encounter_threat_snapshots` was 2.6 GB (53% of
