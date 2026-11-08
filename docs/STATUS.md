@@ -103,6 +103,12 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧾 2026-11-08 — Settings → Zeal: Stable, Zeal 1.5.0, Ours on 1.5 (Mimic beta).** The guild lead: "should be stable, then
+  1.5.0, then ours that are updated off of 1.5". `zealUpdater.js` gains source `zeal15` (CoastalRedwood's newest v1.5.x from
+  the release list, alpha included, since /releases/latest skips prereleases); the `test` source (the fork's test-all, rebased
+  on v1.5.0-alpha0) is labelled "Ours on 1.5". The Wolf Pack 1.4.x build is no longer offered; a Mimic already set to it keeps
+  it and Settings says so. Test: `test/zeal-source.test.js`.
+
 - **🧾 2026-11-08 — Web 2.1.110: all of beta's website promoted to main.** The guild lead: "you can push the pets website
   too", then "All of beta's website" when asked which. Every beta-only web file, its tests, `scripts/raidmimic-shots`, the
   guild-scope baseline and the raid_share_groups migration file (already applied in production). The ?v= previews still

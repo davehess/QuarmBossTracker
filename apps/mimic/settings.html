@@ -199,10 +199,11 @@
   <h2 id="zeal">Zeal</h2>
   <div class="sub">Keep the CoastalRedwood <b>Zeal</b> mod current without dragging files around. Mimic downloads the latest release and drops <code>Zeal.asi</code> + <code>uifiles/</code> into your EverQuest folder — backing up whatever's there first. Close EverQuest before installing (the game holds the file while it's running).</div>
 
-  <div class="row" style="margin-top:8px"><input type="radio" name="zealSource" value="official" id="zealSrcOfficial"><label for="zealSrcOfficial">Official Zeal — CoastalRedwood's latest release</label></div>
-  <div class="row"><input type="radio" name="zealSource" value="wolfpack" id="zealSrcWolfpack"><label for="zealSrcWolfpack">Wolf Pack — official Zeal plus the guild's tested fixes (beta)</label></div>
-  <div class="row"><input type="radio" name="zealSource" value="test" id="zealSrcTest"><label for="zealSrcTest">Test build — our Zeal fork: the current Zeal plus the tag changes we're testing (shapes, pictures, corpses, tags that survive zoning). May be unstable</label></div>
-  <div class="hint">Switching installs nothing by itself: Check then offers that build. To go back, pick Official and install.</div>
+  <div class="row" style="margin-top:8px"><input type="radio" name="zealSource" value="official" id="zealSrcOfficial"><label for="zealSrcOfficial">Stable — CoastalRedwood's latest release</label></div>
+  <div class="row"><input type="radio" name="zealSource" value="zeal15" id="zealSrcZeal15"><label for="zealSrcZeal15">Zeal 1.5.0 — CoastalRedwood's 1.5 test release (alpha while it lasts)</label></div>
+  <div class="row"><input type="radio" name="zealSource" value="test" id="zealSrcTest"><label for="zealSrcTest">Ours on 1.5 — Zeal 1.5 plus the changes we're testing (tags that survive zoning, corpses, tag shapes, /spellid, the pet's position). May be unstable</label></div>
+  <div class="hint" id="zealSrcLegacy" style="display:none">You are on the older Wolf Pack build (Zeal 1.4 plus our fixes). Pick one of the three above to move to it.</div>
+  <div class="hint">Switching installs nothing by itself: Check then offers that build. To go back, pick Stable and install.</div>
 
   <div id="zealPanel" style="margin-top:10px">
     <div class="hint" id="zealStatusLine">Checking your Zeal install…</div>
@@ -1597,8 +1598,13 @@
     if (!line) return;
     try {
       var s = await window.mimic.zealStatus();
-      var srcRadio = document.getElementById(s && s.source === 'test' ? 'zealSrcTest' : s && s.source === 'wolfpack' ? 'zealSrcWolfpack' : 'zealSrcOfficial');
+      // Stable, Zeal 1.5.0, Ours on 1.5. The Wolf Pack build is no longer offered: a Mimic still set to it keeps it,
+      // shows no choice ticked, and says so (the guild lead, 2026-11-08).
+      var srcId = { test: 'zealSrcTest', zeal15: 'zealSrcZeal15', official: 'zealSrcOfficial' }[s && s.source];
+      var srcRadio = srcId ? document.getElementById(srcId) : null;
       if (srcRadio) srcRadio.checked = true;
+      var legacy = document.getElementById('zealSrcLegacy');
+      if (legacy) legacy.style.display = s && s.source === 'wolfpack' ? '' : 'none';
       if (!s || !s.eqDir) {
         line.innerHTML = 'No EverQuest folder set yet — add one above and Mimic can manage Zeal for you.';
         return;
@@ -1643,7 +1649,8 @@
         var r = await window.mimic.zealCheckUpdate();
         if (!r || !r.ok) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((r && r.error) || 'check failed'); return; }
         _zealLatestTag = r.latestTag;
-        var what = r.source === 'test' ? 'test build' : r.source === 'wolfpack' ? 'Wolf Pack build' : 'Zeal';
+        var what = r.source === 'test' ? 'build of ours on 1.5' : r.source === 'wolfpack' ? 'Wolf Pack build'
+          : r.source === 'zeal15' ? 'Zeal 1.5' : 'Zeal';
         if (r.updateAvailable) {
           msg.style.color = '#7ee787';
           msg.textContent = 'Latest ' + what + ' is ' + (r.latestTag || '?') + (r.installedTag ? ' (you have ' + r.installedTag + ')' : '') + '.';
