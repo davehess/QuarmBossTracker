@@ -37,6 +37,28 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-3-0-8-2026-11-08',
+    title: 'Mimic 3.0.8',
+    version: 'Mimic 3.0.8 · Agent 4.0.77 · Web 2.1.109',
+    date: '2026-11-08',
+    headline: 'A weave timer for monks, enrage warnings that land before the enrage, and Zeal 1.5 read in full.',
+    features: [
+      { name: 'Weave timer', blurb: 'For monks: a slim lane on the HUD ring (and the Box HUD) shows when to press your weave macro, with a check or a cross for each press. A bigger Weaving timer piece for the Timers canvas. It only shows timing; you still press.' },
+      { name: 'Enrage warnings on time', blurb: '"Enrage soon" and "<mob> enraging" now speak a few points before the mob\u2019s own enrage point, and "has become ENRAGED" fires the instant the game prints it.' },
+      { name: 'Target info', blurb: 'An overwritten debuff drops off (Malosinia over Malo and the rest); run speed and ROOTED; spell names open PQDI; Social ×N shows who can come to a mob\u2019s aid.' },
+      { name: 'Map', blurb: 'Your pet has its own marker, the planned route through the elemental planes is drawn, and Sol Ro\u2019s death-touch warders show with their aggro rings.' },
+      { name: 'How I died', blurb: 'After a death, My replay shows the last 30 seconds: who hit you, how hard, and where you stood.' },
+      { name: 'Zeal 1.5', blurb: 'Every death in the zone reaches the map, the kill log and the charm tracker; item windows and the target\u2019s look are read too.' },
+      { name: 'Monk HUD and UI Studio', blurb: 'A Purify Body timer that counts Hastened Purification. UI Studio can draw windows from your skin\u2019s own files and shows raid bars as a full raid.' },
+      { name: 'Windows 7 build', blurb: 'A separate Mimic for Windows 7, with one download link that always works.' },
+    ],
+    fixes: [
+      'A charmed mob with a proper name no longer "breaks" on the Charm tracker a few seconds after landing.',
+      'The Coirnav timer keeps running if you die and respawn outside the zone.',
+      'Ideas sent from the Feedback window can attach a slice of your log too.',
+    ],
+  },
+  {
     key: 'web-2-1-108-2026-11-04',
     title: 'Web 2.1.107–2.1.108',
     version: 'Web 2.1.108',
