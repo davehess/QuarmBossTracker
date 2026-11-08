@@ -37,6 +37,23 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-110-2026-11-08',
+    title: 'Web 2.1.110',
+    version: 'Web 2.1.110',
+    date: '2026-11-08',
+    headline: 'Everything that was waiting on beta goes live: raid sessions you can split and share, the PoP guide gate tables, and your data on your terms.',
+    features: [
+      { name: 'Raid session sharing', blurb: 'Pick one or several of the raids recorded in a night and share a link limited to just those. Each flag NPC shows who hailed it.' },
+      { name: 'PoP guide', blurb: 'The family table opens first; a name opens that character’s piece-by-piece list; every missing piece of a gate is shown, and the paste box reads #popflags too.' },
+      { name: 'Gear page', blurb: 'An inventory window in four familiar skins with a saved default, and automatic gear sets with try-on (owner only).' },
+      { name: 'Your data', blurb: 'Download my data and Delete my account, both self-serve, with the privacy, terms and refunds pages they point to.' },
+      { name: 'Officer tools', blurb: 'See who left the Discord but still has access and lock them out in one click; the review queue lists guild members only.' },
+      { name: 'Raid Mimic site', blurb: 'The raidmimic.com home page, the Register your guild form, and the setup steps one at a time.' },
+      { name: 'About', blurb: 'A guildmate’s line from guild chat.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'mimic-3-0-8-2026-11-08',
     title: 'Mimic 3.0.8',
     version: 'Mimic 3.0.8 · Agent 4.0.77 · Web 2.1.109',
