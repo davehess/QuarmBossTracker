@@ -285,6 +285,13 @@ trim; fight files in mode 1, so every snapshot row was still written). Postgres'
 | 11:00–12:45 (incl. the midnight jobs) | 0.62 | 65 | ~3% · ~6.5% |
 | **Raid window 7:57–11:00** | **0.38** | **21** | **~2% · ~2%** |
 
+**Settled 2026-11-08 by the dashboard** (the guild lead's screenshots of Database → Reports for Thu 11-05 12:05 pm → Fri 11-06
+1:05 pm, and the 7 days to 11-08): disk IO peaked around 5 IOPS against Small's 3,000 and ~182 KB/s against 125 MB/s, so the
+read trim did remove that load and disk is no longer the constraint. **CPU is**: user CPU rose to ~75% through the raid window,
+and memory commitment is flagged WARNING (that day) and SEVERE (7 days). A daily full read of `encounter_threat_snapshots`
+(4 COPYs of ~332 s since 11-05, 18.7% of database time) is the largest single cost found. Details and the custom report's setup:
+`docs/supabase-custom-report.md`.
+
 ⚠ These are Postgres's view, not the dashboard's Disk IO budget: reads may be OS-cache hits (an upper bound), and checkpoint
 fsyncs, temp files and the OS are not in them. They are also far too low to explain Micro running dry on 2026-11-04 (its baseline is
 11 MB/s), so either the read trim (bot 4.0.55) removed most of that night's load or most metered I/O is invisible here. The guild
