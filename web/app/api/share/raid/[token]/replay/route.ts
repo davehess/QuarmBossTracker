@@ -21,6 +21,8 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { replaySlice, shareTag, SHARE_CACHE_S, windowIso } from '@/lib/raidShare';
 import { loadAnon, resolveShare } from '@/lib/raidShareLookup';
 import { scrubMinuteData } from '@/lib/raidSession';
+import { loadGroupIndex } from '@/lib/raidSessionLoad';
+import { narrowRows, shareGroupKey } from '@/lib/sessionGroups';
 import { ceilingApi, guardApi } from '@/lib/shareGuard';
 
 export const dynamic = 'force-dynamic';
@@ -44,6 +46,10 @@ export async function GET(req: Request, { params }: { params: { token: string } 
     const { from, to } = windowIso(slice);
     const guild = share.row.guild_id;
     const win = share.win;   // the winners are the whole session's, not the slice's
+    // A link limited to chosen raids (raid_shares.group_ids) shows only their raiders: the raids are counted in the SHARE's
+    // window and the slice is cut on the recorded names BEFORE the opt-out scrub renames anyone. Ids the window no longer
+    // holds narrow to nothing, never to everyone (lib/sessionGroups.ts narrowRows).
+    const groups = shareGroupKey(share.row);
     const rows = await unstable_cache(async () => {
       const db = supabaseAdmin();
       const { data, error } = await db.from('raid_track_minutes')
@@ -54,10 +60,12 @@ export async function GET(req: Request, { params }: { params: { token: string } 
         .limit(15);   // a literal: REPLAY_WINDOW_MS / MINUTE_MS, one row per minute of the slice
       if (error) throw error;   // a throw is never cached
       const anon = await loadAnon(db, guild, win);
-      return (data ?? []).map((r: { minute_at: string; zones: string[] | null; data: string }) => ({
+      let got = (data ?? []) as { minute_at: string; zones: string[] | null; data: string }[];
+      if (groups !== null) got = narrowRows(got, await loadGroupIndex(db, win, anon), groups);
+      return got.map(r => ({
         minute_at: r.minute_at, zones: r.zones, data: scrubMinuteData(r.data, anon),
       }));
-    }, ['raid-share', share.row.id, 'replay', String(slice.fromMs), String(slice.toMs), String(win.fromMs), String(win.toMs)], { revalidate: SHARE_CACHE_S, tags: [shareTag(share.row.id)] })();
+    }, ['raid-share', share.row.id, 'replay', String(slice.fromMs), String(slice.toMs), String(win.fromMs), String(win.toMs), groups ?? ''], { revalidate: SHARE_CACHE_S, tags: [shareTag(share.row.id)] })();
     return NextResponse.json({ rows }, { headers: HEADERS });
   } catch {
     return NextResponse.json({ error: 'replay unavailable' }, { status: 500, headers: { 'Cache-Control': 'no-store' } });

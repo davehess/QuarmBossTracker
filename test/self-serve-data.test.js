@@ -845,8 +845,9 @@ describe('the migration: one transaction for the person\'s own data, slices for 
 });
 
 describe('where the section lives', () => {
-  it('is on /me, anchored #your-data, and on /guilds only for raidmimic hosts with a link on the rest', () => {
+  it('is on /me (classic and hub), anchored #your-data, and on /guilds only for raidmimic hosts with a link on the rest', () => {
     expect(js('web/app/me/page.tsx')).toContain('<YourData exportHref="/me/data/export" />');
+    expect(js('web/app/me/MeHub.tsx')).toContain('<YourData exportHref="/me/data/export" />');
     expect(js('web/app/me/data/YourData.tsx')).toContain('id="your-data"');
     const g = js('web/app/guilds/page.tsx');
     expect(g).toContain('{onHost && <div className="mt-6"><YourData exportHref="/guilds/data/export" /></div>}');

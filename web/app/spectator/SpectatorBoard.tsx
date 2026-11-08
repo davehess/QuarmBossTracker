@@ -20,6 +20,8 @@ import {
 import { useScreenLive, type ScreenLive } from '@/lib/useScreenLive';
 import { overlayForZone, type PlanOverlay } from '@/lib/screenPlan';
 import type { Pt } from '@/lib/raidPlan';
+import type { MobDot, MobLayer } from '@/lib/mobTrack';
+import { drawMobs, mobPx, mobReach } from './drawMobs';
 
 const BG = '#0d1117';
 const PANEL = '#161b22';
@@ -211,10 +213,13 @@ const chipOff ='disabled:opacity-40 disabled:hover:bg-panel';
 // `plan`: tonight's raid plan (route, bosses, zone-ins, NPCs, patrol), only /screen passes it. When the zone on
 // screen is one the plan covers, it is drawn under the dots, with a chip to hide it. Left out (/spectator), the
 // board is exactly as it was.
-export default function SpectatorBoard({ embedded = false, shared, plan }: {
+// `mobs`: the mobs layer of /spectator?v=b and ?v=c (lib/mobTrack.ts): dots drawn under the raiders, a tap on one reported
+// through `onPick`, and `focus` to centre the map on a spot. Left out, the board is exactly as it was.
+export default function SpectatorBoard({ embedded = false, shared, plan, mobs }: {
   embedded?: boolean;
   shared?: Pick<ScreenLive, 'feed' | 'netErr' | 'signedOut'>;
   plan?: PlanOverlay[];
+  mobs?: MobLayer;
 } = {}) {
   const own = useScreenLive({ enabled: shared === undefined });
   const { feed, netErr, signedOut } = shared ?? own;
@@ -241,6 +246,7 @@ export default function SpectatorBoard({ embedded = false, shared, plan }: {
     refZ: null as number | null,   // the raid's median z
     filter: false,                 // more than one floor, so lines off the raid's floor are dimmed
     plan: null as PlanOverlay | null,   // the plan to draw under the dots, or none
+    mobs: [] as MobDot[], mobSel: null as string | null,   // the mobs layer (this zone only), or none
   });
 
   const setFollow = useCallback((on: boolean) => { followRef.current = on; setFollowingState(on); }, []);
@@ -255,6 +261,10 @@ export default function SpectatorBoard({ embedded = false, shared, plan }: {
     () => (feed && zone ? feed.data.raiders.filter(r => r.zone === zone) : []),
     [feed, zone],
   );
+  const mobDots = useMemo(() => (mobs && zone ? mobs.dots.filter(d => d.zone === zone) : []), [mobs, zone]);
+  const mobSel = mobs?.selected ?? null;
+  const onPickMob = mobs?.onPick;
+  const mobFocus = mobs?.focus ?? null;
   const otherZones = feed ? feed.data.raiders.length - raiders.length : 0;
   // Raiders the framing leaves out (a straggler, a corpse run): said on the page so a dot off the edge is not a mystery.
   const awayCount = raiders.length - coreRaiders(raiders).length;
@@ -374,6 +384,9 @@ export default function SpectatorBoard({ embedded = false, shared, plan }: {
 
     // Tonight's plan: over the walls, under the dots.
     if (s.plan) drawPlan(ctx, s.plan, v, ox, oy, w, h);
+
+    // Mobs (the ?v=b / ?v=c layer): over the walls and the plan, under the raiders.
+    if (s.mobs.length) drawMobs(ctx, s.mobs, s.mobSel, v, ox, oy, w, h);
 
     // Dots: stale ones first so a live dot is never hidden under a faded one; the selected one last.
     const elapsed = (Date.now() - s.rxAt) / 1000;
@@ -517,10 +530,22 @@ export default function SpectatorBoard({ embedded = false, shared, plan }: {
     live.current = {
       raiders, map: ready, hidden, focusBand, selected, rxAt: feed?.rxAt ?? 0,
       layers: { brewall: layerBrewall, generated: layerGenerated },
-      refZ, filter: bands.length > 1 && refZ != null, plan: planDrawn,
+      refZ, filter: bands.length > 1 && refZ != null, plan: planDrawn, mobs: mobDots, mobSel,
     };
     sync();
-  }, [raiders, ready, hidden, focusBand, selected, feed, sync, layerBrewall, layerGenerated, refZ, bands.length, planDrawn]);
+  }, [raiders, ready, hidden, focusBand, selected, feed, sync, layerBrewall, layerGenerated, refZ, bands.length, planDrawn, mobDots, mobSel]);
+
+  // A request to look at one spot (a lane picked in the timeline): centre there, close enough to read the neighbourhood.
+  useEffect(() => {
+    const { w, h } = sizeRef.current;
+    if (!mobFocus || !w) return;
+    const p = toScreen(mobFocus.x, mobFocus.y);
+    const v = viewRef.current;
+    viewRef.current = { cx: p.sx, cy: p.sy, scale: Math.max(v?.scale ?? 0, Math.min(w, h) / 500) };
+    setFollow(false);
+    schedule();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mobFocus?.k]);
 
   // Canvas size: backing store at device pixels, drawn in CSS pixels.
   useEffect(() => {
@@ -654,7 +679,24 @@ export default function SpectatorBoard({ embedded = false, shared, plan }: {
     const wasTap = ptrs.current.size === 1 && gesture.current.moved <= 4;
     const p = local(e);
     ptrs.current.delete(e.pointerId);
-    if (wasTap) setSelected(hit(p.x, p.y, e.pointerType === 'mouse' ? 14 : 22));
+    if (wasTap && onPickMob && viewRef.current) {
+      const { w, h } = sizeRef.current;
+      const v = viewRef.current;
+      const ox = w / 2 - v.cx * v.scale, oy = h / 2 - v.cy * v.scale;
+      let best: MobDot | null = null;
+      let bd = Infinity;
+      for (const d of live.current.mobs) {
+        const q = mobPx(d, v, ox, oy);
+        const dist = Math.hypot(q.px - p.x, q.py - p.y);
+        if (dist <= mobReach(d) + (e.pointerType === 'mouse' ? 0 : 8) && dist < bd) { bd = dist; best = d; }
+      }
+      if (best) { onPickMob(best); return; }
+    }
+    if (wasTap) {
+      const name = hit(p.x, p.y, e.pointerType === 'mouse' ? 14 : 22);
+      setSelected(name);
+      if (!name) onPickMob?.(null);   // a tap on empty map lets go of the picked mob
+    }
   };
   const onPointerLeave = () => { if (hoverRef.current) { hoverRef.current = null; schedule(); } };
 

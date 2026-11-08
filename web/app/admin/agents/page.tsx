@@ -18,6 +18,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
 import { selectAll } from '@/lib/selectAll';
 import { GUILD_TAG } from '@/lib/guild';
+import { shellOn } from '../shellOn';
 
 export const metadata = {
   title: 'Agent uploaders · Admin',
@@ -542,12 +543,23 @@ function fmtTs(iso: string | null): string {
   });
 }
 
-export default async function AdminAgentsPage() {
+export default async function AdminAgentsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ character?: string; member?: string }>;
+}) {
   await requireOfficer();
-  const [{ stats, backfills, roster, members }, mimicReleases] = await Promise.all([
+  const { character: onlyCharacter, member: onlyMember } = await searchParams;
+  const [{ stats: allStats, backfills, roster, members }, mimicReleases] = await Promise.all([
     loadData(),
     loadMimicReleases(),
   ]);
+  // Smart links from the other officer pages (DECISIONS §493): `?character=` narrows the board to that character's
+  // rows, `?member=` (a Discord id) to what that player's installs uploaded. Neither set → every row, as before.
+  const stats = allStats.filter(r =>
+    (!onlyCharacter || (r.character ?? '').toLowerCase() === onlyCharacter.toLowerCase())
+    && (!onlyMember || r.uploaded_by_discord_id === onlyMember));
+  const narrowed = !!(onlyCharacter || onlyMember);
   // discord_id → display name, for naming a cross-account uploader.
   const memberName = new Map<string, string>(
     members.map(m => [m.discord_id, (m.nickname || m.global_name || m.discord_id)] as const),
@@ -639,6 +651,15 @@ export default async function AdminAgentsPage() {
       <div className="text-sm">
         <Link href="/admin" className="text-blue hover:underline">← back to admin</Link>
       </div>
+
+      {narrowed && (
+        <p role="status" className="text-xs text-dim border border-blue/40 bg-blue/5 rounded px-3 py-2">
+          Showing {stats.length} upload row{stats.length === 1 ? '' : 's'} for{' '}
+          <b className="text-text">{onlyCharacter ? onlyCharacter : 'one player’s installs'}</b>.
+          Families quiet for over a week stay hidden below.{' '}
+          <Link href="/admin/agents" className="text-blue hover:underline">Show everyone</Link>
+        </p>
+      )}
 
       <section className="bg-panel border border-border rounded-lg p-6">
         <h2 className="text-xl text-gold mb-1">🛰️ Agent fleet</h2>
@@ -1007,6 +1028,8 @@ function FamilyRow({ fam, stale = false }: { fam: Family; stale?: boolean }) {
   // A family that's just one character IS its own main — no point expanding to
   // a single identical row, but we still render the dropdown for consistency.
   const multi = fam.members.length > 1;
+  // The smart links to the lockouts and members pages (DECISIONS §493) show in the sidebar preview only.
+  const smart = shellOn();
   return (
     <details className="group border-b border-border/40 [&_summary::-webkit-details-marker]:hidden">
       <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-[#1a212c] select-none">
@@ -1096,6 +1119,13 @@ function FamilyRow({ fam, stale = false }: { fam: Family; stale?: boolean }) {
                       <Link href={`/character/${encodeURIComponent(s.character)}`} className="text-blue hover:underline">{s.character}</Link>
                     ) : (
                       <span className="text-dim">{s.character}</span>
+                    )}
+                    {smart && isRealCharacter(s.character) && (
+                      <span className="ml-1.5 text-[10px] text-dim align-middle">
+                        <Link href={`/admin/lockouts?character=${encodeURIComponent(s.character)}`} className="hover:text-blue">locks</Link>
+                        {' · '}
+                        <Link href={`/admin/members?character=${encodeURIComponent(s.character)}`} className="hover:text-blue">member</Link>
+                      </span>
                     )}
                     {multi && isMain && <span className="ml-1.5 text-[9px] uppercase tracking-widest text-gold border border-gold/40 rounded px-1 py-0.5 align-middle">main</span>}
                     {s.unrostered && (

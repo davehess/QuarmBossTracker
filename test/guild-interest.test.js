@@ -21,7 +21,8 @@ import { ROOT, stripJs, stripSql } from './_source-slice.js';
 import * as G from '../web/lib/guildInterest.ts';
 import { raidmimicLandingTarget, RAIDMIMIC_REGISTER_PATH, raidmimicSeo } from '../web/lib/raidmimicHost.ts';
 import { interestUrl, EQMIMIC_FEEDBACK_PATH } from '../web/lib/raidmimicLanding.ts';
-import { metaForPath } from '../web/lib/pageMeta.ts';
+import { metaForPath, ADMIN_TITLES } from '../web/lib/pageMeta.ts';
+import { NAV_GROUPS, groupLinks } from '../web/lib/adminNav.ts';
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const code = (rel) => stripJs(read(rel));
@@ -285,8 +286,10 @@ describe('officers’ view', () => {
     expect(page).not.toMatch(/dangerouslySetInnerHTML|<a\b|href=\{r\.|<Link href=\{r\./);
     expect(page).not.toMatch(/\.update\(|\.insert\(|\.delete\(|'use server'/);   // read-only: nothing acts on a row
   });
-  it('is a card on the admin landing, and unfurls with its own name', () => {
-    expect(code('web/app/admin/page.tsx')).toMatch(/title="🐺 Guild interest"[\s\S]{0,300}href="\/admin\/interest"/);
+  it('is in the admin sidebar with a title and a blurb, and unfurls with its own name', () => {
+    expect(groupLinks(NAV_GROUPS.find(g => g.id === 'between')).map(l => l.href)).toContain('/admin/interest');
+    expect(ADMIN_TITLES['/admin/interest']).toBe('[beta] Guild interest');
     expect(metaForPath('/admin/interest').title).toBe('[beta] Guild interest · Admin');
+    expect(code('web/app/admin/adminBlurbs.ts')).toContain("'/admin/interest':");
   });
 });

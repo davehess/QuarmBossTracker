@@ -13,8 +13,9 @@ import {
   type NightCtx, type Segment, type Slice,
 } from '@/lib/nightSlices';
 import { MINUTE_MS } from '@/lib/raidReplay';
-import { groupLabel, raidsIn, type RaidGroup } from '@/lib/sessionGroups';
+import { raidsIn, type RaidGroup } from '@/lib/sessionGroups';
 import NightStrip, { type StripSlice } from './NightStrip';
+import RaidPicker from './RaidPicker';
 import ShareControls from './ShareControls';
 import { KIND_DOT, chip, chipIdle, chipOn, etDay, etMin, field, fmtSpan, plural, windowHref } from './nightStyle';
 import type { NightSave } from './NightPanel';
@@ -80,9 +81,7 @@ export default function SegmentsEditor({ fromMs, toMs, spans, breaks, ctx, saved
                   {raidsIn(groups, r).length > 1 && (
                     <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-dim">
                       <span>{raidsIn(groups, r).length} raids at once:</span>
-                      {raidsIn(groups, r).map(g => (
-                        <Link key={g.id} href={windowHref(r.fromMs, r.toMs, g.id, groupsParent)} className={`${chip} ${chipIdle}`}>Open {groupLabel(g)}</Link>
-                      ))}
+                      <RaidPicker fromMs={r.fromMs} toMs={r.toMs} parent={groupsParent} raids={raidsIn(groups, r)} />
                     </p>
                   )}
                   {canEdit ? (

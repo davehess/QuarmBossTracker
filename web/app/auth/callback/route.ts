@@ -13,6 +13,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { fetchGuildMember, memberAvatarUrl, memberDisplayName } from '@/lib/discord';
 import { requestOrigin } from '@/lib/request-origin';
 import { isLockedOut } from '@/lib/lockout';
+import { landingAfterSignIn } from '@/lib/landing';
 import { isRaidmimicOrigin } from '@/lib/raidmimicHost';
 import { openSignInCallback } from '@/lib/openSignIn';
 import { recordTermsAcceptance } from '../../../lib/termsAcceptance';   // relative on purpose: the tests that run this route mock every "@/" import by name
@@ -160,5 +161,6 @@ export async function GET(req: NextRequest) {
   // Which terms version this person signed in under (2026-11-01). Fail-open: the helper swallows its own errors.
   await recordTermsAcceptance(admin, data.session.user.id, member.user.id, origin);
 
-  return NextResponse.redirect(`${origin}${next}`);
+  // From the main page (or no page) the beta build lands on the /me hub; see lib/landing.ts.
+  return NextResponse.redirect(`${origin}${landingAfterSignIn(next, process.env.NEXT_PUBLIC_IS_BETA === '1')}`);
 }

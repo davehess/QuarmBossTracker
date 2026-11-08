@@ -34,7 +34,9 @@ import {
   type AnonMap, type CapturedTickIn, type DkpLootIn, type DkpTickIn, type EncounterIn, type LootedIn,
   type ObservedIn, type PlayerIn, type SessionBundle,
 } from './raidSession';
-import { buildGroups, groupOfFight, inGroupAt, narrowRows, outsideRaids, type GroupIndex, type RaidGroup } from './sessionGroups';
+import { buildGroups, groupOfFight, inGroupAt, inSet, narrowRows, outsideRaids, resolveGroupKey, setMembers, type GroupIndex, type RaidGroup } from './sessionGroups';
+import { buildHailEvents, type HailEvent, type HailRow } from './raidHails';
+import { zoneLabel } from './popLatestFlags';
 import { detectRaidChange, whoSeries, type RaidChange } from './raidSplit';
 import { rosterCuts } from './liveRaidWindow';
 import type { NightSummary, NightMinute } from './raidReplay';
@@ -54,7 +56,11 @@ export type SessionReview = {
   /** Server-side only (who was in each raid minute by minute): the page uses it to scope the deaths; it is never sent to the browser. */
   groupIndex?: GroupIndex;
 };
-export type ReviewOpts = { breaks?: boolean; groups?: boolean; group?: string | null; groupWin?: ShareWindow | null };
+// `group` is a set key (lib/sessionGroups.ts groupKey: one id, or several joined by a comma); the review is the union of
+// those raids. `isolate` (the public share page, when its link is limited to chosen raids) fails CLOSED and drops what is
+// not attributed to a raid: an id the window does not hold gives an empty review rather than the whole window, and the
+// window's ticks, rolls and bids (our own guild's lists, which no upstream table ties to a raid) are left out.
+export type ReviewOpts = { breaks?: boolean; groups?: boolean; group?: string | null; groupWin?: ShareWindow | null; isolate?: boolean };
 
 const MINUTE_PAGE = 30;       // rows of ~25 KB each: ~750 KB a response
 // The top-five list is read for this many fights at most (curated bosses first, then the biggest). It was 60, which
@@ -126,6 +132,24 @@ async function readAll(sb: SupabaseClient, win: ShareWindow) {
   return { minutes, encounters, looted, observed, rollRows, overrides, captured, raids };
 }
 
+/**
+ * The witnessed hails of the flag NPCs inside `win` (pop_flags: flag_key 'hail'), as events (lib/raidHails.ts). One
+ * windowed select of four columns, paged. `keep` narrows to a raid set; opted-out characters come out as their label.
+ */
+export async function loadWindowHails(
+  sb: SupabaseClient, win: ShareWindow, anon: AnonMap, keep?: (nk: string, ms: number) => boolean,
+): Promise<HailEvent[]> {
+  const { from: lo, to: hi } = windowIso(win);
+  const rows = await selectAll<HailRow & { id: number }>((from, to) => sb.from('pop_flags')
+    .select('id, character, npc, zone, earned_at')
+    .eq('guild_id', GUILD_TAG)
+    .eq('flag_key', 'hail')
+    .gte('earned_at', lo).lt('earned_at', hi)
+    .order('id')
+    .range(from, to));
+  return buildHailEvents(rows, anon, { keep, zoneName: z => (z ? zoneLabel(z)?.name ?? null : null) });
+}
+
 // The raids of a window, kept five minutes per window so the replay route (15 minutes of rows a request) does not
 // read the whole window again for each slice. Filled by the review load and by loadGroupIndex.
 const groupCache = new Map<string, { at: number; sig: string; index: GroupIndex }>();
@@ -156,8 +180,44 @@ export async function loadGroupIndex(sb: SupabaseClient, win: ShareWindow, anon?
   return index;
 }
 
+/**
+ * The ids of the fights, ended inside `win`, that belong to the chosen raids (a set key, lib/sessionGroups.ts): the same
+ * rule the review uses (the raid that holds at least half of the fight's damage dealers, at the fight's time). The share
+ * routes that list fights without their players (the boss strip, the timeline) keep only these. An empty set, or a key
+ * the window holds nothing for, gives no ids: never everything.
+ */
+export async function loadGroupFightIds(sb: SupabaseClient, win: ShareWindow, key: string, anon?: AnonMap): Promise<Set<string>> {
+  const index = await loadGroupIndex(sb, win, anon);
+  if (!setMembers(index, key)?.size) return new Set();
+  const { from: lo, to: hi } = windowIso(win);
+  const encs = await selectAll<{ id: string; started_at: string; ended_at: string | null }>((from, to) => sb.from('encounters')
+    .select('id, started_at, ended_at')
+    .eq('guild_id', GUILD_TAG)
+    .gte('ended_at', lo).lt('ended_at', hi)
+    .order('id')
+    .range(from, to));
+  const names = new Map<string, string[]>();
+  for (const ids of chunk(encs.map(e => e.id), 20)) {
+    const rows = await selectAll<{ encounter_id: string; character_name: string }>((from, to) => sb.from('encounter_players')
+      .select('encounter_id, character_name')
+      .in('encounter_id', ids)
+      .order('encounter_id').order('character_name')
+      .range(from, to));
+    for (const p of rows) {
+      const a = names.get(p.encounter_id);
+      if (a) a.push(nameKey(p.character_name)); else names.set(p.encounter_id, [nameKey(p.character_name)]);
+    }
+  }
+  const out = new Set<string>();
+  for (const e of encs) {
+    const at = Date.parse(e.ended_at ?? e.started_at);
+    if (Number.isFinite(at) && inSet(key, groupOfFight(index, at, names.get(e.id) ?? []))) out.add(e.id);
+  }
+  return out;
+}
+
 export async function loadSessionReview(sb: SupabaseClient, win: ShareWindow, opts: ReviewOpts = {}): Promise<SessionReview> {
-  const key = `${GUILD_TAG}|${win.fromMs}|${win.toMs}${opts.breaks ? '|b' : ''}${opts.groups || opts.group ? '|g' : ''}${opts.group ? `:${opts.group}` : ''}${opts.groupWin ? `@${opts.groupWin.fromMs}.${opts.groupWin.toMs}` : ''}`;
+  const key = `${GUILD_TAG}|${win.fromMs}|${win.toMs}${opts.breaks ? '|b' : ''}${opts.groups || opts.group || opts.isolate ? '|g' : ''}${opts.isolate ? '|i' : ''}${opts.group ? `:${opts.group}` : ''}${opts.groupWin ? `@${opts.groupWin.fromMs}.${opts.groupWin.toMs}` : ''}`;
   const anon = await loadAnon(sb, GUILD_TAG, win);
   const sig = anonSig(anon);
   const hit = cache.get(key);
@@ -167,15 +227,16 @@ export async function loadSessionReview(sb: SupabaseClient, win: ShareWindow, op
 
   // Which raids the window holds, and whether this review is narrowed to one of them.
   // A part of a larger window is cut by the raids found in the LARGER one (opts.groupWin): ids only mean something there.
-  const wantGroups = !!(opts.groups || opts.group);
+  const wantGroups = !!(opts.groups || opts.group || opts.isolate);
   const index = !wantGroups ? null
     : opts.groupWin ? await loadGroupIndex(sb, opts.groupWin, anon)
     : buildGroups(r.minutes, anon);
   if (index && !opts.groupWin) rememberGroups(win, sig, index);
-  const group = index && opts.group && index.members.has(opts.group) ? opts.group : null;
+  const group = index && opts.group ? resolveGroupKey(index, opts.group) : null;
+  const closed = !!opts.isolate && !group;   // asked to be limited to raids this window does not hold: show nothing
   const inRaid = (name: string | null | undefined, atMs: number | null) =>
-    !index || !group || (!!name && (atMs == null ? false : inGroupAt(index, group, nameKey(name), atMs)));
-  const minutes = index && group ? narrowRows(r.minutes, index, group) : r.minutes;
+    closed ? false : !index || !group || (!!name && (atMs == null ? false : inGroupAt(index, group, nameKey(name), atMs)));
+  const minutes = closed ? [] : index && group ? narrowRows(r.minutes, index, group) : r.minutes;
 
   // Ids that the windowed reads returned: the opendkp children, the parses and the curated-boss flags.
   const raidIds = r.raids.map(x => x.raid_id);
@@ -222,8 +283,8 @@ export async function loadSessionReview(sb: SupabaseClient, win: ShareWindow, op
   // A narrowed review keeps a fight when the raid holds at least half of its damage dealers; a fight with no parse
   // at all cannot be placed, so it is left out of a raid's list (it is still in the whole window's).
   // The whole window drops only the fights of a crew in none of its raids (sessionGroups.ts outsideRaids).
-  let encounters = r.encounters;
-  if (index) {
+  let encounters = closed ? [] : r.encounters;
+  if (index && !closed) {
     const namesOf = new Map<string, string[]>();
     for (const p of players) {
       const a = namesOf.get(p.encounter_id);
@@ -233,7 +294,7 @@ export async function loadSessionReview(sb: SupabaseClient, win: ShareWindow, op
     encounters = r.encounters.filter(e => {
       const at = Date.parse(e.ended_at ?? e.started_at);
       if (!group) return !Number.isFinite(at) || !outsideRaids(index, recorded, at, namesOf.get(e.id) ?? []);
-      return Number.isFinite(at) && groupOfFight(index, at, namesOf.get(e.id) ?? []) === group;
+      return Number.isFinite(at) && inSet(group, groupOfFight(index, at, namesOf.get(e.id) ?? []));
     });
   }
 
@@ -249,19 +310,24 @@ export async function loadSessionReview(sb: SupabaseClient, win: ShareWindow, op
     for (const z of (data ?? []) as { zone_id: number; short_name: string | null }[]) if (z.short_name) zoneNames.set(z.zone_id, z.short_name);
   }
 
+  // Who hailed a flag NPC in the window. Narrowed to a raid set, only hailers standing in it at the hail's minute; a
+  // closed (isolated, nothing resolved) review shows none. Read after the raids are known, so the filter can use them.
+  const hails = closed ? [] : await loadWindowHails(sb, win, anon, index && group ? (nk, ms) => inGroupAt(index, group, nk, ms) : undefined);
+
   const bundle: SessionBundle = {
+    hails,
     fromMs: win.fromMs,
     toMs: win.toMs,
     minutesRecorded: minutes.length,
     attendance: attendanceFromMinutes(minutes, anon),
-    ticks: buildTicks(r.captured, dkpTicks, anon),
+    ticks: opts.isolate ? [] : buildTicks(r.captured, dkpTicks, anon),
     kills: buildKills(encounters, players, bossIds, anon, zoneNames),
     loot: buildLoot(
       r.looted.filter(l => inRaid(l.looter_character, Date.parse(l.looted_at))),
       r.observed.filter(o => inRaid(o.winner_character, Date.parse(o.posted_at))),
       dkpLoot, anon),
-    rolls: buildRolls(r.rollRows, r.overrides, r.looted, anon),
-    bidders,
+    rolls: opts.isolate ? [] : buildRolls(r.rollRows, r.overrides, r.looted, anon),
+    bidders: opts.isolate ? [] : bidders,
   };
   const who = whoSeries(minutes);
   const value: SessionReview = { bundle, night: windowNight(minutes, win), change: detectRaidChange(who) };

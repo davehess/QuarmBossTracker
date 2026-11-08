@@ -21,6 +21,7 @@ import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { isEqmimicHost, eqmimicLandingTarget } from './lib/eqmimicHost';
 import { isRaidmimicAsset, isRaidmimicHost, isRaidmimicOpenPath, raidmimicLandingTarget } from './lib/raidmimicHost';
 import { isLockedOut } from './lib/lockout';
+import { ADMIN_SHELL_COOKIE, ADMIN_SHELL_MAX_AGE, adminShellChoice, isAdminPath } from './lib/adminShell';
 
 // Routes we never log: API/RSC payloads, auth callbacks, admin pages
 // (officers checking dashboards would dominate the data), the analytics page
@@ -138,6 +139,15 @@ export async function middleware(request: NextRequest, event: NextFetchEvent) {
     return NextResponse.next({ request: { headers: h } });
   }
 
+  // The admin sidebar preview (the guild lead, 2026-10-31, DECISIONS §493): `?v=b` on any admin page turns it on and the
+  // cookie keeps it on; `?v=a` turns it off. The admin layout cannot read a query string, so the choice is made here and
+  // written onto the REQUEST as well, which is what lets the page that carries `?v=` see it on that same load.
+  const shell = request.method === 'GET' && isAdminPath(request.nextUrl.pathname)
+    ? adminShellChoice(request.nextUrl.searchParams.get('v'), request.cookies.get(ADMIN_SHELL_COOKIE)?.value)
+    : null;
+  if (shell?.action === 'set') request.cookies.set(ADMIN_SHELL_COOKIE, 'b');
+  if (shell?.action === 'clear') request.cookies.delete(ADMIN_SHELL_COOKIE);
+
   let response = NextResponse.next({ request });
 
   // Server key, as in lib/supabase-server.ts (2026-10-29): the public key is the browser's alone.
@@ -226,6 +236,13 @@ export async function middleware(request: NextRequest, event: NextFetchEvent) {
         }),
       ).then(() => undefined, () => undefined));
     }
+  }
+
+  // Last, on the final `response`: the session refresh above can rebuild it, and a cookie set on the old one is lost.
+  if (shell?.action === 'set') {
+    response.cookies.set({ name: ADMIN_SHELL_COOKIE, value: 'b', path: '/admin', maxAge: ADMIN_SHELL_MAX_AGE, sameSite: 'lax' });
+  } else if (shell?.action === 'clear') {
+    response.cookies.set({ name: ADMIN_SHELL_COOKIE, value: '', path: '/admin', maxAge: 0 });
   }
 
   return response;

@@ -8,7 +8,11 @@ import { endAfterStart } from '@/lib/raidSplit';
 type ShareView = {
   id: string; title: string; from_at: string; to_at: string; created_at: string; expires_at: string;
   revoked_at: string | null; view_count: number; status: 'ok' | 'expired' | 'revoked'; open?: boolean;
+  /** Present when the link is limited to chosen raids: their names, as the review labels them. */
+  group_ids?: string[] | null; group_labels?: string[];
 };
+/** The raids a new link would be limited to (the review is narrowed to them): ids for the request, labels for the panel. */
+export type ShareGroups = { ids: string[]; labels: string[] };
 type Made = { url: string; canonical: string };
 
 const chip = 'rounded border px-2.5 py-1.5 text-xs whitespace-nowrap transition-colors '
@@ -65,8 +69,10 @@ function EndControls({ s, splitAtMs, onChange }: { s: ShareView; splitAtMs?: num
   );
 }
 
-export default function ShareControls({ fromIso, toIso, defaultTitle, defaultFollow = false, lead, splitAtMs = null }: {
+export default function ShareControls({ fromIso, toIso, defaultTitle, defaultFollow = false, lead, splitAtMs = null, groups = null }: {
   fromIso: string; toIso: string; defaultTitle: string;
+  /** The review is narrowed to these raids: the link made here shows only them (raid_shares.group_ids). */
+  groups?: ShareGroups | null;
   /** The split panel's still-running half: "follow the raid" starts ticked. */
   defaultFollow?: boolean;
   /** The split panel puts its Open link on the same line as the Share… button. */
@@ -99,7 +105,7 @@ export default function ShareControls({ fromIso, toIso, defaultTitle, defaultFol
     try {
       const res = await fetch('/api/raid/shares', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from: fromIso, to: toIso, title, days, open: follow }),
+        body: JSON.stringify({ from: fromIso, to: toIso, title, days, open: follow, ...(groups ? { group_ids: groups.ids } : {}) }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j?.error || 'failed');
@@ -152,6 +158,11 @@ export default function ShareControls({ fromIso, toIso, defaultTitle, defaultFol
             Makes a public link to this window only: the replay, who was there, the kills, the loot and the rolls. Anyone with the
             link can read it without signing in, until it expires or you revoke it. Characters who opted out are left out.
           </p>
+          <p className="mt-1.5 text-xs text-text">
+            {groups
+              ? <>Shares only: {groups.labels.join(', ')}. Everyone else recorded in this window, and the window&apos;s ticks, rolls and bids, stay out of the link.</>
+              : 'Shares everyone recorded in this window. To share only some of its raids, pick them under "raids at once" or in the raids bar first.'}
+          </p>
           <div className="mt-3 flex flex-wrap items-end gap-3">
             <label className="flex min-w-[14rem] flex-1 flex-col gap-1 text-xs text-dim">
               Title (shown at the top of the page)
@@ -201,6 +212,7 @@ export default function ShareControls({ fromIso, toIso, defaultTitle, defaultFol
                   <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 border-t border-border/50 py-1.5 text-xs">
                     <span>
                       <span className="text-text">{s.title || 'Untitled'}</span>
+                      {s.group_labels?.length ? <span className="text-gold"> · only {s.group_labels.join(', ')}</span> : null}
                       <span className="text-dim"> · made {day.format(Date.parse(s.created_at))} · {s.view_count} {s.view_count === 1 ? 'view' : 'views'} · </span>
                       <span className={s.status === 'ok' ? 'text-green' : 'text-dim'}>
                         {s.status === 'ok' ? `live until ${day.format(Date.parse(s.expires_at))}` : s.status === 'revoked' ? 'revoked' : 'expired'}

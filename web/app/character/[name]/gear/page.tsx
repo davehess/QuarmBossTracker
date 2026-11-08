@@ -32,6 +32,10 @@ import UpgradeCheck from './UpgradeCheck';
 import { ownedCharacters } from '@/lib/ownedCharacters';
 import { isOptedOut, scoredClass } from '@/lib/gearUpgrades';
 import { parseAttrEnd, runUpgradeEval } from '@/lib/gearUpgradesRun';
+import GearSets from './GearSets';
+import InventoryWindow, { type WornSlot } from './InventoryWindow';
+import { normaliseSlot, type SlotId } from '@/lib/inventorySkins';
+import { loadGearSets } from '@/lib/gearSetsLoad';
 
 export async function generateMetadata({ params }: { params: Promise<{ name: string }> }): Promise<Metadata> {
   const { name } = await params;
@@ -292,8 +296,11 @@ function RaidKitCard({ kit, name }: { kit: RaidKitResult; name: string }) {
   );
 }
 
-export default async function CharacterGearPage({ params }: { params: Promise<{ name: string }> }) {
+export default async function CharacterGearPage({ params, searchParams }: {
+  params: Promise<{ name: string }>; searchParams: Promise<{ try?: string; skin?: string }>;
+}) {
   const { name } = await params;
+  const { try: tryRaw, skin: skinRaw } = await searchParams;
   const decoded = decodeURIComponent(name);
   if (!/^[A-Za-z]{2,}$/.test(decoded)) notFound();
 
@@ -499,14 +506,28 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
   // This page is open to any signed-in member, but the evaluation is the owner's own tool (it is /me/upgrades, which
   // lists only the viewer's characters), so it is drawn only when the viewer owns this character, and never for an
   // opted-out one. Nothing here widens who can see a character's gear; it adds a view of it for its owner.
+  // The sets from what the owner has (bags AND bank) sit behind the same gate: the bank is the owner's alone.
   let upgradeEval = null;
+  let gearSets = null;
   if (equipped.length > 0 && scoredClass(char?.class) && !isOptedOut(char)) {
     const mine = await ownedCharacters(user.id);
     if (mine.some(o => o.name.toLowerCase() === decoded.toLowerCase())) {
-      upgradeEval = await runUpgradeEval(supabaseAdmin(), {
-        name: decoded, className: char?.class ?? null, race: char?.race ?? null, gear, attrEnd: parseAttrEnd(null),
-      }).catch(() => null);   // the check is an extra: if it cannot be built, the rest of the page still renders
+      const common = { name: decoded, className: char?.class ?? null, race: char?.race ?? null, gear, attrEnd: parseAttrEnd(null) };
+      // both are extras: if one cannot be built, the rest of the page still renders
+      const [upgrades, sets] = await Promise.all([
+        runUpgradeEval(supabaseAdmin(), common).catch(() => null),
+        loadGearSets(supabaseAdmin(), common).catch(() => null),
+      ]);
+      upgradeEval = upgrades;
+      gearSets = sets;
     }
+  }
+
+  // Inventory window: the equipped rows keyed by canonical slot (the data spells them Ear1 / Fingers1 / Wrist1).
+  const wornBySlot: Partial<Record<SlotId, WornSlot>> = {};
+  for (const g of equipped) {
+    const id = normaliseSlot(g.slot);
+    if (id && !wornBySlot[id]) wornBySlot[id] = { itemId: g.item_id, name: g.item_name, icon: items[g.item_id]?.icon ?? null };
   }
 
   const trainedRanks = validAas.reduce((s, a) => s + a.rank, 0);
@@ -537,8 +558,17 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
         <UploadFreshness gear={gearStamps} inventory={invStamps} spells={spellStamps} />
       </section>
 
-      <RaidKitCard kit={raidKit} name={decoded} />
+      {equipped.length > 0 && (
+        <InventoryWindow
+          charName={decoded}
+          className={char?.class ?? null}
+          worn={wornBySlot}
+          stats={{ ac: acSum, hp: hpSum, atk: atkCapped, attrs: gearStat, resists: gearResist }}
+          urlSkin={typeof skinRaw === 'string' ? skinRaw : null}
+        />
+      )}
 
+      <RaidKitCard kit={raidKit} name={decoded} />
       {clickyMacros.length > 0 && (
         <section className="bg-panel border border-border rounded-lg p-4">
           <h3 className="text-sm text-orange mb-1 flex items-center gap-2">
@@ -647,6 +677,7 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
           </section>
 
           {upgradeEval && <UpgradeCheck name={decoded} ev={upgradeEval} />}
+          {gearSets && <GearSets name={decoded} sets={gearSets} initialTry={typeof tryRaw === 'string' ? tryRaw : ''} />}
 
           <section className="bg-panel border border-border rounded-lg p-4">
             <h3 className="text-sm text-orange mb-3">Equipped ({equipped.length} slots)</h3>

@@ -103,6 +103,65 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧾 2026-11-08 — Web 2.1.110: all of beta's website promoted to main.** The guild lead: "you can push the pets website
+  too", then "All of beta's website" when asked which. Every beta-only web file, its tests, `scripts/raidmimic-shots`, the
+  guild-scope baseline and the raid_share_groups migration file (already applied in production). The ?v= previews still
+  awaiting a pick (admin ?v=b, raidmimic ?v=b..d, /about ?v=b/c, /spectator ?v=b/c, /me ?v=b) are now reachable on
+  wolfpack.quest with their ?v= as well; the default pages are what beta showed.
+
+- **🧾 Enrage calls earlier: warnings ahead of each mob's own enrage %, and ENRAGED straight off the Zeal pipe (agent 4.0.77 beta · bot 4.0.59 on main, 2026-11-07).** The guild lead: "enrage calls have all been late lately" -> picked option C (A + the pipe).
+  The old non-boss warning sat at 9%, the server's own default enrage point, so it spoke ~3 s AFTER the ENRAGED line (two "earlier" votes). Now: warn a boss 3 points and any other mob 2 points ahead of the mob's own enrage %, taken from (a) what this PC has seen it enrage at (median of the last 5, once two are known; `enrage_observed.json` beside the stats file, local only), (b) the catalog `enrage_pct` the bot's mob-info now carries (ability 2 param0; null = the server default), (c) 9. Defaults are unchanged for a boss (12) and 11 for others. The HUD's enrage zone and the Tank card's threshold follow the same point. And the two server lines (`<mob> has become ENRAGED.` / `is no longer enraged.`) go from Mimic's Zeal pipe reader (colour 306 = `USERCOLOR_NPC_ENRAGE`, matched on text) to `POST /api/zeal-fast-line`, are run through `evaluateTriggersAgainstLine` and `_meNoteRawLine` at once, and the log tail's later copy (within 6 s, per character, one pipe copy cancels one log copy) skips trigger evaluation only (`_tailTriggerEval`). Each start line for the active character's own target records its HP % and journals "Enrage (observed)". Needs the Mimic beta pairing this agent for the fast path; the warning change is agent-only and takes `enrage_pct` once bot 4.0.59 is live. Tests: `test/enrage-warn-threshold.test.js`, `test/enrage-fast-line.test.js`, `test/mob-enrage-pct.test.js` (bot). Unverified: Quarm's own `StartEnrageValue` (the catalog states a % for few mobs; the observed value corrects the rest after two enrages). Graduation to stable repeats this entry with the stable version.
+
+- **🧾 Weave timer: a slim lane on the HUD ring and Box, and a Weaving timer Canvas piece (Mimic beta draft, 2026-11-07).** The guild lead, for a
+  monk's kick + two `/bandolier load` weave: "A on HUD but slim ... right side of the HUD circle where Mana or Stamina would be, scroll
+  vertically ... also add it to the box HUD ... a canvas element can also exist as Weaving timer ... it needs to be local". New
+  `apps/mimic/weave.js` (engine, main process, fed from the Zeal pipe at arrival time; server-script mechanic and hand-to-hand
+  tables cited in its header), `weaveDraw.js` (canvas painter, RAF only while a fight is live), a `weave` HUD part in `me.html`
+  (auto = Monk and Beastlord), piece `me.weave` in `parts.js`, `onWeaveState` / `setWeaveConfig` in `preload.js`. Agent unchanged,
+  Mimic stays parked (beta numbers the build). **Open:** the monk's fist verb is a guess (three listed, configurable) and wants one
+  real log line; colours 265 / 267 and the bandolier text are from the pipe docs and the agent's own parser, unverified live;
+  a monk's default HUD now trades its endurance arc for the lane (label stays) — the guild lead to confirm. Docs: `HOW-ITS-BUILT.md`
+  "Weave timer". Tests `test/weave-engine.test.js`. **Curved on the ring (2026-11-07,** *"please curve the line to match the arc
+  for the circle"***):** the ring's canvas covers the ring square and `weaveDraw.js` `drawArc` strokes the lane along the right arc
+  (R 172, 56°-124°, `data-wp-weave="arc"`); the Box keeps the straight column (its height spelled out: a canvas with top + bottom
+  and `height:auto` keeps its pixel height).
+- **🧾 Target info: an overwritten debuff drops off (agent 4.0.74 beta · bot 4.0.58 on main, 2026-11-06).** The guild lead saw Malo and Malosinia listed together; on the
+  server Malosinia overwrites Malo and a Malo cast after it is blocked, and both print the same landing line. One generic rule,
+  ported from EQMacEmu `zone/buffstacking.cpp` (`Mob::FindAffectSlot`, NPC target; lines ported are named in the comment above
+  `_stackDecide`), covers the ~40 same-text families (Tashan line, Malo line, slows, roots, snares, poisons, Choke...). **Bot:**
+  `/api/agent/spell-catalog` entries for detrimental timed spells carry `st` ([[slot, spa, value]] at the era-cap level) and `sws`
+  (a DoT that stacks with itself from another caster). **Agent:** `_stackReplay` replays a target's landings in time order;
+  `recordTargetBuffLanding` marks the overwritten one ended (`worn_off_at`, `overwritten_by`; hidden, not a rebuff cue) or drops a
+  blocked one, and the merged Target info rows (local + relay) get the same replay so every client agrees. "Your <spell> spell has
+  worn off." now ends the caster's own landing for ANY detrimental (was mez only; charm and fear untouched). **Depends on the bot
+  catalog:** an agent that gets a catalog without `st` behaves exactly as before (tested). Not ported: per-caster level, the
+  stacking-command rules, `dot_stacking_exempt`. Tests: `test/spell-catalog-stack-signature.test.js`, `test/debuff-overwrite.test.js`.
+
+- **🧾 2026-11-06 — Zeal 1.5 target appearance and item windows reach the agent (beta, agent 4.0.75; the guild lead: "ingest the
+  pipe data").** Zeal v1.5.0-alpha0 adds the target's texture, gender, model size and worn equipment (9 entries) to the player
+  message (PR #264) and a new type 8 `item` message `{ item_id, name }` each time an item window is filled (PR #261). Mimic's
+  `_zealAbsorb` now keeps `target_texture` / `target_gender` / `target_size` / `target_equipment` (finite numbers; equipment only
+  as <= 9 integers; all null on an older Zeal or with no target) and `last_item = { item_id, name, at }`. Both ride the existing
+  `/api/zeal-state` POST into the agent's `_zealState`, and show on the local Zeal state as `target_look` and `last_item`.
+  Used: a clicky cast looks its catalog row up by the item id when the player's last viewed item (within 30 min) has that name
+  (`_clickyEntryFor`). **Not used yet:** variant picking. The bot's `mob-info` takes a name or an npc id and `level_bodies` carry only
+  id / level / hp, so the agent cannot compare texture / gender / size against a body; the bot would need those columns on each
+  body (see the commit). UI labels 87-89 (target distance, level, class) need nothing: `charInfo` already keeps every non-buff
+  label verbatim. Test: `test/zeal-target-item.test.js`.
+- **🧾 Zeal 1.5 death events feed the map, kill log and charm tracker (agent 4.0.76 on `beta`, 2026-11-06; the guild lead: "ingest the
+  pipe data").** Needs **Zeal 1.5.0+** (CoastalRedwood/Zeal PR #263, pipe message type 7, `death`: `{spawn_id, name?, type?, level?,
+  killer_id, killer_name?}` for every death the client is told about); **a no-op on older Zeal**, which never sends the message.
+  Mimic (`_zealAbsorb`, `_pipeDeath`) validates each one and keeps a ring of the last 50 (5 minutes) on the character's snapshot as
+  `deaths[]` (with the zone, since spawn ids are zone-scoped); the existing snapshot push carries it. The agent
+  (`_zealDeathsFromState`) handles each death once (spawn id + name + zone within 10 s, so several characters on one PC count it
+  once) and hands it to the EXISTING consumers: **the spawn map** (`_mapNoteZealDeath` → `_mapNoteDeath`, src `zeal`, so a
+  target-window death beside it still counts once; position from the sighting or last remembered one, else only when the spawn is
+  already listed alive), **Target Info's Recent tab** (the entry for that spawn id is marked killed, "by <killer>"; a mob nobody
+  targeted gets a row only when one of our characters killed it), **the charm tracker** (a tracked pet's spawn id is removed
+  silently like a "slain" line, never a "charm break" call) and **the debuff timers on the dead mob**. Left alone on purpose: the
+  bot-facing payloads (no upload carries deaths today; `bosskill` / encounter end could use `killer_name`, not changed), the
+  EncounterBuilder's charm sessions (no `pet_died` end reason yet), `_ownPetRecs` (keeps the pet id after death by design) and the
+  log-line paths (they stay as the fallback). Test: `test/zeal-death-events.test.js`.
 - **🧾 2026-11-08 — Mimic 3.0.8 stable (agent 4.0.77).** The guild lead: "let's push beta mimic to main". Graduated file by
   file from beta: the weave timer, enrage warnings ahead of each mob's own enrage % plus ENRAGED off the Zeal pipe, the
   debuff-overwrite rule, Zeal 1.5 death / item / target-look ingest, the pet on the Map, How I died, the charm-tracker fix
@@ -240,6 +299,23 @@ next touch one rather than assuming a missing row means a missing doc.
   `encounter_threat_graph` is not archived on Tower and stays in Supabase; its watermark was not read (the RPC timed out), so the first
   nights may clear less than the backlog. Copy method for Tower's file: `docs/HANDOFF-tower-archive-catchup.md`.
 
+- **🧪 PoP Raids Capture: rests only for a fight happening now, and shows the lines it read (agent 4.0.56, beta, 2026-11-02).** The
+  guild lead: *"not currently in a fight for this sync. we should also pull out all of the seer/popflags lines into a window below this
+  button to copy/paste"* + *"also a link to the pop/guide page to paste the lines in"*. The read used `_liveFightActive` (the update
+  gate's 150 s window, which also counts other raiders' fighting nearby); it now uses `_rescanFightNow`: the fight snapshot published
+  in the last 15 s and not flushed. Every line the read's gate passes (Seer, #popflags, grants, trials, your hails and the
+  projection's / flag NPCs' answers) is kept once at its newest (`_rescanKeepLine`; a #popflags row keyed by its label, so a later
+  read replaces the earlier value), and the status serves the newest 300 by time as `run.lines` once the run is done (agent
+  4.0.57: *"pull from the tail of these logs so we're not getting extra old lines, but the hail lines from the projections and other
+  flag mobs are important as well"*). Local-only, behind the router's `_localGuardBlock`. `popraid.html` shows them in a read-only
+  box with 📋 Copy and "paste them on wolfpack.quest ↗" (`/pop/guide?c=<name>#seer-paste`). Test `test/pop-rescan-agent.test.js`.
+- **🧪 PoP guide paste box: small text box and Check always shown, steps on a click; reads #popflags too (web, beta preview,
+  2026-11-02).** The guild lead: *"that page should show the text box and check my flags button when minimized (just small) and
+  instructions when someone clicks it"*. `SeerPaste.tsx` is now `<section id="seer-paste">` with a 2-row text box (6 once
+  something is in it) and Check; the four steps sit behind "How do I get these lines?" (open at once on `/pop/raid/me`). Check
+  also runs the #popflags reader (`parsePopFlags`), its steps join the Seer's in the checklist, and Save sends each reader's own
+  recognised lines through its own action (`saveSeerRecital`, `savePopFlagsPaste`). Arriving at `#seer-paste` puts the cursor in
+  the box. See it at https://b.wolfpack.quest/pop/guide. Test `test/pop-seer-paste.test.js`.
 - **✅ Raid-Helper "sync has never landed" was a false alarm (bot 4.0.48, 2026-11-02).** The mirror syncs every 30 minutes
   (17k sign-ups, last sync minutes before); each post was one failed database read read as "never", and a single healthy
   check cleared the latch so the next blip re-posted. `freshnessSnapshot` now answers no verdict on a failed read, and the
@@ -269,6 +345,21 @@ next touch one rather than assuming a missing row means a missing doc.
   https://b.wolfpack.quest/raidmimic/setup?v=b (one short card) and https://b.wolfpack.quest/raidmimic/setup?v=c (free vs
   planned Pro table with why each costs money); the same on https://b.wolfpack.quest/guilds/new?v=b and `?v=c` (sign-in).
   No `?v=` = production. On a pick: graduate it to main, drop the other and the `?v=` switch.
+- **🧪 Clicks reach EverQuest after an alt-tab (Mimic beta, 2026-11-03).** An overlay left clickable by a lost hover
+  report (the Canvas: the whole screen) is put back to click-through by main itself. HOW-ITS-BUILT: Overlays never stay
+  clickable after an alt-tab. Not yet tried in game.
+- **🧪 FB-116: "drop invis and hail again" (Mimic beta, agent 4.0.60, 2026-11-03).** Your own hail of a flag NPC while invisible
+  gets a local callout. HOW-ITS-BUILT: Hail while invisible.
+- **🧪 Target Info: debuffs on a named "The …" mob are fact, not "?" (agent 4.0.64, beta, 2026-11-04; DECISIONS §537).** The
+  guild lead, on The Acolyte of Affliction with every bystander-seen debuff marked "?": "there's no way all of these are observed
+  only". FB-83's generic-name rule counted "the" as an article like "a/an", so a landing seen by anyone but its caster never
+  proved the spawn. `_GENERIC_MOB_RX` is now `a|an` only (142 "the_" catalog names are named mobs or untargetable emote
+  speakers). Test `test/mobinfo-spawn-id-agent.test.js`. Already-tracked landings keep their "?" until they land again.
+- **🧪 The Tower of Solusek Ro's death-touch warders on the Map (agent 4.0.63, beta, 2026-11-04; DECISIONS §536).** For an
+  hour after a wing boss dies, its three warders (death touch, aggro 60, see invisible, cannot be damaged; Xuzl's assist 100)
+  draw on the Map with their aggro ring and "DT <minutes>m", whatever the ◯ switch says; ⚙ "Sol Ro death-touch warders"
+  turns them off. Reuses the cauldron tracker's wing-death signal. `_solroWarders` → `/api/map-state` `warders`; tests
+  `test/solro-warders.test.js`, `test/map-heading-up.test.js`. Not yet seen in game.
 - **🧪 Tower of Solusek Ro brazier clicks in the Command Center (Mimic beta, agent 4.0.59, 2026-11-02, first draft, not yet tried in
   game).** The guild lead: "add in for the command center timers the clicks for the braziers for tower of solro after the mini
   bosses are completed." One row per wing boss killed: countdown to the 30-minute depop and clicked / not clicked for this
@@ -403,6 +494,12 @@ next touch one rather than assuming a missing row means a missing doc.
   OpenDKP standings mirror), raids with "Replay with you highlighted", and the upload controls. On the beta build a sign-in from the home page
   lands here. Preview: https://b.wolfpack.quest/me?v=b. Tests `test/me-hub.test.js`, `test/landing-after-sign-in.test.js`. Awaiting the pick
   (Decision Desk card, hub promote).
+- **🧪 Gear page: inventory window with four skins and a saved default (web beta, no version bump, 2026-11-03; the guild lead: "display of the item layouts towards the top and different skin layouts that people may be used to, and let them set a default").**
+  The equipped items drawn as icons in the slot positions of Classic, Inventory grid, Paper doll or Compact, near the top of
+  https://b.wolfpack.quest/character/<name>/gear, with a skin switcher and "Make default" (kept in the browser's localStorage, `wp.inventorySkin`;
+  `?skin=<id>` shows one for a single view). Stats beside it are the page's own worn-gear sums, labelled as such. No bag area: the page has no bag-top
+  rows, and no coin. The skin maps are a first pass from screenshots, to be refined. `web/lib/inventorySkins.ts`, `test/inventory-skins.test.js`.
+  Awaiting the guild lead's look and the skin-map corrections.
 - **🧪 Gear page: automatic sets and try-on (web beta `e16913ab`, no version bump, owner only, 2026-10-31; DECISIONS §480, C then A).** Three
   cards from what the character owns (most mitigation, most damage or mana/focus, best resists) compared with what is worn, and a try-on
   that swaps any slot and shows the change. Preview: https://b.wolfpack.quest/character/<name>/gear (signed in, your own character).
@@ -879,6 +976,8 @@ next touch one rather than assuming a missing row means a missing doc.
 - **✅ Raid session: slice a night into raid / event / downtime / another guild's raid (web 2.1.9; the guild lead picked B, `?v=segments`, 2026-10-23: it is the default on the members' page with web 2.1.11 on `main`, and A, `?v=slices`, drawing spans by hand, is deleted with its editor, its drag-to-draw strip and `fitNew` / `moveEdge`).** Written as the two previews it was: The guild lead, looking at a whole night (our raid, a gap, then another guild's raid a member joined): "a way to slice out events and actual raids vs other times", "the timeline for the night could have included the named fights and when lots of deaths occurred to anyone", "some of the raid parse timelines would have been good to put in here". Both previews add the same **night log** under the replay: every named fight of the window (kills, wipes, and the fights an officer marked another guild's, which the review had left out), moments of mass death (5+ deaths of anyone within a minute, as bare counts, never names) and, per fight, a **Timeline** that opens the parse page's damage curve and deaths in place (opted-out characters stay their class and a number). They differ in how an officer slices: **A `?v=slices`** draws labelled spans by dragging on the night strip; **B `?v=segments`** detects segments (quiet gaps, roster turnover, our fights switching to another guild's) for the officer to confirm, relabel, merge, split or nudge. Both save to one bot_kv row `night_slices:<guild>` (no migration; `PUT /api/raid/slices`, officers + same-origin, stale-save guard on `updated_at`), and each saved span is an ordinary window with Open and Share…. Members see saved spans read-only; the share page is unchanged; no `?v=` is unchanged. `web/lib/nightSlices.ts` (pure), `nightSlicesLoad.ts`, `raidFightTimeline.ts`, `app/raid/session/Night*.tsx`, `SlicesEditor.tsx`, `SegmentsEditor.tsx`; test `test/night-slices.test.js`; read `https://wolfpack.quest/raid/session?from=2026-10-22T23%3A02%3A00.000Z&to=2026-10-23T07%3A55%3A00.000Z`. Not verified: the page rendered in a browser (no sign-in from a cloud session); the roster-turnover guess on the real night. ⚠ The page now reads the saved slices, the night's marks and the roster breaks on every view (before, only on the previews).
 - **✅ Shared raids that follow the raid redraw themselves (web 2.1.11 on `main`, 2026-10-23; the guild lead's pick, "A = self-refresh").** An open share's link used to show the raid as it was when the page loaded. While a share still follows the raid, its page now refreshes itself every 60 s (`web/lib/shareFollow.ts`, `app/raid/session/useFollowRefresh.ts`, `router.refresh()`), says so under the title, and stops when an officer closes the share or the window reaches its 24 h cap. It holds still for a viewer who is scrubbing: a click, key or wheel in the last 30 s, or a playhead moved off where the page opened it and parked more than 3 minutes short of the window's end, delay it until the hold lifts (about 5 s after). Not while the tab is hidden. Cost: each refresh is a page view in `shareGuard.ts` (60 an hour per viewer against the per-share ceiling of 600 an hour: ten viewers following at once reach it, and the next refresh would show the "busy" notice), and a moving window is a fresh review read each minute. Test `test/share-follow.test.js`. Not verified: a followed share rendered in a browser.
 - **⏳ Raid session: which raid is which inside a window, and a Kills tab that lists the named fights (web 2.1.48 on `beta`, DRAFT on `draft/session-raid-groups`, not pushed, 2026-10-26).** The guild lead, 2026-10-26, on the last stretch of the 2026-10-22 night (12:07-3:55 AM ET): the slice "is still showing characters from the previous raid in it, because there were multiple raids active"; and, from the Kills tab, "where are the Carprin cycle mobs?" and "the failed Bertoxx attempts". **Measured** (counts only, 04:07-07:55 UTC on 2026-10-23): 221 recorded minutes, 77 distinct characters, but 21-31 standing in a frame at once; the first crew (21) and the last (31) shared 13; 25 characters were seen under 20 minutes; the zone moved podisease, codecay, potranquility, codecay; the track rows carry no raid identity, `raid_roster` keeps only the latest row per uploader and is swept after an hour (so the roster that would prove it is gone), and the zone copy token (`inst`) is on map events only, not in the roster or the track. **Built:** (1) `web/lib/sessionGroups.ts` (pure): buckets each minute's placed raiders by raid key (new) or zone (the fallback for everything already recorded), links buckets in neighbouring minutes by raid key or 60% shared (a bucket under 3 raiders never links, so a raider switching raids cannot weld two together), drops groups under 6 raiders or 5 minutes; `filterMinuteData` / `narrowRows` cut the recording to one group; (2) the recorder (`utils/raidTrack.js`, a BOT change: routes to `main`) now stamps each raider with the raid of the uploader that saw them (`who[i][4]` indexes `raids`, the FNV hash of the single raid leader in that uploader's Zeal list; absent when none/several leaders, so old readers and the unstamped case are unchanged); (3) `?group=<id>` on `/raid/session` (plus `gf`/`gt`, the larger window the raids were counted in, so a link to a part of a window means the same raid) narrows attendance, the replay's dots (`/api/raid/session/replay?group=`), fights (a fight belongs to the raid holding at least half its damage dealers), deaths and loot; a bar above the replay names the raids ("Raid of 31 · in codecay") and a lane on the night strip draws overlapping ones, and each segment with two or more raids gets an Open link per raid; ticks, rolls and bids stay whole-window (not attributed to a raid upstream); (4) Kills tab: every named ("#") fight plus the curated bosses, grouped by zone in time order, wipes as their own rows ("Wipe · 6:30 PM · 4 deaths", never a kill), another guild's fights listed with a tag, and a fight with no `zone_short` takes its zone from the NPC id (`npcZoneId`, zoneid * 1000 + n -> `eqemu_zone`). `encounters` are now read with `LISTED_MARKS` (none, wipe, foreign); live / pvp / test stay off the review. Tests `test/session-groups.test.js`, `test/kills-tab.test.js` (mutation-checked). **Not built:** storing a group on a confirmed segment (add an optional `group` to `Slice` in the same bot_kv row; `planSliceWrite` must then allow overlap between different groups; no migration), one suggested segment per group in `detectSegments`, splitting two raids in the SAME zone with no stamp (needs the zone copy token in the roster upload), and the shared page (it takes no group). Raids recorded before the stamp are grouped by zone and crew only. Not verified: the page in a browser (no sign-in from a cloud session).
+- **⏳ Raid session + share: who hailed each flag NPC (web, on `beta`, DRAFT, 2026-11-03).** The guild lead, 2026-11-03: "add in who was able to flag from a raid (or at least who hailed, its up to them to have been in the raid and not invis)". A "Flag hails" card above the review's tabs, on the members' page and the public share: per event (an NPC in a zone, hails within 20 minutes of each other) the NPC, zone, ET time, count and the names; it says in one line that a hail is the proxy for a flag. Built on witnessed hails in `pop_flags` (`flag_key = 'hail'`, deduped per character per event); a narrowed review or an isolated share keeps only hailers who stood in the chosen raids at the hail's minute (an unresolved isolated set shows none); opted-out characters show as their label. `web/lib/raidHails.ts`, `loadWindowHails` (`raidSessionLoad.ts`), `app/raid/session/HailCard.tsx`; test `test/raid-hails.test.js` (mutation-checked). Not verified: the card in a browser (no sign-in from a cloud session); `pop_flags` has no index on `earned_at`, so the windowed read scans the guild's rows (paged) once per cached review; a hailer the recording never listed in the raid is dropped when narrowed.
+- **⏳ Raid session: pick SEVERAL raids, and a public share limited to the picked ones (web, on `beta`, DRAFT, 2026-11-03; needs migration `20261103020000_raid_share_groups.sql` applied: `raid_shares.group_ids text[]`, NULL = the whole window).** The guild lead, 2026-11-03: sharing another guild's raid externally and "NOT our raid", and "the selection should be multi-select"; that guild's raid showed as three groups in the window because the leader handed off. **Review page:** the "N raids at once" line and the raids bar are now toggle chips (`RaidPicker.tsx`, `aria-pressed`) with one **Show selected (k)** link; `?group=<id1>,<id2>` (at most 12; one id is the old link) narrows the whole review to the UNION of the raids (`parseGroupIds` / `groupKey` / `setMembers` in `web/lib/sessionGroups.ts`; `inGroupAt`, `narrowRows`, the loader and the night marks take a set key). **Share:** `ShareControls.tsx` sends `group_ids` when the review is narrowed (and the view is the share's own window) and says "Shares only: <raids>"; its list of links names the raids; `POST /api/raid/shares` accepts only ids the link's own window holds (`checkShareGroups`, 1-12, else 400). **Public side:** the share page loads the review with `isolate` (FAILS CLOSED: ids the window no longer holds show nothing; the window's ticks, rolls and bids, our own guild's lists that are not tied to a raid, are left out), and the replay, bosses, timeline and parse routes under `/api/share/raid/<token>/` keep only the set's raiders and fights (`shareGroupKey(share.row)`, `loadGroupFightIds`); map and mesh are zone geometry and carry no raid data. Test `test/raid-share-groups.test.js` (mutation-checked). **Not done / weak spots:** the ids are counted in the share's OWN window, so a link made from a part of a larger window (ids from `gf`/`gt`) is not offered a limited share, and moving a share's start or end afterwards can drop an untagged raid (its id is a hash of the crew), which then shows nothing; the member-side bosses route and fight timeline are not narrowed by a set; not verified in a browser (no sign-in from a cloud session).
 - **⏳ Raid session review + share page: opt-outs show as their class; bid winners keep their name and get a Bids tab
   (web, beta only, built 2026-10-18, no version bump).** The guild lead, 2026-10-17: *"if someone opts out, just put their
   class on that spot to anonymize them. do not anonymize bid winners, but link all of those with a unique handle that
@@ -6964,6 +7063,89 @@ reused (per-kind envelope, 404 permanent, holds back agent updates while non-emp
 stays 8 h (24 h could pull a previous copy's event in on a reused port). Tests: `test/map-sync-outbox.test.js` (beta), `test/map-sync-dedup.test.js` (main).
 ⚠ Order: deploy the bot, THEN apply the migration (the index with the old bot rejects a repeated batch whole). Shipped 2026-10-26 in that order.
 
+### 🧾 2026-11-06 — Map: your pet shows without targeting it (agent 4.0.73, Mimic beta)
+The guild lead: "Pet needs to show up on the mimic map and doesn't unless you target them." The Map had no pet marker; the pet only
+appeared as the target. New `out.pet` in the map payload (`_mapPetFor`, `packages/wolfpack-logsync/index.js`), drawn by
+`apps/mimic/map.html` as a paw + name in the Walker-mark colour, a thin line from you past 40 units, dimmed with "(last seen Ns)"
+when it is a remembered spot. Position, best first: Zeal `pet_loc` (live), your target when it is the pet (live, remembered),
+the remembered spot for 60 s in the same zone with the same pet id. Local only, nothing uploaded. Mimic's pipe merge
+(`apps/mimic/main.js`) now keeps `pet_loc` / `pet_heading`. ⚠ Depends on a Zeal change: the live pet position without targeting
+needs Zeal to send `pet_loc` ({x,y,z}, like `target_loc`) and `pet_heading` in the player message; until then the pet is live
+while targeted and last-known for 60 s after. Test: `test/map-pet-marker.test.js`. Not tried in game yet.
+
+### 🧾 2026-11-06 — Charm tracker: a charmed NAMED mob no longer "breaks" 6 s after landing (agent 4.0.72, Mimic beta) — FB-121
+A member (FB-121) charmed Giwin Mirakon with Allure; the tracker called a charm break and then showed "no active charm" while the
+pet window still held him. Cause in `_reconcileGaugeCharms`: a slot-16 pet with no "a/an/the" counts as a charm only while a charm
+cast is pending (or the owner is a bard), and the land consumes that cast, so the next pass left the pet out of the live set and
+the 6 s gauge rule fired a break. Fix: a slot-16 name that is already an ACTIVE charm of the same owner stays accepted. A real
+break (the pet leaves the gauge) still fires after 6 s. Every named charm by a non-bard had this since the named-mob path was
+added (2026-06-21). Test: `test/charm-named-pet-hold.test.js` (fails without the fix). Not tried in game yet.
+
+### 🧾 2026-11-06 — Target info: run speed and ROOTED, PQDI spell links, the kill log on the canvas (agent 4.0.71, Mimic beta)
+The guild lead: *"add run speed for mobs to target info. if run speed is zero list it as ROOTED"*, *"make it so spell names are a
+link to the PQDI entry"*, *"there isn't parity with the kill log on the target info and canvas mode"*.
+- **Run speed** from the catalog (`eqemu_npc_types.runspeed`, already on the mob-info row). **ROOTED** (red) only on evidence: a
+  harmful root landing (catalog `cc` 'root', SPA 99) on that target with no movement seen. Catalog speed 0 = "does not move", never
+  ROOTED; a rooted mob seen moving = "root has broken". Zeal's pipe sends no speed (the client Entity's `MovementSpeed` is not
+  exported), so movement is measured from `target_loc` over ~3.5 s for the same target id (`classifyMovement`,
+  `observedSpeed` in the agent). ⚠ A damage-broken root on a mob that then stands still still reads ROOTED until the landing ends.
+- **Spell names** in buffs, casting, last cast, procs and the spell list open `https://www.pqdi.cc/spell/<id>` in the browser;
+  no id, plain text.
+- **Kill log:** one builder (`apps/mimic/targetInfoShared.js` `killLogRows`) for the ⟲ Recent tab and a new canvas
+  `target.recent` piece (plus `target.move`). The canvas piece shows every target, not the overlay's filter.
+Tests: `test/target-info-speed-links-killlog.test.js`. Not tried in game yet.
+
+### 🧾 2026-11-06 — "How I died" in My replay (agent 4.0.70, Mimic beta)
+The guild lead: *"I just got destroyed by a few mobs and it looked like I wasn't anywhere near them"* → *"build the how I died
+panel"*. After each death, My replay (tray → 🎬 My replay) shows the last 30 s: damage taken per second by attacker with your HP and
+the killing blow, a table of who hit you, and your path with your target's position and distance. On this PC only, never uploaded.
+Other attackers' positions are not known (Zeal reports only your target's). Covers deaths after the update, not earlier ones.
+
+### 🧾 2026-11-06 — Purify Body on the HUD, with Hastened Purification (agent 4.0.68, Mimic beta)
+The guild lead: *"add in purification of body as for the monk AAs and take into account the hastened purification as well ...
+as purify on the hud"*. A monk's HUD cooldowns gain **PURE** (Purify Body, always shown for a monk). Reuse 4320 s (Quarm
+aa_actions, AA 233) less 10% a Hastened Purification of the Body rank (AA 495; zone/aa.cpp CalcAAReuseTimer) → 3888 / 3456 /
+3024 s. Starts on the landing line (shared with a cleric's Purify Soul, so it counts only for a monk) or a `/pipe purify` hotkey
+press. The rank is not on the pipe: 63+ is taken as 3/3 (marked est) until a "You can use the ability Purify Body again in …"
+refusal after a known use shows the real reuse; the learned rank is kept across restarts (`purifyRank` in the HUD timer file).
+⚠ A cleric's Purify Soul landing on a monk also starts it (same line). Tests: `test/me-hud-timers.test.js`.
+
+### 🧾 2026-11-06 — Mimic Map draws the planned raid route (Mimic beta)
+The guild lead, mid-raid: *"mimic map should display the path"*. A "Planned route" layer (on by default, Map settings) draws the
+Elemental Planes planner's locked path for the zone you are in: dashed gold line, numbered stops (bosses red), full boss clear by
+default with a "Planned route path" choice of full or minimal. Data: `apps/mimic/raidRoutes.json`, exported from the planner
+(Zeal map frame; Air's legs are straight, an order of fights), handed to the page by main (`get-raid-routes` →
+`window.mimic.getRaidRoutes`). Re-export it when the planner's paths change. Tests: `test/map-planned-route.test.js`.
+
+### 🧾 2026-11-06 — Feedback of every kind can attach a log slice (agent 4.0.67, beta)
+The guild lead: *"feedback that isn't a bug should also be able to take screenshots and include logs"*. Screenshots were already
+open to every kind on every surface, and the bot already stored `log_excerpt` for any category; the one gate was the agent
+dashboard's Feedback card (also Mimic's Feedback window and the tray's Send feedback), which hid the log row and forced
+`attach_log` off unless the kind was bug. It now offers the log on every kind with the same opt-in (unticked, previewed, filtered
+by `buildFeedbackLogSlice`). The website has no log path (it cannot read a member's log); anonymous feedback untouched.
+Tests: `test/feedback-log-slice.test.js`, `test/mob-miss-reason.test.js`, `test/feedback-ingest.test.js`.
+
+### 🧾 2026-11-05 — UI Studio: raid bars as a full raid, the assist bar always, Gems game apart, default-skin sizes (Mimic beta, FB-120)
+- **Raid bars** draw 71 fake members (a 72-person raid; Zeal skips you) in Zeal's own grid: cell size from the raid bars' font and
+  BarWidth/BarHeight exactly as `RaidBars::LoadBitmapFont` computes it (metrics read from Zeal's `.spritefont` files into
+  `ZEAL_FONT_METRICS`), filled top to bottom then the next column; the label says how many fit.
+- **Raid groups** (2026-11-06, the guild lead: *"raid groups for raidbars, where it adds in up to 13 subgroupings"*): with
+  `GroupSort` on (Zeal's `/raidbars groupsort on`) the preview lays the raid out as `RaidBars::QueueByGroup` does — a
+  "Group 1:"…"Group 12:" and "Ungrouped:" heading row each, up to 6 a group, you included, ShowAll's "Empty" rows for a short
+  group. A view-only "🐺 Raid bars" switch in the Show panel previews by class or by group regardless of zeal.ini.
+- **Assist bar** shows at Zeal's default 5,30 even when `zeal.ini` has no `[AssistBar]` ("· not set up"); its size now comes from
+  the same font metrics ("ToT: <name>" + health bar).
+- **GemsGameWnd** (the Gems minigame) has its own category, off by default, instead of riding in Hotbar / Cast.
+- **Window sizes:** UI Studio's skin scan now falls back to `uifiles/default` like the client and the Map do, so a window a custom
+  skin does not redefine takes its real default size instead of a made-up 200×100. ⚠ This is a guess at "UI Studio didn't resize"
+  (the report's screenshot is not readable from a cloud session).
+- **🎨 Real look** (same day, the guild lead: *"load in the UI assets so we display what it actually looks like. interpret the
+  xml"*): a toggle in the Show panel draws each window from the active skin's `EQUI_*.xml` and textures (skin first, then
+  `uifiles/default`) at its in-game size, including AutoStretch/anchors. Approximate: fonts (generic sans), HP colour bands, animated
+  frames (frame 0), item/spell icons, buff slots placed by the client in code, DDS textures. Zeal's bars and windows the skin does
+  not define stay boxes. Not yet drawn: Zeal's own windows from `uifiles/zeal`.
+Tests: `test/zeal-bars-and-screens.test.js`, `test/sidl-skin.test.js`.
+
 ### 🧾 2026-10-14 — UI Studio named layouts per character (Mimic beta `d77a7d5b`, DECISIONS §322)
 Up to 10 named `UI_<char>*.ini` snapshots per character: save, rename, delete, switch (waits for logout while EQ runs), each backed up
 with its name. **Open:** `ui_snapshots` pruning; a Windows + EQ check that the swapped file survives a camp.
@@ -7074,6 +7256,24 @@ targets, DPS per-person time, Target Info hit types, Charm "Best pets here", rol
 (roadmap). `apps/mimic/pop-quests.js` came with the web PoP graduation (web 1.8.158). Also tonight (§332): Linux `2.9.1-linux.41`, alpha
 re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). ⚠ Vercel's daily cap held back the web build; redeploy after the freeze.
 **Done 2026-10-15:** web 1.8.158/1.8.159 deployed (`0cf809fb` via the Vercel MCP), card posted 04:52 UTC.
+
+### 🧾 2026-10-27 — Mimic reads Zeal's `<Name>-PoPFlags.txt` (agent 4.0.31 beta, draft on `draft/popflags-file`, not pushed)
+Zeal (the guild lead's fork, branch `pr/popflags-export`, about to be filed upstream) makes "Export data on /camp" and `/outputfile popflags`
+send `#popflags` and `#popflags 1`-`5` and write the reply to `<EQ dir>/<Name>-PoPFlags.txt`, keeping it out of chat, so the eqlog never has it.
+The agent now reads that file. **Format** (from `Zeal/outputfile.cpp`, confirmed on a real file from the game, `test/fixtures/Soandso-PoPFlags.txt`,
+byte-identical): `Character<TAB>name`, `Timestamp<TAB>YYYY-MM-DD_HH-MM-SS`, `Command<TAB>#popflags, #popflags 1-5`, `---`, the reply lines.
+The Timestamp has no zone: it is read as the PC's LOCAL time (Zeal writes `localtime_s`), capped at now. **Reader:** `parsePopFlagsFile` /
+`popFlagsFileEvents` (next to `popFlagsOutputEvents`, which gained an optional `atMs` for a line with no stamp of its own): the SAME exact-line table,
+no second parser; earned_at = the header time; source `popflags` (the bot stores only that source, `popflags_file` would be dropped, so no bot
+change). **Watcher:** `scanPopFlagsFiles`, the fourth sibling of the Quarmy/spellbook/inventory scans (EQ folder = the first watched log's folder,
+prefs poll must have answered, raid hold waits, 45 s after boot then every 10 min, mtime-size fingerprint under `<path>#popflags`, dry run fingerprints
+nothing). Character = the header's; both names are checked against `exclude_from_stats` / the env list / a stopped log mode / off-guild server. The
+6 h "already sent" memory of the log reader is shared, so two camps in one night are one set of rows. **Dashboard / website rescan:**
+`_rescanPopFlagsExports` reads the newest `*-PoPFlags*.txt` per character beside its log (any age, the days window is for log lines) inside the
+same run; the result and `/status` carry `exports`, the card says "read N saved PoP flags files". Only step keys leave: `docs/PRIVACY.md`.
+The new closing section `=== Plane of Time ===` (access line: time NOT held; an advice line) needed no table change: the advice line is not a
+table line and sets nothing. ⏳ Not in the "Upload these now" first-sign-in card; ⏳ a file in a `Logs\` subfolder is not seen (the siblings share this).
+Tests: `test/pop-flags-file.test.js` (header, gate, scan, opt-outs, mtime, rescan), `test/pop-flags-live-parity.test.js` (web paste reader and agent on the real file).
 
 ### 🧾 2026-10-26 — Mimic reads `#popflags` from the log + "Sync from my logs" (agent 4.0.25 beta, first draft)
 (The page, paste box and bot half are on `main`: web 2.1.45 / bot 4.0.18, see the 2026-10-26 `/pop/raid/me` entries there.)
@@ -7662,3 +7862,13 @@ Mithaniel's notes (:37) and the second reading needs zeks **7** (:57), not 6. Th
   `nightmareb/Terris_Thule.lua:35-56, 64-98` @ `d4625cdd`; the slideshow had 75% / ~35%, the web plan "every name on the hate
   list" and "slow and miss". Test `test/pop-raids-terris.test.js`.
 - **FB-106** (rolls typed as a number in chat): researched, two options with a mockup sent; waiting on the guild lead's pick.
+
+### 🧾 2026-11-03 — EQ file-date fix for the time-zone start-up problem (Mimic beta draft; web TROUBLESHOOTING entry)
+- The guild lead asked for the community fix for "EverQuest only starts after I change my Windows time zone" to be built into
+  Mimic. `apps/mimic/eqFileDates.js` + Settings card `#eqdates` + tray Help item + `eq-file-dates-scan` / `-fix` handlers;
+  details in `HOW-ITS-BUILT.md` (Mimic features). Changes only file creation dates. Windows only.
+- ⏳ Unverified on a real Windows PC: that Node's `birthtimeMs` for a file with a broken creation date is outside 1980..2100
+  (or fails to stat) rather than a plausible-looking value; the first tester who has the problem should press Check and
+  report the count. If Check says "No broken dates found" for someone the community script helps, the bounds need widening.
+- ⏳ Only the first EQ folder Mimic resolves is checked; a second install needs its own pass.
+- `test/tray-menu-layout.test.js` is quarantined in `vitest.config.js`; its expectations were updated by hand for the new tray item.

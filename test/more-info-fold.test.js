@@ -85,8 +85,11 @@ describe('warnings that must be seen are not folded', () => {
   });
 
   it('a /admin/overlays danger switch keeps its caution in view', () => {
-    const src = stripJs(read('app/admin/overlays/page.tsx'));
-    expect(src).toMatch(/f\.danger\s*\?\s*<p\b/);
+    // The danger switches moved out of the tuning form into their own Danger zone (DECISIONS §493); the caution is
+    // still a plain paragraph there, never a fold.
+    const src = stripJs(read('app/admin/overlays/DangerControls.tsx'));
+    expect(src).toMatch(/<p className="[^"]*">\{f\.desc\}<\/p>/);
+    expect(src).not.toMatch(/MoreInfo|FoldText|<details/);
   });
 
   it('the /admin/console pause-the-fleet warning is not inside a fold', () => {

@@ -1,7 +1,9 @@
 // Admin landing — officer-only. Auth + officer gating handled by parent layout.
 import Link from 'next/link';
 import { FoldText } from '@/components/MoreInfo';
+import AdminCards from './AdminCards';
 import DepartedMemberNotice from '@/components/DepartedMemberNotice';
+import { shellOn } from './shellOn';
 
 export const metadata = {
   title: 'Officer tools · Admin',
@@ -19,6 +21,8 @@ export default function AdminPage() {
 }
 
 function AdminTools() {
+  // The sidebar preview (?v=b, DECISIONS §493): the same pages as grouped cards. No cookie → the grid below, as it was.
+  if (shellOn()) return <AdminCards />;
   return (
     <div className="space-y-6">
       <section className="bg-panel border border-border rounded-lg p-6">
@@ -134,11 +138,6 @@ function AdminTools() {
           title="📬 Feedback inbox"
           body="Every submission — Discord /feedback AND the wolfpack.quest/feedback form — with status tracking. Acknowledge / mark addressed / add officer notes without scrolling the Discord thread."
           href="/admin/feedback"
-        />
-        <Card
-          title="🐺 Guild interest"
-          body="Guilds that registered on raidmimic.com, newest first. Strangers’ text, shown as plain text."
-          href="/admin/interest"
         />
         <Card
           title="📋 Sign-up accuracy"

@@ -34,6 +34,9 @@ import { selectAll } from '@/lib/selectAll';
 import { loadEncounterGap, hasMissingDamage, GAP_HARD_CAP } from '@/lib/adminReads';
 import { GUILD_TAG } from '@/lib/guild';
 import { actorName } from '@/lib/actorName';
+import { MERGE_PHRASE, encounterPhrase } from '@/lib/adminTyped';
+import TypedConfirm from '../TypedConfirm';
+import { deleteEncounter, mergeEncounters } from './dangerActions';
 
 export const metadata = {
   title: 'Encounter repair · Admin',
@@ -305,30 +308,8 @@ async function clearIncomplete(formData: FormData) {
   revalidatePath('/admin/encounters');
 }
 
-// Merge a duplicate cluster into one target in a single action. Accepts either
-// `sources` (comma-separated ids, for cluster merges) or a single `source` (for
-// backward-compatible pairwise forms). We move every source's contributions
-// onto the target and delete the sources — FK cascade clears their now-stale
-// encounter_players / combat_rollup — then rebuild the target from the combined
-// contributions: merge_encounter_players() fully recomputes encounter_players
-// (max damage per player) and totals, so there's no need to hand-move player
-// rows or untangle PK collisions.
-async function mergeEncounters(formData: FormData) {
-  'use server';
-  const u = await actionAssertOfficer();
-  if (!u) redirect('/?error=admin_required');
-  const target = String(formData.get('target') || '');
-  const raw = String(formData.get('sources') || formData.get('source') || '');
-  const sources = raw.split(',').map(s => s.trim()).filter(s => s && s !== target);
-  if (!target || sources.length === 0) return;
-  const admin = supabaseAdmin();
-
-  await admin.from('contributions').update({ encounter_id: target }).in('encounter_id', sources);
-  await admin.from('encounters').delete().in('id', sources);
-  try { await admin.rpc('merge_encounter_players', { p_encounter_id: target }); } catch {}
-
-  revalidatePath('/admin/encounters');
-}
+// mergeEncounters and deleteEncounter live in ./dangerActions.ts: both are irreversible, so each checks a typed phrase
+// on the server (DECISIONS §493) and the comments that explain what they do moved with them.
 
 async function fileBackfillRequest(formData: FormData) {
   'use server';
@@ -379,37 +360,15 @@ async function fileBackfillRequest(formData: FormData) {
   revalidatePath('/admin/encounters');
 }
 
-// Hard-delete an encounter and all child rows. Used to remove ghost
-// encounters: a trash mob mis-classified as a boss, an aborted pull that
-// never resolved, etc. We delete children first (contributions,
-// encounter_players, encounter_combat_rollup) and then the encounter row.
-// combat_events isn't populated yet so we don't bother. Idempotent.
-async function deleteEncounter(formData: FormData) {
-  'use server';
-  const u = await actionAssertOfficer();
-  if (!u) redirect('/?error=admin_required');
-  const id = String(formData.get('id') || '');
-  if (!id) return;
-  const admin = supabaseAdmin();
-  await admin.from('encounter_players').delete().eq('encounter_id', id);
-  await admin.from('contributions').delete().eq('encounter_id', id);
-  // Best-effort on optional child tables — table may not exist in older
-  // deployments; the catch swallows the error so the encounter still goes.
-  try { await admin.from('encounter_combat_rollup').delete().eq('encounter_id', id); } catch {}
-  try { await admin.from('combat_events').delete().eq('encounter_id', id); } catch {}
-  await admin.from('encounters').delete().eq('id', id);
-  revalidatePath('/admin/encounters');
-}
-
 // ── Page ──────────────────────────────────────────────────────────────────
 
 export default async function AdminEncountersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ days?: string; show?: string }>;
+  searchParams: Promise<{ days?: string; show?: string; danger?: string }>;
 }) {
   await requireOfficer();
-  const { days: daysParam, show } = await searchParams;
+  const { days: daysParam, show, danger } = await searchParams;
   const days = Math.max(1, Math.min(90, parseInt(daysParam || '7', 10) || 7));
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   // "Reviewable" = encounters whose npc_id never resolved to a name in
@@ -495,6 +454,17 @@ export default async function AdminEncountersPage({
         </form>
       </section>
 
+      {/* The irreversible moves below (merge a cluster, delete an encounter) each ask for a typed phrase, checked on the
+          server (the guild lead, 2026-10-31, DECISIONS §493). The sidebar's Danger zone links here. */}
+      <section id="danger" className="scroll-mt-24 rounded-lg border-2 border-red/70 bg-red/5 px-4 py-3 text-xs leading-5 text-dim">
+        <span className="text-red font-semibold">⚠ Delete and merge cannot be undone.</span>{' '}
+        Merging a duplicate cluster asks you to type <code className="text-red">{MERGE_PHRASE}</code>; deleting an encounter asks for
+        its boss name, shown beside the button.
+        {danger === 'wrong-phrase' && (
+          <span role="status" className="block mt-1 text-red">Nothing changed: the phrase did not match. Type it exactly as shown.</span>
+        )}
+      </section>
+
       {/* Duplicates */}
       {dupeClusters.length > 0 && (
         <section className="bg-panel border border-border rounded-lg">
@@ -533,9 +503,10 @@ export default async function AdminEncountersPage({
                   </div>
                 )}
                 <div className="flex gap-2 mt-2 items-center">
-                  <form action={mergeEncounters}>
+                  <form action={mergeEncounters} className="flex flex-wrap items-center gap-2">
                     <input type="hidden" name="target" value={cl.primaryId} />
                     <input type="hidden" name="sources" value={sources} />
+                    <TypedConfirm phrase={MERGE_PHRASE} />
                     <button type="submit" className="px-2 py-1 rounded border border-blue bg-[#1f6feb] text-white text-xs">
                       Merge all → [{primaryLabel}] ★
                     </button>
@@ -684,9 +655,11 @@ export default async function AdminEncountersPage({
                         </form>
                         <form
                           action={deleteEncounter}
-                          className="pt-2 border-t border-border"
+                          className="pt-2 border-t border-border space-y-1"
                         >
                           <input type="hidden" name="id" value={r.id} />
+                          <TypedConfirm phrase={encounterPhrase(r.npc_name, r.npc_id)} />
+                          <br />
                           <button
                             type="submit"
                             className="px-2 py-0.5 rounded border border-red-700 bg-red-900/40 text-red-200 text-xs hover:bg-red-900/60"

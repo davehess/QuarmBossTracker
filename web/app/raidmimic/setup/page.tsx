@@ -5,7 +5,8 @@
 // page ships live with the tag (CLAUDE.md, DECISIONS §135).
 //
 // Same look and same bare shell as the landing page (web/app/raidmimic/page.tsx). Every sentence lives in
-// web/lib/raidmimicSetup.ts; this file only decides how a block LOOKS. Server component, no client JS.
+// web/lib/raidmimicSetup.ts; this file only decides how a block LOOKS. A server component: the one client piece is
+// ./SetupSteps.tsx (one step at a time by default, the guild lead, 2026-10-28), which receives the rendered cards.
 import { headers } from 'next/headers';
 import type { Metadata } from 'next';
 import NewPageTag from '@/components/NewPageTag';
@@ -18,7 +19,10 @@ import {
 import { REPO_URL } from '@/lib/eqmimicLanding';
 import { legalPaths } from '@/lib/legal';
 import { PRIMARY_BTN } from '../_landing/Parts';
+import SetupSteps from './SetupSteps';
 import { HostBar } from '@/components/RaidmimicFrame';
+import StartFree from '@/components/StartFree';
+import { startFreeVariant } from '@/lib/raidmimicStartFree';
 
 const TITLE = '[beta] Set up Raid Mimic';
 const DESCRIPTION =
@@ -43,7 +47,7 @@ function StepCard({ n, step, guildHref, guildExternal, privacyHref }: { n: numbe
   const href = step.link?.href || (step.id === 'privacy' ? privacyHref : guildHref);
   const external = step.link?.href ? /^https?:/.test(step.link.href) : guildExternal;
   return (
-    <li id={step.id} className="scroll-mt-4 rounded-md border border-border bg-panel p-4 sm:p-5">
+    <div className="rounded-md border border-border bg-panel p-4 sm:p-5">
       <div className="flex items-start gap-3 sm:gap-4">
         <span aria-hidden className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-gold/70 text-base text-gold">{n}</span>
         <div className="min-w-0 flex-1">
@@ -62,11 +66,12 @@ function StepCard({ n, step, guildHref, guildExternal, privacyHref }: { n: numbe
           {step.note && <p className={NOTE}>{step.note}</p>}
         </div>
       </div>
-    </li>
+    </div>
   );
 }
 
-export default function RaidmimicSetupPage() {
+export default function RaidmimicSetupPage({ searchParams }: { searchParams?: { v?: string } }) {
+  const startFree = startFreeVariant(searchParams?.v);   // beta preview of the "Free to start" block; none by default
   // On a raidmimic host the landing page is `/` and the form lives on eqmimic.quest; on the Wolf Pack hosts the
   // landing page is /raidmimic and its Register-interest button reaches the form by its real path.
   const onHost = isRaidmimicHost(headers().get('host'));
@@ -91,6 +96,8 @@ export default function RaidmimicSetupPage() {
         </p>
       </header>
 
+      {startFree && <StartFree variant={startFree} pricingHref={`${landing}#pricing`} />}
+
       <section aria-label={REQUIREMENTS.title} className="mb-6 rounded-md border border-border bg-bg p-4">
         <h2 className="text-base text-[#f2ede1]">{REQUIREMENTS.title}</h2>
         <ul className="m-0 mt-2 list-disc space-y-1 pl-5 text-sm leading-6 text-text marker:text-dim">
@@ -98,21 +105,13 @@ export default function RaidmimicSetupPage() {
         </ul>
       </section>
 
-      <nav aria-label="Steps" className="mb-6">
-        <ol className="m-0 flex list-none flex-wrap gap-2 p-0">
-          {STEPS.map((s, i) => (
-            <li key={s.id}>
-              <a href={`#${s.id}`} className="inline-flex min-h-11 items-center gap-2 rounded-md border border-border px-3 text-xs text-text no-underline hover:border-gold/70 hover:no-underline">
-                <span aria-hidden className="text-gold">{i + 1}</span>{s.title}
-              </a>
-            </li>
-          ))}
-        </ol>
-      </nav>
+      {/* One step at a time by default (the guild lead, 2026-10-28); the client piece also holds the Steps nav and
+          "Show all steps". Every step is still in the server HTML, so no-JS readers and crawlers get all of it. */}
+      <SetupSteps steps={STEPS.map((s, i) => ({
+        id: s.id, title: s.title,
+        node: <StepCard n={i + 1} step={s} guildHref={landing} guildExternal={false} privacyHref={privacy} />,
+      }))} />
 
-      <ol className="m-0 list-none space-y-4 p-0">
-        {STEPS.map((s, i) => <StepCard key={s.id} n={i + 1} step={s} guildHref={landing} guildExternal={false} privacyHref={privacy} />)}
-      </ol>
 
       <section id="troubleshooting" aria-label={TROUBLESHOOTING.title} className="mt-10 scroll-mt-4">
         <h2 className="text-xl text-[#f2ede1]">{TROUBLESHOOTING.title}</h2>
@@ -121,6 +120,12 @@ export default function RaidmimicSetupPage() {
             <li key={f.id} id={f.id} className="scroll-mt-4 rounded-md border border-border bg-panel p-4">
               <h3 className="text-base leading-snug text-[#f2ede1]">{f.problem}</h3>
               <p className="mt-2 max-w-[66ch] text-sm leading-6 text-text">{f.fix}</p>
+              {f.code && (
+                <>
+                  <p className="mt-3 text-xs text-dim">{f.code.label}</p>
+                  <pre className="mt-1 max-w-full overflow-x-auto rounded border border-border bg-black/30 p-3 text-xs leading-5 text-text">{f.code.text}</pre>
+                </>
+              )}
               {f.note && <p className={NOTE}>{f.note}</p>}
             </li>
           ))}

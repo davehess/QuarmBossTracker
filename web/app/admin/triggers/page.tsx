@@ -21,6 +21,8 @@ import { normalizeTriggerPattern, isDeadAnchored } from '@/lib/triggerPattern';
 import { parseTimerFields, timerInputFrom, describeTimer } from '@/lib/triggerTimer';
 import { foldFeedback, loadFeedbackRollup, loadGuildTriggers, type FbAgg } from '@/lib/triggerFeedback';
 import TimerFields from './TimerFields';
+import TypedConfirm from '../TypedConfirm';
+import { deleteTrigger } from './dangerActions';
 import MoreInfo from '@/components/MoreInfo';
 import { actorName } from '@/lib/actorName';
 
@@ -130,14 +132,7 @@ async function toggleEnabled(formData: FormData) {
   revalidatePath('/admin/triggers');
 }
 
-async function deleteTrigger(formData: FormData) {
-  'use server';
-  if (!(await actionAssertOfficer())) redirect('/?error=admin_required');
-  const id = String(formData.get('id') || '');
-  if (!id) return;
-  await supabaseAdmin().from('guild_triggers').delete().eq('id', id);
-  revalidatePath('/admin/triggers');
-}
+// deleteTrigger lives in ./dangerActions.ts: it asks for the trigger's name, typed, and checks it on the server (DECISIONS §493).
 
 export default async function AdminTriggersPage({
   searchParams,
@@ -147,6 +142,8 @@ export default async function AdminTriggersPage({
     category?:     string;
     // Set by createOrUpdate when the countdown / warning / repeat fields failed the save-time check.
     timer_error?:  string;
+    // Set by deleteTrigger when the typed name did not match (DECISIONS §493).
+    danger?:       string;
     // URL-prefill params — the Mimic dashboard's "↑ Promote" button on a
     // personal trigger row links here with these query params filled in so
     // the form arrives pre-populated. Officer still has to review + click
@@ -303,6 +300,11 @@ export default async function AdminTriggersPage({
             ? `✏️ Edit: ${editTarget.name}`
             : (p.name ? `➕ New trigger — promoted from Mimic: ${p.name}` : '➕ New trigger')}
         </h3>
+        {p.danger === 'wrong-phrase' && (
+          <p role="alert" className="mb-3 text-xs text-red-400 border border-red-400/50 bg-red-400/10 rounded px-3 py-2">
+            Nothing deleted — the name you typed did not match the trigger&apos;s name. Type it exactly as shown.
+          </p>
+        )}
         {p.timer_error && (
           <p role="alert" className="mb-3 text-xs text-red-400 border border-red-400/50 bg-red-400/10 rounded px-3 py-2">
             Not saved — {p.timer_error.slice(0, 300)}
@@ -460,13 +462,19 @@ export default async function AdminTriggersPage({
                         className="px-2 py-1 rounded border border-border text-[10px] text-blue hover:underline">
                         edit
                       </Link>
-                      <form action={deleteTrigger}>
-                        <input type="hidden" name="id" value={t.id} />
-                        <button type="submit" className="px-2 py-1 rounded border border-red text-[10px] text-red-400"
-                          formAction={deleteTrigger}>
-                          delete
-                        </button>
-                      </form>
+                      {/* Delete asks for the trigger's name, typed (the guild lead, 2026-10-31, DECISIONS §493). The
+                          form folds under "delete…" so 500 rows do not carry 500 open inputs. */}
+                      <details className="relative">
+                        <summary className="list-none cursor-pointer px-2 py-1 rounded border border-red text-[10px] text-red-400">delete…</summary>
+                        <form action={deleteTrigger} className="absolute right-0 z-10 mt-1 w-72 space-y-2 rounded-lg border-2 border-red/70 bg-panel p-3 shadow-lg shadow-black/50">
+                          <input type="hidden" name="id" value={t.id} />
+                          <p className="text-[11px] text-dim leading-4">Removes it from every raider&apos;s agent within about two minutes. It cannot be undone.</p>
+                          <TypedConfirm phrase={t.name} />
+                          <button type="submit" className="block px-2 py-1 rounded border border-red text-[10px] text-red-400 hover:bg-red/10">
+                            delete this trigger
+                          </button>
+                        </form>
+                      </details>
                     </div>
                   </div>
                 </li>

@@ -12,6 +12,8 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { resolveShare } from '@/lib/raidShareLookup';
 import { loadFightParse } from '@/lib/raidSessionParse';
+import { loadGroupFightIds } from '@/lib/raidSessionLoad';
+import { shareGroupKey } from '@/lib/sessionGroups';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,6 +25,12 @@ export async function GET(req: Request, { params }: { params: { token: string } 
     const sb = supabaseAdmin();
     const share = await resolveShare(sb, params.token);
     if (!share) return NOT_FOUND();
+    // A link limited to chosen raids (raid_shares.group_ids) opens only those raids' fights: any other id is the same 404.
+    const groups = shareGroupKey(share.row);
+    if (groups !== null) {
+      const id = new URL(req.url).searchParams.get('encounter');
+      if (!id || !(await loadGroupFightIds(sb, share.win, groups)).has(id)) return NOT_FOUND();
+    }
     const parse = await loadFightParse(sb, new URL(req.url).searchParams.get('encounter'), { guild: share.row.guild_id, win: share.win });
     if (!parse) return NOT_FOUND();
     return NextResponse.json({ parse }, { headers: HEADERS });

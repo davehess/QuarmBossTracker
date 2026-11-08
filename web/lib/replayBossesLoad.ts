@@ -21,8 +21,9 @@ type EncRaw = {
 };
 
 /** Throws on a failed read; the caller turns that into its own error response. */
-export async function loadSpawnBosses(admin: SupabaseClient, fromIso: string, toIso: string): Promise<SpawnBoss[]> {
-  const raw = await selectAll<EncRaw>((from, to) => admin.from('encounters')
+export async function loadSpawnBosses(admin: SupabaseClient, fromIso: string, toIso: string, only?: ReadonlySet<string>): Promise<SpawnBoss[]> {
+  // `only`: a share limited to chosen raids keeps just their fights (ids from raidSessionLoad.ts loadGroupFightIds).
+  const raw = (await selectAll<EncRaw & { id: string }>((from, to) => admin.from('encounters')
     .select('id, npc_id, started_at, ended_at, zone_short, eqemu_npc_types(name)')
     .eq('guild_id', GUILD_TAG)
     .is('classification', null)
@@ -30,7 +31,7 @@ export async function loadSpawnBosses(admin: SupabaseClient, fromIso: string, to
     .gte('ended_at', fromIso)
     .lte('started_at', toIso)
     .order('id')
-    .range(from, to));
+    .range(from, to))).filter(r => !only || only.has(r.id));
   const npcIds = [...new Set(raw.map(r => r.npc_id))];
 
   // Curated bosses only: the rest of the night's encounters are trash.

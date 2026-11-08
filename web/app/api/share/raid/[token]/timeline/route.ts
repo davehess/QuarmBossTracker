@@ -14,6 +14,8 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { resolveShare } from '@/lib/raidShareLookup';
 import { ceilingApi, guardApi } from '@/lib/shareGuard';
 import { loadTimelineKills, type TimelineKill } from '@/lib/raidTimelineLoad';
+import { loadGroupFightIds } from '@/lib/raidSessionLoad';
+import { shareGroupKey } from '@/lib/sessionGroups';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,9 +40,12 @@ export async function GET(req: Request, { params }: { params: { token: string } 
     // the row) must not be answered from the old window's read for the rest of the 10 s. The row's own columns, not the
     // computed window, because an open share's window ends at the clock and would never hit.
     const memoKey = `${share.row.id}|${share.row.from_at}|${share.row.to_at}`;
+    // A link limited to chosen raids (raid_shares.group_ids) lists only the bosses those raids killed.
+    const groups = shareGroupKey(share.row);
     let hit = memo.get(memoKey);
     if (!hit || t0 - hit.at >= CACHE_MS) {
-      const kills = await loadTimelineKills(sb, new Date(share.win.fromMs).toISOString(), new Date(share.win.toMs).toISOString(), share.row.guild_id, { guestRaids: true });
+      const only = groups === null ? undefined : await loadGroupFightIds(sb, share.win, groups);
+      const kills = await loadTimelineKills(sb, new Date(share.win.fromMs).toISOString(), new Date(share.win.toMs).toISOString(), share.row.guild_id, { guestRaids: true, only });
       hit = { at: t0, kills };
       memo.delete(memoKey);
       memo.set(memoKey, hit);
