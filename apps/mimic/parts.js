@@ -61,12 +61,15 @@
                 ['readout', 'Readout'], ['big', 'Big number'], ['badge', 'Badge'], ['seg', 'Ring arc']],
     value:     [['readout', 'Readout'], ['big', 'Big number'], ['badge', 'Badge'], ['seg', 'Ring arc']],
     list:      [['rows', 'Rows'], ['chips', 'Chips'], ['inline', 'One line'], ['columns', 'Columns'], ['seg', 'Ring arc']],
+    // The Weave timer: a horizontal timing highway, or the slim upright lane the HUD ring and Box carry.
+    weave:     [['highway', 'Timing highway'], ['lane', 'Upright lane']],
   };
   var DEFAULT_SIZE = {
     bar: [220, 34], thin: [220, 18], vbar: [40, 120], ring: [96, 96], arc: [140, 90], readout: [200, 22],
     big: [120, 52], badge: [60, 60], pips: [180, 30],
     rows: [260, 150], chips: [260, 48], inline: [320, 22], columns: [300, 90],
     seg: [190, 52],   // DEFAULT_ARC's box (segBox) at about 0.7×, for a Ring arc placed on its own
+    highway: [320, 60], lane: [28, 150],
   };
   // What any piece can also set, whatever its mode: its label shown or not, how thick its bar or
   // ring is, its own colour, and where its text sits. Offered in the piece's menu.
@@ -412,8 +415,19 @@
     return '<div class="pt pt-seg"><svg viewBox="' + box.map(f1).join(' ') + '" preserveAspectRatio="xMidYMid meet">' + h + '</svg></div>';
   }
 
+  // The Weave timer (apps/mimic/weave.js times it in Mimic's main process; weaveDraw.js paints these canvases). The piece
+  // is just a <canvas>: its HTML is identical on every poll, so the canvas is never rebuilt and the painter keeps drawing
+  // it. data-wp-char/-cls/-level say whose lane it is (the painter tells the engine, so a lone Canvas piece with no HUD
+  // open still knows the class and level).
+  function rWeave(style) {
+    return function (part, v) {
+      return '<div class="pt pt-weave"><canvas data-wp-weave="' + style + '" data-wp-char="' + esc(v.char) + '" data-wp-cls="' + esc(v.cls)
+        + '" data-wp-level="' + esc(v.level) + '"></canvas></div>';
+    };
+  }
+
   var RENDER = { bar: rBar, thin: rThin, vbar: rVbar, ring: rRing, arc: rArc, readout: rReadout, big: rBig, badge: rBadge,
-    pips: rPips, rows: rRows, chips: rChips, inline: rInline, columns: rColumns, seg: rSeg };
+    pips: rPips, rows: rRows, chips: rChips, inline: rInline, columns: rColumns, seg: rSeg, highway: rWeave('highway'), lane: rWeave('lane') };
 
   // The one entry point: a piece, the mode it is drawn in, its view, and the piece's own
   // options ({ nolabel, thick, color, align }).
@@ -459,6 +473,7 @@
     + '.pt-chips{display:flex;flex-wrap:wrap;gap:3px;align-items:center;align-content:flex-start}'
     + '.pt-chip{padding:0 5px;border:1px solid;border-radius:9px;background:rgba(var(--wp-bg-rgb),0.7);white-space:nowrap}'
     + '.pt-none{opacity:0.55}'
+    + '.pt-weave{padding:0}.pt-weave canvas{display:block;width:100%;height:100%}'
     // Regen per tick (FB-90): the words, and the glow at the fill's edge for the last second before the tick.
     + '.pt-rg{color:' + C.green + ';font-weight:700;font-variant-numeric:tabular-nums}'
     + '.pt-track.rgp .pt-fill{animation:ptrg 1s ease-in-out}'
@@ -520,6 +535,9 @@
     timers: { path: '/api/timers',          every: 700 },
     // What the target NPC says, takes and sells (Target Info's Quest and Vendor tabs). Its path
     // depends on who is targeted, so it is a function of the other sources; null means wait.
+    // Target Info's kill log (the agent's last 50 targets). The agent answers {rev, unchanged} in a few bytes
+    // when nothing moved, but no rev is sent here, so every poll carries the list.
+    hist:   { path: '/api/target-history', every: 3000 },
     npc:    { path: function (live) { var s = live('state'), m = s && s.mobInfo && s.mobInfo.mob; return m && m.id ? '/api/npc-interact?id=' + m.id : null; },
               needs: ['state'], every: 5000 },
   };
@@ -541,12 +559,16 @@
     for (var i = 0; i < list.length; i++) if (low(list[i][key || 'owner']) === me) return list[i];
     return null;
   }
+  // The pieces Target Info and the canvas draw the same way (PQDI spell links, the kill log, the run-speed line)
+  // live in targetInfoShared.js, loaded before this file by canvas.html.
+  var TI = root.WpTargetInfo || (typeof require === 'function' ? require('./targetInfoShared.js') : null);
+  function spellUrl(id) { return TI ? TI.pqdiSpellUrl(id) : ''; }
   function buffRows(list, at) {
     return (Array.isArray(list) ? list : []).map(function (b) {
       var left = num(b.remaining_secs);
       if (left != null && num(b.observed_at_ms)) left = Math.max(0, left - (Date.now() - b.observed_at_ms) / 1000);
       var tot = num(b.total_secs);
-      return { name: b.name, text: b.fell_off ? 'fell off' : left == null ? '' : secsText(left),
+      return { name: b.name, url: spellUrl(b.spell_id) || undefined, text: b.fell_off ? 'fell off' : left == null ? '' : secsText(left),
         pct: (left != null && tot) ? (left / tot) * 100 : null,
         color: b.fell_off ? C.purple : b.good === 0 ? C.red : C.green };
     });
@@ -580,7 +602,7 @@
   // The HUD's short names for its cooldowns (me.html CD_SHORT), for the ring's cooldown arc.
   var CD_SHORT = { 'Flying Kick': 'FK', 'Round Kick': 'RK', 'Dragon Punch': 'DP', 'Eagle Strike': 'ES', 'Tiger Claw': 'TC',
     'Kick': 'KICK', 'Bash': 'BASH', 'Backstab': 'BS', 'Mend': 'MEND', 'Taunt': 'TNT', 'Harm Touch': 'HT',
-    'Feign Death': 'FD', 'Lay on Hands': 'LOH', 'Boastful Bellow': 'BB', 'Shield': 'SHLD' };
+    'Feign Death': 'FD', 'Lay on Hands': 'LOH', 'Boastful Bellow': 'BB', 'Shield': 'SHLD', 'Purify Body': 'PURE' };
 
   var PARTS = [];
   function P(id, cat, label, src, kind, get, sample, extra) {
@@ -677,7 +699,7 @@
     },
     { items: [{ name: 'Mend', short: 'MEND', ready: true, text: 'ready', color: C.green },
       { name: 'Feign Death', short: 'FD', frac: 0.7, text: '0:07', color: C.orange }] }, { short: 'Cooldowns' });
-  [['ability', 'Combat ability'], ['mend', 'Mend'], ['taunt', 'Taunt'], ['shield', 'Shield'], ['fd', 'Feign Death'], ['loh', 'Lay on Hands'], ['ht', 'Harm Touch'], ['disc', 'Discipline']]
+  [['ability', 'Combat ability'], ['mend', 'Mend'], ['taunt', 'Taunt'], ['shield', 'Shield'], ['fd', 'Feign Death'], ['loh', 'Lay on Hands'], ['ht', 'Harm Touch'], ['purify', 'Purify Body'], ['disc', 'Discipline']]
     .forEach(function (k) {
       P('me.cd_' + k[0], 'me', k[1] + ' cooldown', 'me', 'countdown',
         function (d, at) { return cdView(cd(d, k[0]), at); }, cdSample(k[1], 23000, 60000), { short: k[1] });
@@ -720,6 +742,12 @@
   P('tick.swing', 'timers', 'Swing timer', 'me', 'countdown',
     function (d, at) { var s = d.character && d.swing; return s && !s.idle && num(s.ms_left) != null && num(s.period_ms) ? { endAt: at + s.ms_left, period: s.period_ms, label: 'Swing', color: C.gold } : null; },
     function (now) { return { endAt: now + 1300, period: 2400, label: 'Swing', color: C.gold }; }, { short: 'Swing' });
+  // The Weave timer (the guild lead, 2026-11-07: "a canvas element can also exist as Weaving timer"). The numbers do not
+  // come from /api/me: Mimic's main process pushes them from the Zeal pipe (weave.js), so this piece reads 'me' only for
+  // WHO is playing — it exists while a character is logged in, and carries their class and level to the painter.
+  P('me.weave', 'me', 'Weaving timer', 'me', 'weave',
+    function (d) { return d.character ? { char: d.character, cls: d['class'] || '', level: num(d.level) != null ? d.level : '' } : null; },
+    { char: '', cls: '', level: '' }, { short: 'Weave', note: 'Needs Zeal running. Shows when to press the weave macro; it never presses anything.' });
   function timerRows(d, at, group) {
     var ts = (d && d.activeTimers) || [];
     return { items: ts.filter(function (t) { return !group || t.group === group; }).slice(0, 12).map(function (t) {
@@ -792,10 +820,10 @@
     },
     { pct: 58, text: '~58%' }, { short: 'Target mana', color: C.blue });
   P('target.lastcast', 'target', 'Target\'s last cast', 'state', 'value',
-    function (d) { var c = d.mobInfo && d.mobInfo.target_lastcast; return c && c.spell ? { text: (c.confidence === 'guess' ? '? ' : '') + c.spell, sub: ago(Date.now() - c.atMs) } : null; },
+    function (d) { var c = d.mobInfo && d.mobInfo.target_lastcast; return c && c.spell ? { text: (c.confidence === 'guess' ? '? ' : '') + c.spell, url: spellUrl(c.spell_id) || undefined, sub: ago(Date.now() - c.atMs) } : null; },
     { text: 'Lava Breath', sub: '12s ago' }, { short: 'Last cast' });
   P('target.casting', 'target', 'Casting on the target', 'state', 'list',
-    function (d) { var cs = d.mobInfo && d.mobInfo.target_casting; if (!Array.isArray(cs)) return null; return { items: cs.map(function (c) { var l = num(c.ends_at_ms) ? c.ends_at_ms - Date.now() : null; return { name: c.caster + ' → ' + c.spell, text: l == null ? '' : (Math.max(0, l) / 1000).toFixed(1) + 's' }; }), empty: 'no casts' }; },
+    function (d) { var cs = d.mobInfo && d.mobInfo.target_casting; if (!Array.isArray(cs)) return null; return { items: cs.map(function (c) { var l = num(c.ends_at_ms) ? c.ends_at_ms - Date.now() : null; return { name: c.caster + ' → ' + c.spell, url: spellUrl(c.spell_id) || undefined, text: l == null ? '' : (Math.max(0, l) / 1000).toFixed(1) + 's' }; }), empty: 'no casts' }; },
     { items: [{ name: 'Corvale → Tashanian', text: '1.8s' }] }, { short: 'Casting on it' });
   P('target.debuffs', 'target', 'Debuffs on the target', 'state', 'list',
     function (d) { var b = d.mobInfo && d.mobInfo.target_buffs; if (!Array.isArray(b)) return null; return { items: buffRows(b.filter(function (x) { return x.good === 0; })), empty: 'no debuffs' }; },
@@ -898,12 +926,30 @@
       var sp = (Array.isArray(m.spells) ? m.spells : []).filter(Boolean).slice().sort(function (a, b) { return (a.good === 1) - (b.good === 1); });
       return { items: sp.map(function (s) {
         var res = s.good === 1 ? 'buff' : (RESIST_NAME[s.resist_type] || 'unresistable') + (num(s.resist_diff) ? ' ' + s.resist_diff : '');
-        return { name: s.name || ('Spell #' + s.id), text: s.mana != null ? s.mana + 'm' : '', color: s.good === 1 ? C.green : C.purple,
+        return { name: s.name || ('Spell #' + s.id), url: spellUrl(s.id) || undefined, text: s.mana != null ? s.mana + 'm' : '', color: s.good === 1 ? C.green : C.purple,
           sub: [res, castSecs(s.cast_ms) ? 'cast ' + castSecs(s.cast_ms) : '', num(s.recast_ms) ? 'recast ' + Math.round(s.recast_ms / 1000) + 's' : ''].filter(Boolean).join(' · ') };
       }), empty: 'no spell list catalogued' };
     },
     { items: [{ name: 'Lava Breath', text: '150m', color: C.purple, sub: 'Fire · cast 3.0s · recast 30s' }, { name: 'Shield of Lava', text: '60m', color: C.green, sub: 'buff · cast 2.5s' }] },
     { short: 'Spells' });
+  // Run speed and ROOTED (same wording as Target Info's line: TI.moveView over the agent's classifyMovement).
+  P('target.move', 'target', 'Run speed and ROOTED', 'state', 'value',
+    function (d) {
+      var v = TI && d && d.mobInfo ? TI.moveView(d.mobInfo, mob(d)) : null;
+      if (!v) return null;
+      return { text: v.label || v.run, sub: v.label ? v.run : '', color: v.tone === 'red' ? C.red : v.tone === 'orange' ? C.orange : C.dim };
+    },
+    { text: 'ROOTED', sub: 'Run speed: 1.25', color: C.red }, { short: 'Run speed' });
+  // The kill log: the agent's target history, drawn from the SAME rows as Target Info's ⟲ Recent tab
+  // (TI.killLogRows). Gold = seen to die, blue = left alive. The 'hist' source is /api/target-history.
+  P('target.recent', 'target', 'Kill log: recent targets', 'hist', 'list',
+    function (d) {
+      if (!TI || !d || !Array.isArray(d.targets)) return null;
+      var rows = TI.killLogRows(d.targets, 'all', null, Date.now());
+      return { items: rows.map(function (r) { return { name: r.name, sub: r.line2, color: r.tone === 'gold' ? C.gold : C.blue }; }), empty: TI.killLogEmpty(d.targets, 'all') };
+    },
+    { items: [{ name: 'a dire wolf', sub: 'Lavastorm Mountains · killed 4m ago', color: C.gold }, { name: 'a giant spider', sub: 'Lavastorm Mountains · left alive, seen 12m ago · lowest HP 54%', color: C.blue }] },
+    { short: 'Kill log' });
   P('target.factions', 'target', 'Faction hits on kill', 'state', 'list',
     function (d) {
       var m = mob(d); if (!m) return null;
@@ -1241,8 +1287,8 @@
       ['target.flags', 'chips', 160, 141, 160, 20], ['target.ht', 'readout', 0, 164, 80, 15], ['target.slow', 'readout', 80, 164, 120, 15],
       ['target.mana', 'thin', 200, 164, 120, 16], ['target.lastcast', 'readout', 0, 182, 200, 15], ['target.tot', 'readout', 200, 182, 120, 15],
       ['target.casting', 'rows', 0, 200, 320, 40], ['target.debuffs', 'rows', 0, 243, 320, 60], ['target.buffs', 'rows', 0, 306, 320, 50]] },
-    { id: 'target-tabs', name: 'Target: drops, spells, F/Q/V', parts: stack([['target.loot', 'rows', 170], ['target.spells', 'rows', 170],
-      ['target.factions', 'rows', 90], ['target.quest', 'rows', 170], ['target.vendor', 'rows', 90]], 280) },
+    { id: 'target-tabs', name: 'Target: drops, spells, F/Q/V', parts: stack([['target.move', 'readout', 24], ['target.loot', 'rows', 170], ['target.spells', 'rows', 170],
+      ['target.factions', 'rows', 90], ['target.quest', 'rows', 170], ['target.vendor', 'rows', 90], ['target.recent', 'rows', 150]], 280) },
     { id: 'charm', name: 'Charm', embed: 'charm', parts: stackC([['charm.pet', 'bar'], ['charm.uptime', 'readout'], ['charm.breaks', 'bar'], ['charm.servertick', 'bar'], ['charm.mobtick', 'bar'], ['charm.buffs', 'rows', 90]], 240) },
     { id: 'pets', name: 'Pets', embed: 'pets', parts: stackC([['pet.hp', 'bar'], ['pet.target', 'readout'], ['pet.combat', 'readout'], ['pet.buffs', 'rows', 100]], 240) },
     { id: 'dps', name: 'DPS HUD', embed: 'hud', parts: stackC([['fight.name', 'readout'], ['fight.dps', 'rows', 200], ['fight.mine', 'readout']], 280) },

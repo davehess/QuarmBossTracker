@@ -262,6 +262,16 @@ the log is parsed for it), and answers with how many it found. A character you k
 stats sends none of this. You can also paste the command's output into wolfpack.quest
 yourself; that is read in your browser and only the lines it understands are sent.
 
+**The PoP flags file Zeal saves (beta Mimic).** Zeal's "Export data on /camp" (and `/outputfile popflags`)
+asks the server for your flags and writes the reply to `<Your Character>-PoPFlags.txt` in your EverQuest
+folder, keeping it out of the chat window and so out of your log. Mimic reads that file the way it reads the
+log lines above: a line counts only when it is **exactly** one of the same table of about a hundred and twenty
+lines, and nothing else in the file is looked at. What it sends is the same thing: the flag steps the lines prove, your
+character's name, and the time written in the file's header (the clock of your own PC). The file itself, its
+other lines and its path never leave your PC. It is looked at about every ten minutes, only when it has changed, and
+the "Capture latest PoP flags" button below also reads the newest one for each character. A character you keep out of
+stats is never read, and nothing is sent in local mode or while the guild has paused the agent.
+
 **"Capture latest PoP flags, Seer and Maelin messages" (beta Mimic's Logsync tab).**
 The same read as "Sync from my logs", started from your own PC with a button: you pick
 a character (or all of them) and how many days back (up to 60). It looks only at the

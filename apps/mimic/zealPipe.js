@@ -219,4 +219,17 @@ function chatLineOf(obj) {
   return { c: obj.character.slice(0, 40), k, x: d.text.slice(0, 600) };
 }
 
-module.exports = { startZealWatch, _extractJsonObjects, chatLineOf };
+// The server's two enrage lines (NPC_ENRAGE_START / NPC_ENRAGE_END, printed in colour 306 = Zeal's USERCOLOR_NPC_ENRAGE), the only
+// lines Mimic hands the agent at once, whether or not any overlay is open (the agent fires "Enrage (Begin)" off them instead of waiting
+// for the log file). Matched on the text alone, anchored to the whole line, so a player's chat that merely quotes the words
+// (it ends in a quote) never counts. → { character, text, at } or null.
+const ENRAGE_FAST_RX = /^.{1,120}? (?:has become ENRAGED|is no longer enraged)\.$/;
+function enrageLineOf(obj, now) {
+  const l = chatLineOf(obj);
+  if (!l) return null;
+  const text = l.x.trim();
+  if (!ENRAGE_FAST_RX.test(text)) return null;
+  return { character: l.c, text, at: now == null ? Date.now() : now };
+}
+
+module.exports = { startZealWatch, _extractJsonObjects, chatLineOf, enrageLineOf, ENRAGE_FAST_RX };

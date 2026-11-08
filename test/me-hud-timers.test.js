@@ -308,6 +308,74 @@ describe('cooldowns — combat abilities, Mend, Taunt', () => {
   });
 });
 
+// The guild lead, 2026-11-06: "add in purification of body as for the monk AAs and take into account the hastened
+// purification as well ... as purify on the hud". Reuse 4320 s (Quarm aa_actions, AA 233), Hastened Purification of the Body
+// −10% a rank (zone/aa.cpp CalcAAReuseTimer) → 3888 / 3456 / 3024 s.
+describe('Purify Body — the monk AA, with Hastened Purification', () => {
+  const char = (cls, level) => ({ Aldenmar: { charInfo: [{ id: 2, value: String(level) }, { id: 3, value: cls }], gauges: [], updatedAt: clock } });
+  const pur = (h) => h._serializeMeState().cooldowns.find(c => c.key === 'purify');
+  const LAND = 'You feel light wash over you, purifying your very soul.';
+
+  it('a monk of 63+ counts from the landing at 3/3 Hastened (3024 s), marked est until a refusal confirms it', () => {
+    const h = load({ zeal: char('Monk', 65) });
+    say(h, 'Aldenmar', LAND);
+    expect(pur(h)).toMatchObject({ label: 'Purify Body', seen: true, total_ms: 3024_000, ms_left: 3024_000, est: true });
+  });
+
+  it('below 63 (Hastened cannot be trained yet) it is the full 72 minutes', () => {
+    const h = load({ zeal: char('Monk', 60) });
+    say(h, 'Aldenmar', LAND);
+    expect(pur(h).total_ms).toBe(4320_000);
+  });
+
+  it('the same line on a cleric is their Purify Soul landing on them: no Purify Body slot', () => {
+    const h = load({ zeal: char('Cleric', 65) });
+    say(h, 'Aldenmar', LAND);
+    expect(pur(h)).toBeUndefined();
+  });
+
+  it('a refusal after a use we saw learns the rank, and every later use counts with it', () => {
+    const h = load({ zeal: char('Monk', 65) });
+    say(h, 'Aldenmar', LAND);
+    clock += 10 * 60_000; h._zealState.Aldenmar.updatedAt = clock;   // still logged in
+    say(h, 'Aldenmar', 'You can use the ability Purify Body again in 47 minute(s) 36 seconds.');   // 600 + 2856 = 3456 s → 2/3
+    expect(pur(h)).toMatchObject({ total_ms: 3456_000, ms_left: 2856_000, est: false });
+    clock += 3456_000; h._zealState.Aldenmar.updatedAt = clock;
+    say(h, 'Aldenmar', LAND);
+    expect(pur(h)).toMatchObject({ total_ms: 3456_000, ms_left: 3456_000, est: false });
+  });
+
+  it('a refusal with no use seen sets the time left exactly, at the assumed rank', () => {
+    const h = load({ zeal: char('Monk', 65) });
+    say(h, 'Aldenmar', 'You can use the ability Purify Body again in 1 hour(s) 2 minute(s) 0 seconds.');
+    expect(pur(h)).toMatchObject({ ms_left: 3720_000, seen: true });
+  });
+
+  it('`/pipe purify` on the AA hotkey starts it at the press', () => {
+    const h = load({ zeal: { Aldenmar: { ...char('Monk', 65).Aldenmar, custom_recent: [{ at: clock - 5000, text: 'purify' }] } } });
+    expect(pur(h).ms_left).toBe(3024_000 - 5000);
+  });
+
+  it('the learned rank survives an agent restart', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      globalThis.__hudDisk = {};
+      const first = load({ zeal: char('Monk', 65) });
+      say(first, 'Aldenmar', LAND);
+      clock += 60_000;
+      say(first, 'Aldenmar', 'You can use the ability Purify Body again in 1 hour(s) 3 minute(s) 48 seconds.');   // 60 + 3828 = 3888 → 1/3
+      vi.advanceTimersByTime(2100);
+      clock += 4000_000;
+      const second = load({ zeal: char('Monk', 65) });
+      say(second, 'Aldenmar', LAND);
+      expect(pur(second)).toMatchObject({ total_ms: 3888_000, est: false });
+    } finally {
+      vi.useRealTimers();
+      delete globalThis.__hudDisk;
+    }
+  });
+});
+
 describe('disciplines', () => {
   it('reuse = base − 54 s per level above the unlock level, clamped 3:54–72:00', () => {
     const h = load();
@@ -406,7 +474,7 @@ describe('target read-outs', () => {
     h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: ['Enrage'] } });
     say(h, 'Aldenmar', 'a gnoll warlord has become ENRAGED.');
     let t = h._meTargetExtras(st(), 'Aldenmar', clock);
-    expect(t).toMatchObject({ enraged: true, enrage_ended: false, enrage_pct: 12 });
+    expect(t).toMatchObject({ enraged: true, enrage_ended: false, enrage_pct: 11 });   // a non-boss: its 9% enrage point + 2
     say(h, 'Aldenmar', 'a gnoll warlord is no longer enraged.');
     t = h._meTargetExtras(st(), 'Aldenmar', clock);
     expect(t).toMatchObject({ enraged: false, enrage_ended: true });   // the red goes
@@ -453,7 +521,7 @@ describe('class cooldowns, Feign Death, Lay on Hands / Harm Touch, /pipe', () =>
 
   it('each class always sees its own set — unknown (seen: false) until first used', () => {
     const keys = (cls) => load({ zeal: zeal(cls) })._serializeMeState().cooldowns.map(c => [c.key, c.seen]);
-    expect(keys('Monk')).toEqual([['ability', false], ['mend', false], ['fd', false], ['disc', false]]);
+    expect(keys('Monk')).toEqual([['ability', false], ['mend', false], ['fd', false], ['purify', false], ['disc', false]]);
     expect(keys('Warrior')).toEqual([['ability', false], ['taunt', false], ['shield', false], ['disc', false]]);
     expect(keys('Paladin')).toEqual([['loh', false], ['disc', false]]);
     expect(keys('Shadow Knight')).toEqual([['ht', false], ['disc', false]]);
@@ -465,7 +533,7 @@ describe('class cooldowns, Feign Death, Lay on Hands / Harm Touch, /pipe', () =>
     const h = load({ zeal: zeal('Monk') });
     say(h, 'Aldenmar', 'You mend your wounds and heal some damage.');
     say(h, 'Aldenmar', 'You taunt a gnoll to ignore others and attack you!');
-    expect(h._serializeMeState().cooldowns.map(c => c.key)).toEqual(['ability', 'mend', 'fd', 'disc', 'taunt']);
+    expect(h._serializeMeState().cooldowns.map(c => c.key)).toEqual(['ability', 'mend', 'fd', 'purify', 'disc', 'taunt']);
   });
 
   // The guild lead, 2026-09-24: "I lost my discipline timer".

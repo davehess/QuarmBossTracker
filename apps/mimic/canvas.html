@@ -378,7 +378,10 @@
   </div>
   <svg id="loc"></svg>
   <div id="ghost"></div>
+<script src="targetInfoShared.js"></script>
 <script src="parts.js"></script>
+<script src="weave.js"></script>
+<script src="weaveDraw.js"></script>
 <script src="sections.js"></script>
 <script src="overlaySizes.js"></script>
 <script>
@@ -386,6 +389,9 @@
   var PORT = 7779;
   // The pieces' own stylesheet (parts.js), once.
   if (window.WpParts) { var _pcss = document.createElement('style'); _pcss.textContent = WpParts.CSS; document.head.appendChild(_pcss); }
+  // The Weaving timer piece is a <canvas> that weaveDraw.js paints from the engine in Mimic's main process; it listens only
+  // once such a canvas is on screen.
+  if (window.WpWeaveDraw) WpWeaveDraw.start();
   try { if (M.getAgentPort) M.getAgentPort().then(function (p) { if (p) PORT = p; }).catch(function () {}); } catch (e) {}
   try { if (M.onAgentPort) M.onAgentPort(function (p) { PORT = p; }); } catch (e) {}
 
@@ -2674,7 +2680,7 @@
   var _groups = [];              // saved groups, one list for every screen (main: canvas-groups)
   var STALE_MS = 10000;          // older than this and a source counts as silent
   var MODE_ICON = { bar: '▭', thin: '▬', vbar: '▮', ring: '◯', arc: '◠', readout: 'ab', big: '12', badge: '◉', pips: '⁞⁞',
-    rows: '☰', chips: '◌◌', inline: '⋯', columns: '▦', seg: '◜' };
+    rows: '☰', chips: '◌◌', inline: '⋯', columns: '▦', seg: '◜', highway: '▤', lane: '▯' };
 
   function catName(k) {
     var c = window.WpParts ? WpParts.CATS : [];

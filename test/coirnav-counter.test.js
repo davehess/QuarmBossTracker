@@ -142,10 +142,13 @@ describe('zone gate and scope', () => {
     slainBy('Guardian of Coirnav');
     expect(snap()).not.toBeNull();
   });
-  it('leaving the zone ends it', () => {
+  // The guild lead, 2026-11-05: "I died and lost the timer, it should persist through the timer".
+  it('dying and respawning at bind keeps the clock running; it still ends at the deadline', () => {
     slainBy('Guardian of Coirnav');
-    say('You have entered Plane of Knowledge.');
-    expect(snap()).toBeNull();
+    const before = snap();
+    say('You have entered Plane of Tranquility.');
+    zeal[WHO] = { zone: 203 };
+    expect(snap()).toMatchObject({ started_at: before.started_at, deadline_at: before.deadline_at, state: 'waves' });
   });
   it('fiend deaths with no run do not start one', () => {
     kill(3);

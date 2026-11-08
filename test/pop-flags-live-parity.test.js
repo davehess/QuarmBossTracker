@@ -296,6 +296,57 @@ describe('the small state, and what resets it', () => {
   });
 });
 
+// The file Zeal wrote in game (2026-10-27; "Export data on /camp", test/fixtures/Soandso-PoPFlags.txt, byte-identical to
+// what the game produced, CRLF line endings and all). It is the first capture with a trailing "=== Plane of Time ==="
+// section: the access line (time NOT held) and a line of advice that is not in the server's tables. The file reader
+// itself is covered in test/pop-flags-file.test.js; here the two LINE readers are run on its reply.
+describe('the real Zeal export file', () => {
+  const raw = fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'Soandso-PoPFlags.txt'), 'utf8');
+  const body = raw.split('\r\n').slice(4).filter(Boolean);
+  const text = body.join('\n');
+  it('is the layout the Zeal source writes: three tab headers, ---, then the reply', () => {
+    expect(raw.split('\r\n').slice(0, 4)).toEqual(['Character\tSoandso', 'Timestamp\t2026-10-27_16-32-09', 'Command\t#popflags, #popflags 1-5', '---']);
+    expect(body[0]).toBe('=== Planes of Power Progression ===');
+  });
+  it('both readers prove the same steps, bare and stamped; no unproven line; time is NOT held', () => {
+    const web = webFlags(text);
+    expect(web.length).toBeGreaterThan(30);
+    expect(parsePopFlags(text).unproven).toEqual([]);
+    expect(parsePopFlags(text).unknown).toEqual([]);
+    expect(stagesOf(agentRun(body))).toEqual(web);
+    expect(stagesOf(agentRun(body.map(l => STAMP() + l)))).toEqual(web);
+    expect(web).not.toContain('time_1');
+    expect(web).not.toContain('earthb_key_1');
+    expect(web).toEqual(expect.arrayContaining(['pofire_2', 'zeks_7', 'sol_room_5', 'cipher_1', 'zebuxoruk_2']));
+  });
+  it('the "=== Plane of Time ===" section: the access line says time is not held, the advice and the header set nothing', () => {
+    const section = body.slice(body.indexOf('=== Plane of Time ==='));
+    expect(section).toEqual([
+      '=== Plane of Time ===',
+      'Plane of Time access: Locked',
+      'Complete the elemental progression, combine the four elemental essences, and return to Grand Librarian Maelin.',
+    ]);
+    // The access line is a table line (time: no); the header and the advice are NOT (an exact-line gate lets nothing else through).
+    expect(A._PF_LINES.get(A._pfNorm(section[1]))).toEqual({ k: 'time', yes: false });
+    expect(A._PF_LINES.has(A._pfNorm(section[0]))).toBe(false);
+    expect(A._PF_LINES.has(A._pfNorm(section[2]))).toBe(false);
+    expect(A._PF_LINES.has(A._pfNorm('If one of these is missing, hail Maelin and ask about new lore and new information.'))).toBe(false);
+    const c = who();
+    expect(agentRun([section[0], section[2]], c)).toEqual([]);
+    expect(A._pfState.get(c.toLowerCase())).toBeUndefined();                 // not even per-character state was started
+    // …and the access line alone answers "time: no" without proving a step or setting "held".
+    const d = who();
+    expect(agentRun([section[1]], d)).toEqual([]);
+    expect(A._pfState.get(d.toLowerCase()).time).toBe('no');
+  });
+  it('a boss "Complete" line waits for that answer, and this file\'s closing "Locked" line releases it', () => {
+    const d = who();
+    // Without the overview, only the final "Locked" line can release it.
+    const evs = agentRun(['Grummus flag: Complete', 'Plane of Time access: Locked'], d);
+    expect(stagesOf(evs)).toEqual(['fuirstel_2']);
+  });
+});
+
 describe('the wiring (stripped source): every path that reads a log runs it', () => {
   const src = stripJs(agentSrc);
   it('the live tail, the --since backfill and the opt-in backfill call it after parsePopFlagLine', () => {

@@ -367,6 +367,17 @@ describe('what a feedback report carries about Target Info', () => {
     expect(p.log_meta).toMatchObject({ lines: 1, minutes: 30, target_info: META });
     expect(p.log_excerpt).toBe('line');
   });
+  it('an idea can attach a log and screenshots too, and the same filtered slice rides along', async () => {
+    const shot = 'data:image/jpeg;base64,AAAA';
+    const p = await send({ category: 'idea', message: 'a dark mode please', attach_log: true, screenshots: [shot] }, { slice: SLICE, meta: null });
+    expect(p.category).toBe('idea');
+    expect(p.log_excerpt).toBe('line');
+    expect(p.screenshots).toEqual([shot]);
+  });
+  it('an idea without the box ticked sends no log', async () => {
+    const p = await send({ category: 'idea', message: 'a dark mode please', screenshots: [] }, { slice: SLICE, meta: null });
+    expect('log_excerpt' in p).toBe(false);
+  });
   it('adds nothing when Target Info has no target', async () => {
     const p = await send({ category: 'idea', message: 'a dark mode please' }, { slice: { ok: false }, meta: null });
     expect('log_meta' in p).toBe(false);

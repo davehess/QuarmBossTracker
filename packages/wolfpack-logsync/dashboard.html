@@ -1049,16 +1049,11 @@ function _wpFbSetKind(k) {
   var b = document.getElementById('wpFbBug'), i = document.getElementById('wpFbIdea');
   if (b) b.style.opacity = _wpFbKind === 'bug'  ? '1' : '0.55';
   if (i) i.style.opacity = _wpFbKind === 'idea' ? '1' : '0.55';
-  // A log slice explains a BUG. Offering it on an idea invites someone to attach
-  // their log to "please add a dark mode", which is data we asked for and do not
-  // need — so the whole row disappears rather than being merely ignored.
+  // The log slice is offered on EVERY kind (the guild lead, 2026-11-06: "feedback that isn't a bug
+  // should also be able to take screenshots and include logs"). It is the same opt-in as for a bug:
+  // unticked by default, previewed line by line, filtered by buildFeedbackLogSlice.
   var row = document.getElementById('wpFbAttachRow');
-  if (row) row.style.display = _wpFbKind === 'bug' ? 'flex' : 'none';
-  if (_wpFbKind !== 'bug') {
-    var cb = document.getElementById('wpFbAttach');
-    if (cb) cb.checked = false;
-    _wpFbRenderPreview(null);
-  }
+  if (row) row.style.display = 'flex';
 }
 function _wpFbRenderPreview(slice) {
   var el = document.getElementById('wpFbPreview');
@@ -1218,7 +1213,7 @@ async function _wpFbSend() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         category: _wpFbKind, message: text,
-        attach_log: !!(cb && cb.checked && _wpFbKind === 'bug'), minutes: _wpFbMin,
+        attach_log: !!(cb && cb.checked), minutes: _wpFbMin,
         screenshots: _wpFbShots.slice(0, WP_FB_MAX_SHOTS),
       }),
     });

@@ -191,7 +191,7 @@ describe('a turned picture: arrows, slices, fit', () => {
 
 const tick = () => new Promise(r => setImmediate(() => setImmediate(r)));
 
-async function boot({ store = {}, self = { x: 0, y: 0, z: 0, heading: 0, name: 'Aldenmar' }, points = [], group = [], corpses = [], segs = [[0, 0, 100, 0, 0]], kiteLoops = [], withCoach = false, scale = 1 } = {}) {
+async function boot({ store = {}, self = { x: 0, y: 0, z: 0, heading: 0, name: 'Aldenmar' }, points = [], group = [], corpses = [], warders = [], segs = [[0, 0, 100, 0, 0]], kiteLoops = [], withCoach = false, scale = 1 } = {}) {
   const script = MAP_HTML.slice(MAP_HTML.indexOf('<script>') + 8, MAP_HTML.lastIndexOf('</script>'));
   const all = {}, canvas = { seq: [] }, docL = {};
   const mkEl = (tag) => {
@@ -222,7 +222,7 @@ async function boot({ store = {}, self = { x: 0, y: 0, z: 0, heading: 0, name: '
   const payload = {
     zone: 'thedeep', long_name: 'The Deep', version: 'thedeep@v', status: 'ok', now: Date.now(), local_only: false,
     points, map: { bands: [0], segs, bounds: { minX: -300, maxX: 300, minY: -300, maxY: 300 } },
-    self, group, raid: [], target: null, seen: [], unassigned: [], timers: [], corpses,
+    self, group, raid: [], target: null, seen: [], unassigned: [], timers: [], corpses, warders,
   };
   const calls = [];
   const fetchImpl = (u, o) => {
@@ -470,6 +470,19 @@ describe('the kite circles, the forecast and the corpses turn with the picture',
     const want = px(0, 60, m.S.view, m.S.w, m.S.h);
     near(skull.x, want[0], 1e-4); near(skull.y, want[1], 1e-4);
     near(want[0], m.S.w / 2 + 60, 1e-4);                                           // facing west, north is the right
+  });
+  it('a Sol Ro death-touch warder draws with its skull, its aggro ring and the minutes left (solro-warders.test.js)', async () => {
+    const until = Date.now() + 42 * 60000 + 20000;
+    const m = await boot({ warders: [{ wing: 'Xuzl', x: 0, y: 60, z: 0, aggro: 60, assist: 100, until }] });
+    const skull = m.texts().find(t => t.t === '☠');
+    expect(skull, 'the skull is drawn').toBeTruthy();
+    const want = px(0, 60, m.S.view, m.S.w, m.S.h);
+    near(skull.x, want[0], 1e-4); near(skull.y, want[1], 1e-4);
+    expect(m.texts().some(t => t.t === 'DT 42m')).toBe(true);
+    const frame = m.canvas.seq.slice(m.canvas.seq.map(s => s[0]).lastIndexOf('clearRect'));
+    const arcs = frame.filter(s => s[0] === 'arc' && Math.abs(s[1] - want[0]) < 1e-6 && Math.abs(s[2] - want[1]) < 1e-6).map(s => s[3]);
+    expect(arcs).toContain(60 * m.S.view.scale);    // the aggro ring, drawn though the ◯ switch is off by default
+    expect(arcs).toContain(100 * m.S.view.scale);   // Xuzl's dashed assist ring
   });
   it('nothing in the drawing projects a point by hand except the walls, and they turn too', () => {
     const js = stripJs(MAP_HTML);

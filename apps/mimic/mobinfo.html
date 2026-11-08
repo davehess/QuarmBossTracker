@@ -30,6 +30,14 @@
     background:#2a1d3d;text-decoration:none;cursor:pointer;padding:1px 7px;border:1px solid var(--wp-purple);
     border-radius:4px;vertical-align:middle;white-space:nowrap;letter-spacing:.3px}
   .mob .pqdi:hover{background:#3d2a57;border-color:#d2a8ff;color:#e9d5ff}
+  /* A spell name that opens its PQDI entry (targetInfoShared.js spellLinkHtml): reads as text, underlines on hover. */
+  .splink{color:inherit;text-decoration:none;cursor:pointer}
+  .splink:hover{text-decoration:underline dotted;color:var(--wp-text)}
+  /* Run speed beside the stats line; ROOTED is the one loud state (red, solid). */
+  .mob .move{font-size:9px;color:var(--wp-dim);margin-top:1px}
+  .mob .move .mv{margin-left:6px;font-weight:600}
+  .mob .move .mv.orange{color:var(--wp-orange)}
+  .mob .move .mv.rooted{background:var(--wp-red);color:var(--wp-bg);border-radius:3px;padding:0 5px;font-weight:700;letter-spacing:.5px;text-shadow:none}
   .mob .cls{font-size:10px;color:#9b8bb5;margin-left:4px}
   /* A Shadow Knight mob's Harm Touch: green while it has it, red once used. */
   .mob .ht{font-size:10px;margin-left:5px;padding:0 4px;border:1px solid currentColor;border-radius:3px;white-space:nowrap;font-variant-numeric:tabular-nums}
@@ -337,6 +345,7 @@
     <div id="body"></div>
     <div id="empty">no target</div>
   </div>
+<script src="targetInfoShared.js"></script>
 <script>
   let PORT = 7779;
   window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
@@ -503,7 +512,7 @@
     // FB-83: landed on a mob of this name, not proven to be this spawn — "?" and dimmed, never shown as fact.
     if (b.unproven) tip = _slowUncertainTip('') + ' · ' + tip;
     return '<div class="tbuff'+(b.unproven ? ' unc' : '')+'" title="'+tip+'">'
-         +    '<span class="bn">'+esc(b.name)+(b.unproven ? '?' : '')+ownerStr+'</span>'
+         +    '<span class="bn">'+WpTargetInfo.spellLinkHtml(b.name, b.spell_id, esc)+(b.unproven ? '?' : '')+ownerStr+'</span>'
          +    '<div class="bbar"><div style="width:'+pct.toFixed(0)+'%;background:'+col+'"></div></div>'
          +    '<span class="bt" title="'+esc(btTip)+'">'+bt+'</span>'
          +  '</div>';
@@ -589,7 +598,7 @@
       var pct = Math.max(0, Math.min(100, (rem / tot) * 100));
       var lbl = rem >= 0.1 ? rem.toFixed(1) + 's' : '✓';
       rows += '<div class="tbuff" title="'+esc(c.caster+' casting '+c.spell)+'">'
-           +    '<span class="bn">'+esc(c.caster)+' · '+esc(c.spell)+'</span>'
+           +    '<span class="bn">'+esc(c.caster)+' · '+WpTargetInfo.spellLinkHtml(c.spell, c.spell_id, esc)+'</span>'
            +    '<div class="bbar"><div style="width:'+pct.toFixed(0)+'%;background:var(--wp-blue)"></div></div>'
            +    '<span class="bt">'+lbl+'</span>'
            +  '</div>';
@@ -631,6 +640,20 @@
     var n = mob ? Math.round(Number(mob.slow_mitigation)) : 0;
     if (!(n > 0 && n < 100)) return '';
     return '<span class="chip imm" title="This mob resists '+n+'% of any slow: a slow lands at only '+(100-n)+'% of its strength. The game does not tell you.">Slow \u2212'+n+'%</span>';
+  }
+  // FB-118 (a raider, 2026-11-04: "Social aggro will call another mob ... Quazlith came from flame mephit"): the
+  // kinds in this zone that come to this mob's aid, on the Stats tab beside the other pre-pull chips. The bot's
+  // faction_assisted_by (capped at 12, + faction_assisted_by_more) is the same list the F/Q/V Faction tab shows.
+  // Catalog only: it says who CAN come, not who is close enough to.
+  function socialChip(mob){
+    var by = mob && Array.isArray(mob.faction_assisted_by) ? mob.faction_assisted_by : [];
+    var n = by.length + (Number(mob && mob.faction_assisted_by_more) || 0);
+    if (!(n > 0)) return '';
+    var names = [], seen = {};
+    by.forEach(function(x){ var s = x && x.name ? String(x.name) : ''; if (s && !seen[s]) { seen[s] = 1; names.push(s); } });
+    var more = n - names.length;
+    return '<span class="chip warn" title="Pull this and others can come to its aid: '+esc(names.join(', '))+(more > 0 ? ' and '+more+' more' : '')
+      +'. Any of these kinds in this zone may join if they are close enough. Full list: F/Q/V, Faction.">Social \u00d7'+n+'</span>';
   }
   // The order the chips are drawn in (FB-104: Summon sat last because the catalog lists codes numerically and a
   // same-name sibling row's extras are appended after the primary's). What the mob DOES to you first, then what
@@ -758,19 +781,10 @@
   // The agent keeps the last 50 mobs this PC targeted (/api/target-history: key, name, zoneName, firstMs,
   // lastMs, minHp, killedMs, killedHow, restored), newest first. ◀ ▶ step through them with the live target
   // skipped; a past mob is painted by the same code as a live one, with a stamp under its name.
-  var PG_LABEL = { all: 'All', killed: 'Killed', alive: 'Left alive' };
-  var PG_NEXT_FILTER = { all: 'killed', killed: 'alive', alive: 'all' };
-  var PG_HOW = { 'corpse-id': 'its corpse took its place in your target window', 'corpse-name': 'a corpse of its name took its place in your target window',
-                 hp0: 'its health bar reached 0', slain: 'a "slain" message named it' };
-  // "killed 4m ago" · "last seen 1h 5m ago" · "killed just now".
-  function pgWhen(verb, ms){
-    var m = Math.floor(Math.max(0, ms) / 60000);
-    if (m < 1) return verb + ' just now';
-    return verb + ' ' + (m < 60 ? m + 'm' : Math.floor(m / 60) + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '')) + ' ago';
-  }
-  function pgMatches(e, filter){
-    return filter === 'killed' ? !!e.killedMs : (filter === 'alive' ? !e.killedMs : true);
-  }
+  // The labels, wording and row text live in targetInfoShared.js: the Timers canvas draws the same kill log
+  // from the same functions (the guild lead, 2026-11-06: parity between Target Info and canvas mode).
+  var PG_LABEL = WpTargetInfo.PG_LABEL, PG_NEXT_FILTER = WpTargetInfo.PG_NEXT_FILTER, PG_HOW = WpTargetInfo.PG_HOW;
+  var pgWhen = WpTargetInfo.pgWhen, pgMatches = WpTargetInfo.pgMatches;
   // Where the pinned entry (curKey; null = following the live target) sits in the list, with the live target
   // left out. older: the next match further back (undefined = none); newer: the next match toward the present,
   // null when the pinned one is the newest match (▶ then returns to the live target), undefined while live.
@@ -810,18 +824,13 @@
   }
   // The Recent tab: one button per target that passes the filter, newest first; the live one reads "now".
   function recentRowsHtml(list, filter, liveKey, pinKey, now){
-    var rows = '';
-    for (var i = 0; i < list.length; i++) {
-      var e = list[i];
-      if (!e || !e.key || !pgMatches(e, filter)) continue;
-      var live = e.key === liveKey;
-      var st = live ? 'now' : (e.killedMs ? pgWhen('killed', now - e.killedMs) : pgWhen('left alive, seen', now - e.lastMs));
-      var zone = e.zoneName || (e.zone != null ? 'zone ' + e.zone : '');
-      var line2 = (zone ? zone + ' · ' : '') + st + (e.minHp != null && !e.killedMs ? ' · lowest HP ' + e.minHp + '%' : '');
-      rows += '<button type="button" class="rcrow ' + (e.killedMs ? 'k' : 'a') + (e.key === pinKey ? ' on' : '') + '" data-rk="' + esc(e.key) + '" title="Open ' + esc(e.name) + ' here">'
-            +   '<span class="rn">' + esc(e.name) + '</span><span class="rz">' + esc(line2) + '</span></button>';
+    var rows = '', kl = WpTargetInfo.killLogRows(list, filter, liveKey, now);
+    for (var i = 0; i < kl.length; i++) {
+      var r = kl[i];
+      rows += '<button type="button" class="rcrow ' + (r.killed ? 'k' : 'a') + (r.key === pinKey ? ' on' : '') + '" data-rk="' + esc(r.key) + '" title="Open ' + esc(r.name) + ' here">'
+            +   '<span class="rn">' + esc(r.name) + '</span><span class="rz">' + esc(r.line2) + '</span></button>';
     }
-    if (!rows) return '<div class="rcempty">' + (list.length ? 'nothing matches ' + esc(PG_LABEL[filter] || 'that') : 'no targets yet — target a mob and it lands here') + '</div>';
+    if (!rows) return '<div class="rcempty">' + esc(WpTargetInfo.killLogEmpty(list, filter)) + '</div>';
     return '<div class="rclist" data-wp-sect="recent">' + rows + '</div>';
   }
   // ── end target history helpers ──────────────────────────────────────────────
@@ -1044,7 +1053,7 @@
         if (furl) { try { window.mimic.openExternal(furl); } catch (e) {} }
         return;
       }
-      var a = t.closest('.pqdi');
+      var a = t.closest('.pqdi, .splink');
       if (!a) return;
       ev.preventDefault();
       var url = a.getAttribute('data-pqdi');
@@ -1058,12 +1067,12 @@
       if (ev.target && ev.target.closest && ev.target.closest('.mretry')) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} }
     });
     bodyEl.addEventListener('mouseover', function(ev){
-      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .inm, .fqvtab, .qcopy, .qtoggle, .facl') : null;
+      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .splink, .inm, .fqvtab, .qcopy, .qtoggle, .facl') : null;
       if (a) { try { window.mimic.overlayHoverInteractive(true); } catch (e) {} }
       if (a && a.classList.contains('inm')) _itemTipShow(a);   // FB-73: the item's card
     });
     bodyEl.addEventListener('mouseout', function(ev){
-      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .inm, .fqvtab, .qcopy, .qtoggle, .facl') : null;
+      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .splink, .inm, .fqvtab, .qcopy, .qtoggle, .facl') : null;
       if (a) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} }
       if (a && a.classList.contains('inm')) _itemTipHide();
     });
@@ -1534,6 +1543,16 @@
 
   // The ⟲ Recent tab: the agent's ring as buttons, newest first. It needs no live target, so it answers before
   // the "no target" empty state. Rewritten only when its HTML changed (the minute-level "ago" text), keeping the scroll.
+  // "Run speed: 1.25" from the catalog whenever it is known, and beside it what the agent concluded about movement
+  // (agent classifyMovement: ROOTED only from a landed root spell or live evidence, never from standing still; a
+  // catalog speed of 0 reads "does not move"). The wording is WpTargetInfo.moveView's, shared with the canvas piece.
+  function moveLineHtml(mi, mob){
+    var v = WpTargetInfo.moveView(mi, mob);
+    if (!v) return '';
+    var cls = v.rooted ? 'mv rooted' : ('mv' + (v.tone === 'orange' ? ' orange' : ''));
+    return '<div class="move" data-wp-sect="move">' + esc(v.run)
+         + (v.label ? '<span class="' + cls + '"' + (v.tip ? ' title="' + esc(v.tip) + '"' : '') + '>' + esc(v.label) + '</span>' : '') + '</div>';
+  }
   function _renderRecent(){
     emptyEl.style.display = 'none';
     var lvlElRc = document.getElementById('lvlRange'); if (lvlElRc) lvlElRc.textContent = '';
@@ -1693,7 +1712,7 @@
                + (lcSure ? 'Several of this mob\'s spells print this same message and the timing did not separate them — the family is right, the tier may not be.'
                          : 'Named from the message its spell printed when it landed.')
                + (lc.mana ? ' Costs ' + lc.mana + ' mana.' : '') + '">'
-               + '\u2728 ' + esc(lc.spell) + (lcSure ? '?' : '')
+               + '\u2728 ' + WpTargetInfo.spellLinkHtml(lc.spell, lc.spell_id, esc) + (lcSure ? '?' : '')
                + '<span class="sn"> ' + lcAge + 's ago</span></div>';
     }
     var sub = [];
@@ -1755,7 +1774,7 @@
         var procRows = '';
         for (var pri = 0; pri < mob.procs.length; pri++){
           var pr = mob.procs[pri] || {};
-          var prName = esc(pr.name || ('Spell #' + pr.spell_id)) + esc(PROC_KIND[pr.kind] || '');
+          var prName = WpTargetInfo.spellLinkHtml(pr.name || ('Spell #' + pr.spell_id), pr.spell_id, esc) + esc(PROC_KIND[pr.kind] || '');
           var prChance = (pr.chance == null) ? '—' : (Math.round(Number(pr.chance)) + '%');
           procRows += '<div style="display:grid;grid-template-columns:minmax(0,1fr) 40px minmax(0,1.5fr);gap:6px;padding:1px 0;font-size:10.5px;align-items:baseline">'
                     +   '<span style="color:#d2a8ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + prName + '</span>'
@@ -1804,7 +1823,7 @@
           var rows = '';
           for (var spi = 0; spi < list.length; spi++){
             var sp = list[spi];
-            var name = esc(sp.name || ('Spell #' + sp.id));
+            var name = WpTargetInfo.spellLinkHtml(sp.name || ('Spell #' + sp.id), sp.id, esc);
             rows += '<div style="display:grid;grid-template-columns:'+cols+';gap:6px;padding:1px 0;font-size:10.5px;align-items:baseline">'
                   +   '<span style="color:#d2a8ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + name + '</span>'
                   +   (withResist ? '<span style="color:#f0b429;text-align:right;font-size:9.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(fmtResist(sp)) + '</span>' : '')
@@ -1849,6 +1868,7 @@
         for (var j=0;j<orderedSpecs.length;j++){ var lab=orderedSpecs[j]; chips += specChip(lab); }
       }
       chips += slowMitChip(mob);
+      chips += socialChip(mob);
       chips += hitsChip(mi.target_hits);   // after the specials: seen in the fight, not catalogued
       if (chips) spec = '<div class="spec">'+chips+'</div>';
       // FB-95: "no catalog stats" used to stand for six different situations. The agent now says which
@@ -1924,6 +1944,7 @@
       + pastStampHtml(mi.past, Date.now())
       + (mob && mob.zone ? '<div class="zone">@ '+esc(mob.zone)+'</div>' : '')
       + (sub.length ? '<div class="sub" data-wp-sect="stats">'+sub.join(' · ')+'</div>' : '')
+      + moveLineHtml(mi, mob)
       + slotLine
       + hpBar
       + timersLine(mi.target_timers)

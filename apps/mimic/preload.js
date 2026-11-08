@@ -1454,6 +1454,7 @@ contextBridge.exposeInMainWorld('mimic', {
   agentPost:        (route, body) => ipcRenderer.invoke('agent-post', route, body),
   saveConfig:    (cfg) => ipcRenderer.invoke('save-config', cfg),
   getAgentPort:  () => ipcRenderer.invoke('get-agent-port'),
+  getRaidRoutes: () => ipcRenderer.invoke('get-raid-routes'),
   eqSetupForMe:  () => ipcRenderer.invoke('eq-setup-for-me'),
   relaunchAgent: () => ipcRenderer.invoke('relaunch-agent'),
   // Live per-process CPU + memory, so "how much does Mimic cost?" is answered by
@@ -1557,6 +1558,11 @@ contextBridge.exposeInMainWorld('mimic', {
   // Overlay lock state — main pushes this to overlay renderers so they can
   // show/hide their drag handle.
   onOverlayLocked: (cb)   => ipcRenderer.on('overlay-locked', (_e, locked) => cb(locked)),
+  // The Weave timer (apps/mimic/weave.js, in the main process): the engine's state, straight from the Zeal pipe,
+  // ~30×/s while a fight is on. Subscribing asks main to send this window (and its frames: the Canvas draws panels in
+  // iframes); setWeaveConfig is the HUD builder's settings plus the character's level and race.
+  onWeaveState:   (cb)    => { ipcRenderer.send('weave-subscribe'); ipcRenderer.on('weave-state', (_e, st) => cb(st)); },
+  setWeaveConfig: (cfg)   => ipcRenderer.send('weave-config', cfg),
   // Setup-mode state — pushed to each overlay with its identifying key so
   // the renderer can show the per-window control strip (opacity slider, etc.)
   onSetupMode:      (cb)         => ipcRenderer.on('setup-mode', (_e, payload) => cb(payload)),
@@ -1796,6 +1802,9 @@ contextBridge.exposeInMainWorld('mimic', {
   // Scan the active UI skin's XML files for each window's design size — used
   // as the authoritative MAX size in the visual layout. Returns { skin, sizes }.
   uiStudioScanWindowDefaults: (eqDir)        => ipcRenderer.invoke('ui-studio-scan-window-defaults', eqDir),
+  // "Real look": the skin's XML as a model, and its textures decoded to { width, height, rgba } by file name.
+  uiStudioSkinModel:    (eqDir)              => ipcRenderer.invoke('ui-studio-skin-model', eqDir),
+  uiStudioSkinTextures: (eqDir, skin, files) => ipcRenderer.invoke('ui-studio-skin-textures', eqDir, skin, files),
   uiStudioCapturePvpDraft:(params)           => ipcRenderer.invoke('ui-studio-capture-pvp-draft', params),
 
   // Mimic Discord login (device-code flow). `mimicLinkStart` returns

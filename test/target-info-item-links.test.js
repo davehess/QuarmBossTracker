@@ -206,7 +206,7 @@ describe('the wiring', () => {
 
   it('hover handshake covers the name and the PQDI link, and the card follows the name', () => {
     const hover = sliceBlock(src, "bodyEl.addEventListener('mouseover'", '\n  [tabStatsBtn');
-    expect((hover.match(/closest\('\.pqdi, \.inm, /g) || []).length).toBe(2);
+    expect((hover.match(/closest\('\.pqdi, \.splink, \.inm, /g) || []).length).toBe(2);
     expect(hover).toMatch(/_itemTipShow\(a\)/);
     expect(hover).toMatch(/_itemTipHide\(\)/);
   });

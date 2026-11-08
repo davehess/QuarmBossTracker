@@ -19,8 +19,8 @@ const main   = readSource(path.join(ROOT, 'apps', 'mimic', 'main.js'));
 
 function studioZeal() {
   const parse = sliceBlock(studio, '  function parseIni(text){', '\n    return { lines: lines, sections: sections };\n  }');
-  const bars  = sliceBlock(studio, '  function _zealBarWindows(parsed, srcW, srcH, fxX, fxY){', '\n    return e;\n  }');
-  return evalBlock(parse + '\n' + bars, ['parseIni', '_zealBarWindows', '_zealBarEdits']);
+  const bars  = sliceBlock(studio, '  var ZEAL_FONT_METRICS = {', '\n    return e;\n  }');
+  return evalBlock(parse + '\n' + bars, ['parseIni', '_zealBarWindows', '_zealBarEdits', '_raidBarsGrid', 'RAID_FAKE_MEMBERS']);
 }
 
 describe('UI Studio shows Zeal\'s raid bars and assist bar as Zeal windows', () => {
@@ -46,7 +46,7 @@ describe('UI Studio shows Zeal\'s raid bars and assist bar as Zeal windows', () 
 
   it('the assist bar moves but its size is its text', () => {
     const [w] = z._zealBarWindows(ini('[AssistBar]\nEnabled=FALSE\nLeft=5\nTop=30\nFontSize=20\n'), 1920, 1080, 1, 1);
-    expect(w).toMatchObject({ zealBar: 'assistbar', fixedSize: true, w: 220, h: 44 });
+    expect(w).toMatchObject({ zealBar: 'assistbar', fixedSize: true, w: 264, h: 51 });   // arial_20, Zeal's own metrics
     expect(w.label).toBe('🐺 Assist bar (/assistbar) · off');
     w.x = 50; w.sizeEdited = true;
     expect(z._zealBarEdits(w)).toEqual({ Left: 50, Top: 30 });
@@ -54,11 +54,80 @@ describe('UI Studio shows Zeal\'s raid bars and assist bar as Zeal windows', () 
 
   it('positions remap to the target resolution; sizes stay pixels', () => {
     const [w] = z._zealBarWindows(ini('[AssistBar]\nLeft=100\nTop=200\nFontSize=16\n'), 2560, 1440, 0.75, 0.75);
-    expect([w.x, w.y, w.w]).toEqual([75, 150, 176]);
+    expect([w.x, w.y, w.w]).toEqual([75, 150, 203]);
   });
 
-  it('no section, no window', () => {
-    expect(z._zealBarWindows(ini('[Zeal]\nPipeDelay=100\n'), 1920, 1080, 1, 1)).toEqual([]);
+  it('no raid-bar section, no raid bars; no assist-bar section, the assist bar shows where Zeal would draw it (FB-120)', () => {
+    const out = z._zealBarWindows(ini('[Zeal]\nPipeDelay=100\n'), 1920, 1080, 1, 1);
+    expect(out.map(w => w.zealBar)).toEqual(['assistbar']);
+    expect(out[0]).toMatchObject({ section: 'AssistBar', x: 5, y: 30, w: 203, h: 40 });   // Zeal's defaults: 5,30, arial_16
+    expect(out[0].label).toBe('🐺 Assist bar (/assistbar) · not set up');
+    out[0].x = 40;
+    expect(z._zealBarEdits(out[0])).toEqual({ Left: 40, Top: 30 });   // a move writes a new [AssistBar]
+  });
+
+  it('a section-less assist bar is not added twice when zeal.ini has one', () => {
+    const out = z._zealBarWindows(ini('[AssistBar]\nEnabled=TRUE\nFontSize=16\n'), 1920, 1080, 1, 1);
+    expect(out.length).toBe(1);
+    expect(out[0].label).toBe('🐺 Assist bar (/assistbar)');
+  });
+});
+
+// FB-120: "please move GemsGameWnd to its own thing" — the Gems minigame is not a casting window.
+describe('UI Studio categories: the Gems game has its own toggle', () => {
+  const { FILTER_CATEGORIES } = evalBlock(sliceBlock(studio, '  var FILTER_CATEGORIES = [', '\n  ];'), ['FILTER_CATEGORIES']);
+  const first = (n) => FILTER_CATEGORIES.find(c => c.test(n)).key;
+  it('GemsGameWnd lands in gemsgame, off by default; spell gems and hotbars stay put', () => {
+    expect(first('GemsGameWnd')).toBe('gemsgame');
+    expect(FILTER_CATEGORIES.find(c => c.key === 'gemsgame').on).toBe(false);
+    expect(first('CastSpellWnd')).toBe('hotbars');
+    expect(first('HotButtonWnd')).toBe('hotbars');
+  });
+});
+
+// FB-120 (the guild lead, 2026-11-05): "The Raidbars setup needs to show fake player rows, up to 72 players bars."
+// The grid is RaidBars::LoadBitmapFont + QueueByClass: cells top to bottom, then the next column, stopping at the box.
+describe('raid bars draw a full raid laid out like Zeal does', () => {
+  const z = studioZeal();
+  it('Default font: 76.25 × 21.25 cells; a full-height box holds all 71', () => {
+    const g = z._raidBarsGrid(1880, 980, {});
+    expect([g.gw, g.gh, g.bw, g.bh]).toEqual([76.25, 21.25, 68, 8]);
+    expect(z.RAID_FAKE_MEMBERS).toBe(71);
+    expect(g.fit).toBe(71);
+    expect(g.cells[46]).toMatchObject({ type: 'member', x: 76.25, y: 0 });   // 46 rows fit in 980, so the 47th starts column two
+  });
+  it('a small box shows how many will not fit', () => {
+    const g = z._raidBarsGrid(300, 400, {});
+    expect(g.fit).toBe(54);   // 18 rows × 3 columns
+  });
+  it('font and bar settings change the cell', () => {
+    const g = z._raidBarsGrid(1000, 1000, { Font: 'arial_16', BarWidth: '100' });
+    expect([g.gw, g.gh, g.bw, g.bh]).toEqual([154.25, 39.25, 100, 13]);
+    expect(z._raidBarsGrid(1000, 1000, { Font: 'not_a_font' }).gw).toBe(76.25);   // sized as Default
+  });
+
+  // The guild lead, 2026-11-06: "raid groups for raidbars, where it adds in up to 13 subgroupings (one per group and
+  // ungrouped)". RaidBars::QueueByGroup: a label row per group, up to 6 members, Ungrouped last, you included.
+  it('GroupSort lays out 13 headed groups of a full 72', () => {
+    const g = z._raidBarsGrid(1880, 980, { GroupSort: 'TRUE' });
+    const labels = g.cells.filter(c => c.type === 'label').map(c => c.text.trim());
+    expect(labels).toEqual(['Group 1:', 'Group 2:', 'Group 3:', 'Group 4:', 'Group 5:', 'Group 6:', 'Group 7:', 'Group 8:',
+      'Group 9:', 'Group 10:', 'Group 11:', 'Group 12:', 'Ungrouped:']);
+    expect([g.fit, g.total]).toEqual([72, 72]);
+    expect(g.cells[0]).toMatchObject({ type: 'label', x: 0, y: 0, labelDy: 7.25 });   // gh - line spacing - 2
+    expect(g.cells.slice(1, 7).every(c => c.type === 'member')).toBe(true);
+    expect(g.cells[7]).toMatchObject({ type: 'label', text: 'Group 2: ' });
+  });
+  it('by group, a small box stops mid-group, and ShowAll pads a short group with Empty rows but not Ungrouped', () => {
+    expect(z._raidBarsGrid(300, 400, { GroupSort: '1' }).fit).toBe(46);   // 54 slots: 7 full groups + a label + 4
+    const all = z._raidBarsGrid(1880, 980, { GroupSort: 'TRUE', ShowAll: 'TRUE' });
+    const types = all.cells.map(c => c.type === 'label' ? c.text.trim() : c.type);
+    const g12 = types.indexOf('Group 12:'), ung = types.indexOf('Ungrouped:');
+    expect(types.slice(g12 + 1, ung)).toEqual(['member', 'member', 'member', 'empty', 'empty', 'empty']);
+    expect(types.slice(ung + 1)).toEqual(['member', 'member', 'member']);
+  });
+  it('GroupSort off keeps the class layout (71, you left out)', () => {
+    expect(z._raidBarsGrid(1880, 980, { GroupSort: 'FALSE' })).toMatchObject({ fit: 71, total: 71 });
   });
 
   it('is wired: loaded from zeal.ini, saved through _zealBarEdits, no grip on a fixed size, in the Zeal filter', () => {

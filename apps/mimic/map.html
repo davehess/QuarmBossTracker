@@ -308,6 +308,7 @@
         <div class="grp">Colours</div>
         <div class="row"><span class="bl">Scheme</span><select id="cfgScheme"><option value="default">Default</option><option value="contrast">High contrast</option><option value="cb">Colour-blind safe</option><option value="custom">Custom</option></select></div>
         <label class="row" title="Brewall layers: your floor in the wall colour, the floors above and below you in Brewall's layer colours (orange, green, cyan up; pink, purple down), as eqmaps.info's mapping standard draws them. A Brewall map file keeps its own colours. Map's own: each line keeps the colour its map file gives it. One colour: every wall line in the colour below."><span class="bl">Wall colours</span><select id="cfgWallMode"><option value="layers">Brewall layers</option><option value="map">Map's own</option><option value="one">One colour</option></select></label>
+        <label class="row" title="Which planned route the Planned route layer draws in the Planes of Power elemental planes. Full boss clear: every boss in order. Minimal path: the shortest way through."><span class="bl">Planned route path</span><select id="cfgPlanMode"><option value="full">Full boss clear</option><option value="min">Minimal path</option></select></label>
         <div id="cfgCols"></div>
         <div class="grp">Background</div>
         <div class="row"><span class="bl">Colour</span><input type="color" id="cfgBg"><button class="rs" type="button" id="cfgBgRs" title="Back to the scheme's colour">↺</button></div>
@@ -1568,6 +1569,8 @@
     ['focus', 'Raid focus target (MA / most targeted)'], ['corpses', 'Guild corpses (☠)'], ['raidRoute', 'Saved raid route (gold line, numbered stops)'],
     ['kite', 'Kite coach (your circling: lap, drift)'], ['kiteLoops', 'Guild kite loops'],
     ['traps', 'Traps (△ spots and trap-table traps)'],
+    ['warders', 'Sol Ro death-touch warders (☠ DT, with their aggro ring)'],
+    ['plannedRoute', 'Planned route (raid plan: dashed gold line, numbered stops)'],
   ];
   var CFG_GLYPHS = [
     ['👁', 'Sees invisible'], ['👁ᵤ', 'Sees invisible to undead'], ['🥷', 'Sees through hide'], ['↯', 'Summons'],
@@ -1607,7 +1610,7 @@
     // wallMode 'layers' (Brewall's floor colours) is the default since 2026-10-13; wallV marks a save made after that,
     // so an older save's 'map' (never chosen, it was the old default) moves to 'layers' and a newer one is kept.
     return { show: show, facing: FACING_DEFAULT, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'layers', wallV: 2, bgA: null, text: 1, ink: INK_DEFAULT, avoidEq: null, showClear: false, tail: TAIL_DEFAULT,
-      kiteOthers: 'live', kiteFilter: 'all', kiteDrift: false, orient: ORIENT_DEFAULT, compass: COMPASS_DEFAULT };
+      kiteOthers: 'live', kiteFilter: 'all', kiteDrift: false, planMode: null, orient: ORIENT_DEFAULT, compass: COMPASS_DEFAULT };
   }
   // ⚙ → Line strength (the guild lead, 2026-10-13, over the game with Opacity full and no background: "make the maps
   // and spawns more intense for how defined the lines and whatnot are ... its difficult to see"). One number, 1 to 3:
@@ -1644,6 +1647,7 @@
     if (TAIL_STEPS.indexOf(saved.tail) >= 0) c.tail = saved.tail;   // seconds of target trail drawn; anything off the slider's steps is ignored
     if (saved.kiteOthers === 'live' || saved.kiteOthers === 'all') c.kiteOthers = saved.kiteOthers;
     if (saved.kiteFilter === 'all' || saved.kiteFilter === 'speed' || saved.kiteFilter === 'near') c.kiteFilter = saved.kiteFilter;
+    if (saved.planMode === 'full' || saved.planMode === 'min') c.planMode = saved.planMode;   // null (unset) follows the JSON's default
     if (saved.kiteDrift === true) c.kiteDrift = true;   // false (unset) = no forecast
     c.orient = orientFrom(saved); c.compass = compassFrom(saved);   // north up and the rose, unless a save says otherwise
     if (saved.showClear === true) c.showClear = true;   // outlines always on; off shows them only while ⚙ is open or editing
@@ -1799,6 +1803,7 @@
     sideMode: 'grow',   // Timers button: 'grow' widens the window by the list (map keeps its size), 'share' shrinks the map
     timerBy: {}, candBy: {}, seenBy: {}, watchBy: {}, menuPid: null, drag: null, w: 0, h: 0, fitted: false,
     trk: {}, sideAt: 0,
+    plan: null,   // planFor()'s cache
     route: null, routeVer: null,   // the saved raid route (prepRoute) and the agent's version of it (route_ver)
     local: null, localVer: null, walls: 'auto', labels: 'all',   // the player's own map files (prepLocal), the version held, Walls: Auto|Ours only, Labels all|targets|off
     followOff: { x: 0, y: 0 }, followLock: false, followWho: 'me', pointTrails: {}, kills: 0, killSeen: {},   // Follow me's screen spot + lock; killed mobs' paths (see noteKills)
@@ -1973,6 +1978,7 @@
     matesFeed(p.group, dm ? (S.direct.p.at || now) : (Number(p.pos_at) > 0 ? Number(p.pos_at) : now));   // a group member's circle, as it forms (FB-103)
     (p.raid || []).forEach(function (m) { put('r:' + m.name, m); });
     if (p.target) put(targetKey(p.target), p.target);
+    if (p.pet) put('pet', p.pet);
     for (var k in S.trk) if (!keep[k]) delete S.trk[k];
     // The age readout: when the newest position sample was taken (a push carries Mimic's clock, the poll the agent's).
     if (dm) { S.sampleAt = S.direct.p.at || now; S.sampleSrc = 'direct'; }
@@ -2480,6 +2486,68 @@
     }
     ctx.restore();
   }
+  // The planned raid route (the guild lead, 2026-11-06: "mimic map should display the path"): raidRoutes.json, shipped with Mimic
+  // and handed over by main (window.mimic.getRaidRoutes), holds the planned path through the Planes of Power elemental planes. Its
+  // x/y are in the Zeal MAP frame, the negation of the server frame, which is exactly this page's screen frame, so a point goes
+  // back to the server frame by negating it and then draws through wpt() like a spawn point (checked against Magmaton's spawn
+  // in pofire: server 781,-32, JSON -781,32). Built once per zone and choice, reused by every repaint.
+  var PLAN_DATA = null;
+  function planModeOf(data, cfg) {
+    var m = cfg && cfg.planMode;
+    return m === 'full' || m === 'min' ? m : (data && data.default === 'min' ? 'min' : 'full');
+  }
+  function prepPlan(data, zone, mode) {
+    var z = data && data.zones && zone ? data.zones[zone] : null, r = z ? z[mode] : null, i, pts = [], stops = [];
+    if (!r || !Array.isArray(r.route) || r.route.length < 2) return null;
+    for (i = 0; i < r.route.length; i++) {
+      if (r.route[i] && isFinite(r.route[i][0]) && isFinite(r.route[i][1])) pts.push([-r.route[i][0], -r.route[i][1]]);
+    }
+    var list = Array.isArray(r.stops) ? r.stops : [];
+    for (i = 0; i < list.length; i++) {
+      if (list[i] && isFinite(list[i].x) && isFinite(list[i].y)) stops.push({ n: i + 1, name: String(list[i].name || ''), x: -list[i].x, y: -list[i].y, boss: !!list[i].boss });
+    }
+    return pts.length < 2 ? null : { key: zone + '|' + mode, points: pts, stops: stops, straight: r.legs === 'straight' };
+  }
+  // The plan for this zone and choice, rebuilt only when either changes (S.plan caches the last one, null included).
+  function planFor() {
+    var mode = planModeOf(PLAN_DATA, S.cfg), key = (S.zone || '') + '|' + mode;
+    if (!S.plan || S.plan.key !== key) S.plan = { key: key, plan: prepPlan(PLAN_DATA, S.zone, mode) };
+    return S.plan.plan;
+  }
+  function drawPlannedRoute(I, CO) {
+    var R = planFor(), i, q;
+    if (!R) return;
+    ctx.save();
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.globalAlpha = 1;
+    ctx.beginPath();
+    for (i = 0; i < R.points.length; i++) {
+      q = wpt(R.points[i][0], R.points[i][1]);
+      if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]);
+    }
+    var width = 1.5 * I.line;
+    ctx.setLineDash([6 * I.line, 5 * I.line]);
+    if (I.casing > 0) { ctx.strokeStyle = 'rgba(0,0,0,' + (I.casing * 0.6) + ')'; ctx.lineWidth = width + 2; ctx.stroke(); }
+    ctx.strokeStyle = hexA(CO.raidRoute, 0.9); ctx.lineWidth = width; ctx.stroke();
+    ctx.restore();
+  }
+  function drawPlannedStops(CO) {
+    var R = planFor(), i, q;
+    if (!R || !R.stops.length) return;
+    var px = Math.round(10 * (S.cfg.text || 1)), rad = Math.round(px * 0.8) + 1, col;
+    ctx.save();
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+    ctx.font = 'bold ' + px + 'px ui-monospace,Consolas,monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (i = 0; i < R.stops.length; i++) {
+      q = wpt(R.stops[i].x, R.stops[i].y);
+      if (q[0] < -20 || q[0] > S.w + 20 || q[1] < -20 || q[1] > S.h + 20) continue;
+      col = R.stops[i].boss ? CO.raidTarget : CO.raidRoute;
+      ctx.beginPath(); ctx.arc(q[0], q[1], rad, 0, 6.2832);
+      ctx.fillStyle = 'rgba(13,17,23,0.88)'; ctx.fill();
+      ctx.lineWidth = 1.5; ctx.strokeStyle = col; ctx.stroke();
+      ctx.fillStyle = col; ctx.fillText(String(R.stops[i].n), q[0], q[1] + 0.5);
+    }
+    ctx.restore();
+  }
   function drawRoutes(sz, range, srange, targetGrid, onlyTarget) {
     if (!S.grids) return;
     var list = routeList(S.points, sz, range, srange, targetGrid);
@@ -2842,6 +2910,7 @@
     }
     // The saved raid route: above the walls, under every live marker and every spawn dot.
     if (SH.raidRoute) drawRaidRoute(I, CO);
+    if (SH.plannedRoute) drawPlannedRoute(I, CO);
     // Spawn dots, and first the pather routes (under the dots; every route in range, not only visible points').
     var bossC = [], corpseVis = [];
     var vis = [], flashOn =Math.floor(now / 450) % 2 === 0, anyFlash = false, kiteDots = false, srange = spawnRange();
@@ -2977,6 +3046,7 @@
     }
     drawLabels(bossC, sz, range, w, h);
     if (SH.raidRoute) drawRaidRouteStops(CO);
+    if (SH.plannedRoute) drawPlannedStops(CO);
     // Group and raid.
     var P = S.p;
     if (P) {
@@ -3038,6 +3108,20 @@
         if (S.labels !== 'off' && v.scale >= 0.4) halo(c.name, cq[0] + 9 * I.dot, cq[1], fontSmall, cCol);
         ctx.globalAlpha = 1;
       });
+      // ☠ The Tower of Solusek Ro's death-touch warders (the guild lead, 2026-11-04: "add the warders to the Mimic map"). The
+      // agent's `warders`: [{ wing, x, y, z, aggro, assist, until }], three per wing for an hour after its boss died. Each gets
+      // its aggro ring (always, whatever the ◯ switch says: walking into one is a death touch), Xuzl's its dashed assist ring,
+      // and a ☠; at a readable zoom "DT" and the minutes left. Off in ⚙ under "Sol Ro death-touch warders".
+      if (SH.warders) (P.warders || []).forEach(function (wd) {
+        var wq = wpt(wd.x, wd.y), ar = Number(wd.aggro) || 0, as = Number(wd.assist) || 0, reach = Math.max(ar, as) * v.scale + 20;
+        if (wq[0] < -reach || wq[0] > w + reach || wq[1] < -reach || wq[1] > h + reach) return;
+        ctx.globalAlpha = inLevelRange(wd.z, sz, range) ? 1 : 0.4;
+        aggroRing(wq[0], wq[1], ar, as, 'kos', null, Date.now());
+        halo('☠', wq[0], wq[1], 'bold ' + Math.round(13 * (S.cfg.text || 1) * I.dot) + 'px ui-monospace,Consolas,monospace', S.cfg.col.aggro, 'center');
+        var left = Math.max(0, Math.round((Number(wd.until) - Date.now()) / 60000));
+        if (S.labels !== 'off' && v.scale >= 0.4) halo('DT ' + left + 'm', wq[0] + 9 * I.dot, wq[1], fontSmall, S.cfg.col.aggro);
+        ctx.globalAlpha = 1;
+      });
       // Tracked NPCs' walks (the agent's MAP_TRACKED_PATHS: Thelin in the hedge maze), recorded whenever anyone on this
       // machine had them targeted, whether or not you do now: the same trail, solid while they are being watched, faded after.
       if (SH.trail && P.paths) for (var pk in P.paths) {
@@ -3064,6 +3148,26 @@
           ctx.beginPath(); ctx.arc(fq[0], fq[1], 15, 0, 6.2832); ctx.lineWidth = 2.6; ctx.strokeStyle = FOCUS_COL; ctx.stroke();
           ctx.beginPath(); ctx.arc(fq[0], fq[1], 9, 0, 6.2832); ctx.lineWidth = 1.4; ctx.stroke();
           halo(fo.why === 'ma' ? 'MA' : fo.n + ' targeting', fq[0], fq[1] - 24, 'bold ' + Math.round(11 * (S.cfg.text || 1)) + 'px ui-monospace,Consolas,monospace', FOCUS_COL, 'center');
+        }
+      }
+      // Your pet (the guild lead, 2026-11-06: "Pet needs to show up on the mimic map and doesn't unless you target them"): its own
+      // marker in the Walker-mark colour (a paw and its name), a thin line from you once it is 40+ units off, and dimmed with
+      // "(last seen Ns)" when the agent only has its last known spot. Drawn under the target ring, so a targeted pet shows both.
+      if (SH.group && P.pet && P.pet.x != null) {
+        var pd = drawn('pet', P.pet, rt), pq = wpt(pd.x, pd.y);
+        if (pq[0] > -20 && pq[0] < w + 20 && pq[1] > -20 && pq[1] < h + 20) {
+          ctx.save();
+          ctx.globalAlpha = P.pet.live ? 1 : 0.45;
+          if (P.self && P.pet.dist != null && P.pet.dist > 40) {
+            var ps = drawn('self', P.self, rt), psq = wpt(ps.x, ps.y);
+            ctx.beginPath(); ctx.moveTo(psq[0], psq[1]); ctx.lineTo(pq[0], pq[1]);
+            ctx.lineWidth = 1; ctx.strokeStyle = CO.pather; ctx.stroke();
+          }
+          ctx.beginPath(); ctx.arc(pq[0], pq[1], 3.5 * I.dot, 0, 6.2832);
+          ctx.fillStyle = CO.pather; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(8,11,16,0.95)'; ctx.stroke();
+          var petTxt = '🐾 ' + (P.pet.name || 'pet') + (P.pet.live ? '' : ' (last seen ' + P.pet.age_s + 's)');
+          halo(petTxt, pq[0] + 3.5 * I.dot + 4, pq[1], fontSmall, CO.pather);
+          ctx.restore();
         }
       }
       // Target: a ring and a dotted line from you.
@@ -3868,6 +3972,9 @@
     cfgCommit();
   });
   syncRouteNote();
+  try {
+    if (window.mimic && window.mimic.getRaidRoutes) window.mimic.getRaidRoutes().then(function (d) { PLAN_DATA = d || null; S.plan = null; try { if (S.cfg && S.w) renderMap(); } catch (e) {} }).catch(function () {});
+  } catch (e) {}
   // ⚙ Map settings: built from CFG_SHOW / CFG_GLYPHS / CFG_COLS on first open, saved on every change.
   var cfgEl = document.getElementById('cfg'), cfgBtn = document.getElementById('cfgBtn');
   function cfgCommit() { saveCfg(); applyCfgCss(); syncAggroBtn(); syncDotsBtn(); syncNamesBtn(); syncKiteBtns(); syncOrientBtn(); syncRouteNote(); syncClearCtl(); rebuildClear(); }
@@ -3945,6 +4052,7 @@
     document.getElementById('cfgFacing').value = C.facing;
     document.getElementById('cfgOrient').value = C.orient; document.getElementById('cfgCompass').value = C.compass;
     var wm = document.getElementById('cfgWallMode'); wm.value = C.wallMode;
+    document.getElementById('cfgPlanMode').value = planModeOf(PLAN_DATA, C);
     var bg = document.getElementById('cfgBg'); bg.value = C.col.bg;
     var bgOwn = document.getElementById('cfgBgOwn'), bgA = document.getElementById('cfgBgA');
     bgOwn.checked = C.bgA != null; bgA.value = String(C.bgA != null ? C.bgA : 0.55); bgA.disabled = C.bgA == null;
@@ -3967,6 +4075,9 @@
   document.getElementById('cfgOrient').addEventListener('change', function (e) { setOrient(e.target.value); });
   document.getElementById('cfgCompass').addEventListener('change', function (e) {
     S.cfg.compass = COMPASS_MODES.indexOf(e.target.value) >= 0 ? e.target.value : COMPASS_DEFAULT; cfgCommit();
+  });
+  document.getElementById('cfgPlanMode').addEventListener('change', function (e) {
+    S.cfg.planMode = e.target.value === 'min' ? 'min' : 'full'; cfgCommit();
   });
   document.getElementById('cfgWallMode').addEventListener('change', function (e) {
     var v = e.target.value; S.cfg.wallMode = v === 'one' || v === 'layers' ? v : 'map'; cfgCommit();

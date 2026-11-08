@@ -14,6 +14,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { ROOT, stripJs, stripCss } from './_source-slice.js';
 
 const html = fs.readFileSync(path.join(ROOT, 'apps', 'mimic', 'mobinfo.html'), 'utf8');
@@ -28,6 +29,8 @@ const css = stripCss(html.slice(html.indexOf('<style>'), html.indexOf('</style>'
 const escFn = slice('  function esc(s){', '\n');
 
 const helpers = slice('  var PG_LABEL =', '  // ── end target history helpers');
+// The labels, wording and row text moved to apps/mimic/targetInfoShared.js (shared with the canvas kill log).
+globalThis.WpTargetInfo = createRequire(import.meta.url)(path.join(ROOT, 'apps', 'mimic', 'targetInfoShared.js'));
 const H = new Function(escFn + '\n' + helpers
   + '\nreturn { PG_LABEL, PG_NEXT_FILTER, pgWhen, pgMatches, pgNeighbours, pgFollow, pastStampHtml, recentRowsHtml };')();
 

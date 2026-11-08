@@ -369,6 +369,8 @@ describe('the sign-in callback, run (web/app/auth/callback/route.ts)', () => {
     vi.doMock('@/lib/raidmimicHost', async () => await import('../web/lib/raidmimicHost.ts'));
     vi.doMock('@/lib/hubRegistry', async () => await import('../web/lib/hubRegistry.ts'));
     vi.doMock('@/lib/openSignIn', async () => await import('../web/lib/openSignIn.ts'));
+    // On beta the gated path also goes through lib/landing.ts (the /me hub as the sign-in landing, §481).
+    vi.doMock('@/lib/landing', async () => await import('../web/lib/landing.ts'));
     return (await import('../web/app/auth/callback/route.ts')).GET;
   }
   const req = (host, query) => ({ url: `https://${host}/auth/callback?${query}`, headers: new Headers({ host }) });
