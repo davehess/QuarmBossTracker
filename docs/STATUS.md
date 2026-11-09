@@ -7981,6 +7981,14 @@ Mithaniel's notes (:37) and the second reading needs zeks **7** (:57), not 6. Th
   or flips the same `cfg` switch, so there is one copy of each state. In: the toolbar's ◔ Mini, the ✥ right-click menu's "Mini map" (`map-mini-toggle`
   through main), or right-click a dot. The choice is `wp-map-mini`; the ring choice is `cfg.show.aggro`. Entering asks main for a 260 square
   (`map-mini-size`, `_mapMiniSize`) and keeps the old size in `cfg.mapPreMini`; leaving restores it from the same top-left corner. Full mode never shows it.
+- **Follow-up, same day (the guild lead: *"mini map can have the options on one sequence and leave room for arrows around the outside edge of their visible
+  viewpoint for group and raid members, and more importantly the target mob and distance, and pet"*).** The twelve dots now sit in ONE run on the lower-left of the
+  rim (200 to 314 degrees, 10+ degrees apart; ⚙ ▭ then + − ✋ ◎ ⤢ Aa R ◔ •/◉ ◇), leaving the top and right free. Off-view things get an **edge arrow** drawn on the
+  canvas at their bearing from you (north up or heading up): the target (largest, target colour, its distance beside it; its name on hover), the pet (pet colour,
+  distance), group (group colour), raid (small, faint, only with Raiders names on, nearest 8, clumps within 9 degrees fold into one arrow with a "+n"). Off-view
+  = past the circle's outer 14 px; the dot that would be half-hidden there is replaced by the arrow. A target IN view gets its distance beside its ring
+  (the dotted line's own mid-line number is off in mini). Positions are the live ones the dots use (`P.target.x/y`, `P.pet.x/y`, `P.group`, `P.raid`); a target or
+  pet with no position gets no arrow, nothing is invented. Mimic beta draft, no version bump. `miniBearing`, `miniInView`, `miniArrowPlan`, `drawMiniArrows`.
 - ⏳ **Open:** not run in Electron (Chromium via Playwright only: the render and the dot clicks). ⚙ leaves mini mode and opens the full settings
   (the panel does not fit a circle). Right-click on the map itself is unchanged (centre on you); the mini menu is on the dots. Dots are fixed on the rim, the
   compass dot included; only the N marker moves. Test: `test/map-mini.test.js`.

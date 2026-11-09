@@ -6137,7 +6137,9 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   north (`syncMiniNorth`, written only when the angle moves; the canvas rose is skipped in mini). Each dot clicks its toolbar twin or flips the same `cfg` switch
   (`miniClick` / `viaBtn`; ring = `cfg.show.aggro`, compass = `setOrient`); `syncMiniDots` reads state off the toolbar by a MutationObserver. Switches: toolbar `#miniBtn`, the ✥ menu's
   "Mini map" (preload `map-mini-toggle` → main → page `onMapMiniToggle`), a right-click on a dot. Saved as `wp-map-mini`. Window: `map-mini-size` shrinks to 260x260 and keeps the old
-  size in `cfg.mapPreMini`. Full mode never shows it. Test: `test/map-mini.test.js`.
+  size in `cfg.mapPreMini`. Full mode never shows it. The dots are one run on the lower-left of the rim (200-314 degrees); the rest of the rim carries **edge arrows**
+  for what is off-view (`drawMiniArrows`, in the canvas pass: target with its distance, pet, group, raid capped at 8 and merged within 9 degrees; bearing is
+  `miniBearing(player, thing, rot)`, so it follows North up / Heading up; two `.ra` buttons carry the target and pet hover names). Test: `test/map-mini.test.js`.
 - **Kite circles on the Map** (2026-10-26, Mimic beta; kite coach 2026-10-15): `apps/mimic/kiteCoach.js` is the pure math (circle fit, laps,
   drift, cause) plus `filterLoops` (Others Live/All by `last_at`, Circles All/My speed/Near me) and `driftForecast`; `map.html` draws it
   (`drawKite`, `visibleLoops`) and owns the three toolbar buttons (`syncKiteBtns`; saved in `cfg.kiteOthers/kiteFilter/kiteDrift`).

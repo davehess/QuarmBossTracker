@@ -21,7 +21,7 @@
 
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
-import { readSource, sliceBlock, stripJs, ROOT } from './_source-slice.js';
+import { readSource, sliceBlock, evalBlock, stripJs, ROOT } from './_source-slice.js';
 
 const HTML = readSource(path.join(ROOT, 'apps', 'mimic', 'map.html'));
 const SCRIPT = stripJs(HTML.slice(HTML.lastIndexOf('<script>'), HTML.lastIndexOf('</script>')));
@@ -66,8 +66,8 @@ describe('the rim dots', () => {
     expect((BODY.match(/<button class="rd"/g) || []).length).toBe(DOT_IDS.length);
   });
 
-  it('keep a hit target of 22px with a 14px dot', () => {
-    expect(STYLE).toMatch(/#mini \.rd\{width:22px;height:22px/);
+  it('keep a hit target of 19x22px with a 14px dot (twelve of them fit one arc)', () => {
+    expect(STYLE).toMatch(/#mini \.rd\{width:19px;height:22px/);
     expect(STYLE).toMatch(/#mini \.rd i\{width:14px;height:14px/);
   });
 
@@ -122,7 +122,7 @@ describe('compass', () => {
 
   it('the N rides to where north is, written only when it moves, and the canvas rose steps aside in mini', () => {
     expect(SCRIPT).toMatch(/function syncMiniNorth\(rot\) \{[\s\S]{0,260}if \(a === miniNorthA \|\| !miniEl\) return;/);
-    expect(SCRIPT).toMatch(/if \(S\.miniOn\) syncMiniNorth\(rot\); else drawCompass\(rot\);/);
+    expect(SCRIPT).toMatch(/if \(S\.miniOn\) \{ syncMiniNorth\(rot\);[^\n]*\} else drawCompass\(rot\);/);
     expect(STYLE).toMatch(/#mini #miniN\{--a:var\(--n\)/);
   });
 });
@@ -169,5 +169,123 @@ describe('the window: main gives the round map a square, and takes it back', () 
   it('is on the IPC and the bridge', () => {
     expect(MAIN).toContain("ipcMain.handle('map-mini-size', (_e, on) => _mapMiniSize(!!on));");
     expect(PRELOAD).toMatch(/mapMiniSize:\s+\(on\)\s+=> ipcRenderer\.invoke\('map-mini-size', !!on\)/);
+  });
+});
+
+// ── Edge arrows (the guild lead, 2026-11-09: "mini map can have the options on one sequence and leave room for arrows around
+// the outside edge of their visible viewpoint for group and raid members, and more importantly the target mob and distance,
+// and pet"). Mutation-checked by hand (2026-11-09): flip the sign of dx in miniBearing and both bearing tests fail; drop the
+// `rot ?` turn and the heading-up test fails; make miniInView use `<=` against R + 99 and "hidden when in view" fails; remove
+// the `slice(0, raidCap)` and the cap test fails; drop the merge branch (`hit.n++`) and the merging test fails.
+describe('the rim dots are ONE sequence on one arc', () => {
+  const angles = [...BODY.matchAll(/<button class="rd" id="(\w+)" type="button" style="--a:(\d+)deg"/g)].map((m) => [m[1], +m[2]]);
+
+  it('all twelve sit inside one bounded arc, with room between neighbours', () => {
+    expect(angles.length).toBe(DOT_IDS.length);
+    const a = angles.map((x) => x[1]).sort((x, y) => x - y);
+    expect(a[a.length - 1] - a[0]).toBeLessThanOrEqual(125);       // one contiguous run, not spread round the rim
+    for (let i = 1; i < a.length; i++) expect(a[i] - a[i - 1]).toBeGreaterThanOrEqual(10);   // 19px hit boxes on a 110px radius do not overlap
+    expect(a[0]).toBeGreaterThanOrEqual(180);                       // the lower-left of the rim: the top and the right stay free
+    expect(a[a.length - 1]).toBeLessThanOrEqual(330);
+  });
+
+  it('zoom + and − are neighbours in the sequence', () => {
+    const order = angles.slice().sort((x, y) => x[1] - y[1]).map((x) => x[0]);
+    expect(Math.abs(order.indexOf('mdZoomIn') - order.indexOf('mdZoomOut'))).toBe(1);
+  });
+});
+
+describe('edge arrows: bearing, view and merging (the real functions, run as written)', () => {
+  const turn = sliceBlock(SCRIPT, 'function turnVec(dx, dy, rot) {', '\n  }');
+  const head = sliceBlock(SCRIPT, 'function headingVec(heading, rot) {', '\n  }');
+  const hrot = sliceBlock(SCRIPT, 'function headingRot(heading) {', '\n  }');
+  const mini = sliceBlock(SCRIPT, 'function miniBearing(', 'var MINI_ARROW_GAP = 9, MINI_RAID_CAP = 8;');
+  const F = evalBlock('var HEADING_CCW = true;\n' + turn + head + hrot + mini,
+    ['miniBearing', 'miniInView', 'miniAngGap', 'miniArrowPlan', 'headingRot', 'MINI_ARROW_GAP', 'MINI_RAID_CAP', 'MINI_EDGE']);
+  const near = (a, b) => expect(Math.abs(F.miniAngGap(a, b))).toBeLessThan(0.01);
+  // World frame: north is +y, east is -x (screen = (-x, -y), north up). The player stands at (10, 10).
+
+  it('north up: north is the top, east the right, south the bottom, west the left', () => {
+    near(F.miniBearing(10, 10, 10, 210, 0).a, 0);     // 200 north
+    near(F.miniBearing(10, 10, -190, 10, 0).a, 90);   // 200 east
+    near(F.miniBearing(10, 10, 10, -190, 0).a, 180);
+    near(F.miniBearing(10, 10, 210, 10, 0).a, 270);
+    near(F.miniBearing(10, 10, -90, 110, 0).a, 45);   // north-east
+    expect(F.miniBearing(10, 10, -90, 110, 0).d).toBe(141);   // rounded flat distance
+  });
+
+  it('heading up: what is ahead of you is the top, whichever way you face', () => {
+    for (const heading of [0, 96, 128, 300]) {
+      const rot = F.headingRot(heading);
+      // 150 units straight ahead: heading 0 faces north (+y), 128 faces west (+x), so ahead = (sin a, cos a) in the world frame
+      const a = (heading % 512) / 512 * Math.PI * 2;
+      const tx = 10 + Math.sin(a) * 150, ty = 10 + Math.cos(a) * 150;
+      near(F.miniBearing(10, 10, tx, ty, rot).a, 0);
+      expect(F.miniBearing(10, 10, tx, ty, rot).d).toBe(150);
+    }
+    // facing west (heading 128): north (which was the top) is now to the right of you, so it reads 90 degrees
+    near(F.miniBearing(10, 10, 10, 210, F.headingRot(128)).a, 90);
+  });
+
+  it('a thing in view gets no arrow (the outer band counts as off-view); one past it does', () => {
+    expect(F.miniInView(130, 130, 130, 130, 110)).toBe(true);
+    expect(F.miniInView(130 + 110 - F.MINI_EDGE - 1, 130, 130, 130, 110)).toBe(true);
+    expect(F.miniInView(130 + 110 - F.MINI_EDGE + 1, 130, 130, 130, 110)).toBe(false);
+    expect(F.miniInView(130 + 150, 130, 130, 130, 110)).toBe(false);
+  });
+
+  const it_ = (kind, a, d, extra) => Object.assign({ kind, a, d, name: kind + a, label: String(d) }, extra);
+  it('the target and the pet are always their own arrow, and the target carries its distance', () => {
+    const plan = F.miniArrowPlan([it_('raid', 40, 50), it_('pet', 41, 90), it_('target', 42, 142, { label: '142' }), it_('group', 43, 60)], F.MINI_ARROW_GAP, F.MINI_RAID_CAP);
+    const tgt = plan.filter((p) => p.kind === 'target');
+    expect(tgt).toHaveLength(1);
+    expect(tgt[0].label).toBe('142');
+    expect(plan.filter((p) => p.kind === 'pet')).toHaveLength(1);
+    expect(plan[plan.length - 1].kind).toBe('target');   // drawn last, on top
+  });
+
+  it('crowded group and raid arrows fold into one with a count', () => {
+    const items = [it_('raid', 100, 80), it_('raid', 103, 90), it_('raid', 106, 95), it_('raid', 200, 70)];
+    const plan = F.miniArrowPlan(items, F.MINI_ARROW_GAP, F.MINI_RAID_CAP);
+    expect(plan).toHaveLength(2);
+    expect(plan.map((p) => p.n).sort()).toEqual([1, 3]);
+  });
+
+  it('only the nearest eight raiders are drawn', () => {
+    const items = Array.from({ length: 14 }, (_, i) => it_('raid', i * 25, 100 + i));   // 25 degrees apart: none merge
+    const plan = F.miniArrowPlan(items, F.MINI_ARROW_GAP, F.MINI_RAID_CAP);
+    expect(plan).toHaveLength(8);
+    expect(Math.max(...plan.map((p) => p.d))).toBe(107);
+  });
+});
+
+describe('edge arrows: what draws them, and from what', () => {
+  const draw = sliceBlock(SCRIPT, 'function drawMiniArrows(', "miniTip('miniPet', petA ? petA.a : 0");
+
+  it('runs in the canvas pass, in mini only, and the rose steps aside for the N', () => {
+    expect(SCRIPT).toMatch(/if \(S\.miniOn\) \{ syncMiniNorth\(rot\); if \(P\) drawMiniArrows\(P, rt, w, h, rot, SH, CO\); \} else drawCompass\(rot\);/);
+  });
+
+  it('the target arrow needs the target\'s live position and shows its distance (in view: a label by the ring)', () => {
+    expect(draw).toMatch(/P\.target && P\.target\.x != null/);
+    expect(draw).toContain('rangeText(targetRange(sd, td))');
+    expect(draw).toMatch(/if \(rtxt\) \{ var tq = wpt\(td\.x, td\.y\); halo\(rtxt,/);
+  });
+
+  it('the pet uses the pet marker\'s position, group and raid their own, raid only with Raiders names on', () => {
+    expect(draw).toMatch(/SH\.group && P\.pet && P\.pet\.x != null\) add\('pet', 'pet'/);
+    expect(draw).toMatch(/if \(SH\.group\) \(P\.group \|\| \[\]\)\.forEach/);
+    expect(draw).toMatch(/if \(SH\.raid && SH\.raidNames\) \(P\.raid \|\| \[\]\)\.forEach/);
+  });
+
+  it('the map does not also draw a raider or the pet where the arrow stands in', () => {
+    expect(SCRIPT).toMatch(/if \(S\.miniOn && !miniInView\(q\[0\], q\[1\], w \/ 2, h \/ 2, Math\.min\(w, h\) \/ 2\)\) continue;/);
+    expect(SCRIPT).toMatch(/\(!S\.miniOn \|\| miniInView\(pq\[0\], pq\[1\]/);
+  });
+
+  it('the hover names ride two buttons, written only when they change', () => {
+    expect(BODY).toMatch(/<button class="ra" id="miniTgt"/);
+    expect(BODY).toMatch(/<button class="ra" id="miniPet"/);
+    expect(SCRIPT).toMatch(/if \(!e \|\| miniTipKey\[id\] === k\) return;/);
   });
 });
