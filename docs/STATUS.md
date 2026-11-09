@@ -280,7 +280,11 @@ next touch one rather than assuming a missing row means a missing doc.
   and main hands it to the trigger window (`weave-sound`), which plays it by library name and honours mute; the HUD ⚙ picks each
   sound and the volume. Ribcracker (item 28808, secondary only, 1H blunt, delay 25) prints "crush", the staff's word: a 2H word
   straight after a press, more than CLIP_MS before the 2H is due, is the offhand round; `offDelay` (HUD "Offhand in the weave
-  set") sets the window from the offhand weapon's delay, 0 = fists.
+  set") sets the window from the offhand weapon's delay, 0 = fists. **Three sets compared (same day:** *"/pipe weave, /pipe
+  weave1hb, /pipe weave2hb"*, *"the 2hb hit should just be an empty offhand slot"*, *"for comparison"***):** `/pipe weave<set>` (a
+  short word, type 4) marks the press, tags its attempt record (`tag`) and the per-set tally (`tally.bySet`), and times the NEXT
+  window for that set (`offDelayFor`: `1hb` = `offDelay1hb`, default 25, Ribcracker; `2hb` = the empty slot, bare fists by the
+  table; plain = `offDelay`, the fist wraps). The weave macro's set names in the guild lead's log are `1` and `2`.
   **First live report (2026-11-09, agent 4.0.78 beta):** *"WEAVING IS WAITING FOR A FIGHT BUT I'M IN ONE"*. The hub only fed
   the engine lines on colours 265 / 267 (the unverified guess above), so a client whose melee lines arrive on any other colour
   never started a swing. Now it takes any line that starts `You ` on any colour (other people's hits and non-melee are still
