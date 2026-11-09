@@ -262,11 +262,14 @@ describe('what a press did', () => {
     e.load(LOAD(), T + IV + 200); e.swing(FIST(), T + IV + 240); e.swing(TWO(), T + 2 * IV);
     expect(e.tally).toMatchObject({ presses: 2, landed: 2, clips: 0, misses: 0, voided: 0 });
   });
-  it('a press nobody saw a 2H round after settles by time: a fist but no 2H is a clip', () => {
+  // 2026-11-09: no 2H round to time means it cannot be judged: `open`, not a clip (a blood raven "clip" was a re-press).
+  it('a press nobody saw a 2H round after settles by time: a fist but no 2H is open (not judged)', () => {
     const e = ready();
     e.load(LOAD(), T + 1600); e.swing(FIST(), T + 1650);
     e.tick(T + 1600 + 4000);
-    expect(e.outcome.kind).toBe('clip');
+    expect(e.outcome.kind).toBe('open');
+    expect(e.tally.clips).toBe(0);
+    expect(e.tally.open).toBe(1);
   });
   it('a line that is not a load does nothing', () => {
     const e = ready();
@@ -992,5 +995,28 @@ describe('the timer says when it re-syncs', () => {
     expect(d).toContain('function noticeOf(st, now) { var n = st && st.notice; return n && now - n.at < NOTE_MS ? n : null; }');
     expect(d).toContain('ctx.fillText(nt.text, w / 2, head / 2);');
     expect(d).toContain('ctx.fillText(an.text, np[0], np[1]);');
+  });
+});
+
+// 2026-11-09, the guild lead's weave-attempts.ndjson for a blood raven (Basketweaver: 43 of 48 rounds weaved): of our four
+// "clips", one was a re-press before the 2H line came (217 ms "late") and one two swings + 302 ms late.
+describe('the blood raven cases', () => {
+  const T = 1_000_000, IVB = 1530;
+  function e5() {
+    const e = new W.WeaveEngine({ cls: 'monk', level: 65, twoHDelay: 30 });
+    for (let i = 0; i < 5; i++) e.swing('crush a blood raven for 120', T + i * IVB);
+    return e;
+  }
+  it('a press again before the last one\'s 2H came is not judged: open, not a clip', () => {
+    const e = e5(), t0 = T + 4 * IVB;
+    e.load('Loading bandolier set [fists]', t0 + 250); e.swing('strike a blood raven for 49', t0 + 340);
+    e.load('Loading bandolier set [fists]', t0 + 250 + 1500);   // the next press, the 2H line not seen yet
+    expect(e.tally).toMatchObject({ clips: 0, open: 1 });
+  });
+  it('two swings and 300 ms late is on the beat (unseen rounds), not a clip', () => {
+    const e = e5(), t0 = T + 4 * IVB;
+    e.load('Loading bandolier set [fists]', t0 + 250); e.swing('strike a blood raven for 49', t0 + 340);
+    e.swing('crush a blood raven for 120', t0 + 3 * IVB + 300);
+    expect(e.outcome.kind).toBe('landed');
   });
 });
