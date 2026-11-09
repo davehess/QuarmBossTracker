@@ -1,6 +1,5 @@
 // The "Free to start" block at the top of the raidmimic.com onboarding pages (preview on beta, web/lib/raidmimicStartFree.ts).
-// ?v=b: one short card, readable at a glance. ?v=c: a two-column table of what is free and what a plan will pay for, with
-// the reason each costs money. A server component; the words live in the lib file.
+// ?v=b: one short card, readable at a glance. ?v=c: a two-column table of what Free gives and what Pro gives. A server component; the words live in the lib file.
 import { FREE_ROWS, PAID_ROWS, START_FREE as W, type StartFreeVariant } from '@/lib/raidmimicStartFree';
 import { GUILD_PRICE, priceLabel } from '@/lib/raidmimicStory';
 
@@ -12,13 +11,13 @@ function Chip() {
   );
 }
 
-function Rows({ rows }: { rows: readonly { what: string; why: string }[] }) {
+function Rows({ rows }: { rows: readonly { what: string; gives: string }[] }) {
   return (
     <ul className="m-0 mt-2 list-none space-y-2 p-0">
       {rows.map(r => (
         <li key={r.what} className="text-sm leading-6">
           <span className="block text-text">{r.what}</span>
-          <span className="block text-xs leading-5 text-dim">{r.why}</span>
+          <span className="block text-xs leading-5 text-dim">{r.gives}</span>
         </li>
       ))}
     </ul>
@@ -52,7 +51,7 @@ export default function StartFree({ variant, pricingHref }: { variant: StartFree
           <Rows rows={PAID_ROWS} />
         </div>
       </div>
-      <p className="mt-3 text-sm leading-6 text-text"><strong className="font-semibold">{W.promise}</strong> <span className="text-dim">{W.individual}</span></p>
+      <p className="mt-3 text-sm leading-6 text-text"><strong className="font-semibold">{W.promise}</strong></p>
       <p className="mt-1"><a href={pricingHref} className="inline-flex min-h-11 items-center text-sm">{W.more} →</a></p>
     </section>
   );

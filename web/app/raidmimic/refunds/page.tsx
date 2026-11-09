@@ -39,7 +39,6 @@ export default function RaidmimicRefundsPage() {
           <li><B>Pro · Guild</B> is ${GUILD_PRICE} a month. <B>Monthly only</B>: there is no yearly plan.</li>
           <li><B>The first month is free.</B> Cancel before it ends and you pay nothing.</li>
           <li>It renews every month until you cancel.</li>
-          <li><B>Pro · Individual</B> has no price yet. It will be shown before anyone can buy it.</li>
         </Bullets>
       </Section>
 

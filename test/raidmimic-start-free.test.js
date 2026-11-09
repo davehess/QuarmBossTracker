@@ -21,7 +21,7 @@ describe('Free to start', () => {
     expect(F.START_FREE.planned).toContain(priceLabel(GUILD_PRICE));
     expect(F.START_FREE.promise).toBe('Nothing is charged until you choose a plan.');
     expect(F.FREE_ROWS.length).toBeGreaterThan(0);
-    expect(F.PAID_ROWS.every(r => r.why.length > 0)).toBe(true);
+    expect(F.PAID_ROWS.every(r => r.gives.length > 0)).toBe(true);
   });
 
   it.each(['web/app/raidmimic/setup/page.tsx', 'web/app/guilds/new/page.tsx'])('%s renders it only behind the switch', (p) => {

@@ -39,9 +39,8 @@ export function FeatureBlocks() {
   );
 }
 
-const EDGE: Record<Tier['tone'], string> = { green: 'border-t-green', blue: 'border-t-blue', gold: 'border-t-gold' };
+const EDGE: Record<Tier['tone'], string> = { green: 'border-t-green', blue: 'border-t-blue' };
 
-/** Free, Pro · Guild, Pro · Individual. The individual price comes from INDIVIDUAL_PRICE (null: "price at launch"). */
 /** The guild side as six one-line items, no pictures (the pictures above are the player side). */
 export function RaidManagement() {
   return (
@@ -70,7 +69,7 @@ export function Pricing({ setup, onHost = false }: { setup: string; onHost?: boo
     <section id="pricing" aria-label={W.pricingTitle} className="scroll-mt-4 pt-12">
       <h2 className="text-2xl text-[#f2ede1]">{W.pricingTitle}</h2>
       <p className="mb-0 mt-1 text-sm text-text">{W.pricingLead}</p>
-      <ul className="m-0 mt-5 grid list-none gap-4 p-0 lg:grid-cols-3">
+      <ul className="m-0 mt-5 grid list-none gap-4 p-0 sm:grid-cols-2">
         {tiers.map(t => (
           <li key={t.id} data-tier={t.id} className="min-w-0">
             <article className={`flex h-full flex-col rounded-md border border-t-[3px] border-border bg-panel p-4 ${EDGE[t.tone]}`}>

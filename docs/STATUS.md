@@ -103,6 +103,9 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **2026-11-09 — raidmimic.com pricing copy = analytics (on beta, awaiting promotion to main).** One paid plan, Pro · Guild $25/month; the Pro · Individual tier, `INDIVIDUAL_PRICE` and the "costs us money" / storage reasons are gone from `raidmimicStory.ts`, `raidmimicStartFree.ts`, `StartFree.tsx` and the terms and refunds pages (DECISIONS §552; guild lead's picks on the Decision Desk). Nothing is charged today; no copy added for the unbuilt 7-day retention, free week page or grace period. Test: `test/raidmimic-landing-variants.test.js`. No web version bump on beta.
+
+
 - **🧪 raidmimic landing: big "Skip video" + signed-in home, two previews on beta awaiting the guild lead's pick (2026-11-09).**
   The guild lead: *"a big skip video button at the top of raidmimic.com and also have users log into it and have their
   information come up on the homepage or redirect instead of hitting the video ... a link 'rewatch the video' up top."*
