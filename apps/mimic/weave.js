@@ -70,6 +70,12 @@
     // The swap's round trip, press to 2H back in hand: 400 ms, as Basketweaver measured it (2026-11-09; was 150, too short).
     marginMs: 400, showTally: true,
     cls: 'monk', level: 60, race: 'human', epic: false,
+    // The offhand the weave set puts in the secondary slot: 0 = bare fists (the level / race table, or the epic); a weapon
+    // uses its own delay (EQMacEmu Client::SetAttackTimer). The guild lead, 2026-11-09, trying Ribcracker (secondary only,
+    // 1H blunt, delay 25) after Primal Velium Fist Wraps (delay 20).
+    offDelay: 0,
+    // Sounds for a press's outcome (2026-11-09: "lets add some sounds into ours"): names from Mimic's sound library, '' = none.
+    sndLanded: 'weave-punch', sndBig: 'weave-smash', sndClip: 'weave-thud', sndVol: 0.8, bigHit: 200,
   };
   function verbList(v, dflt) {
     var a = Array.isArray(v) ? v : (typeof v === 'string' ? v.split(/[\s,]+/) : null);
@@ -80,6 +86,8 @@
   }
   function intIn(v, lo, hi, d) { v = Math.round(Number(v)); return (isFinite(v) && v >= lo && v <= hi) ? v : d; }
   // A config from a renderer, every field clamped; anything else falls back to the default.
+  // A sound name from the library ('' or 'off' = none); anything else falls back to the default.
+  function sndName(v, d) { if (v === undefined || v === null) return d; v = String(v).toLowerCase(); if (v === '' || v === 'off') return ''; return /^[a-z0-9-]{1,32}$/.test(v) ? v : d; }
   function cleanCfg(c) {
     c = c || {};
     var out = {
@@ -92,6 +100,11 @@
       level: intIn(c.level, 1, 65, DEFAULT_CFG.level),
       race: String(c.race || '').toLowerCase() === 'iksar' ? 'iksar' : 'human',
       epic: !!c.epic,
+      offDelay: intIn(c.offDelay, 0, 60, 0),
+      sndLanded: sndName(c.sndLanded, DEFAULT_CFG.sndLanded), sndBig: sndName(c.sndBig, DEFAULT_CFG.sndBig),
+      sndClip: sndName(c.sndClip, DEFAULT_CFG.sndClip),
+      sndVol: (function (v) { v = Number(v); return isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_CFG.sndVol; })(c.sndVol),
+      bigHit: intIn(c.bigHit, 1, 5000, DEFAULT_CFG.bigHit),
     };
     out.fistVerbs = out.fistVerbs.filter(function (v) { return out.twoVerbs.indexOf(v) < 0; });   // a verb is one or the other
     if (!out.fistVerbs.length) out.fistVerbs = DEFAULT_CFG.fistVerbs.filter(function (v) { return out.twoVerbs.indexOf(v) < 0; });
@@ -252,7 +265,7 @@
   WeaveEngine.prototype.core = function () {
     var iv = this.interval2H(), haste = this.twoHDelay() * 100 / iv;
     return { last2H: this.last2H, lastFist: this.lastFist, interval2H: iv, haste: haste,
-      fistInterval: handToHandDelay(this.cfg) * 100 / haste, marginMs: this.cfg.marginMs };
+      fistInterval: (this.cfg.offDelay || handToHandDelay(this.cfg)) * 100 / haste, marginMs: this.cfg.marginMs };
   };
   WeaveEngine.prototype._resolve = function (kind, at) {
     var p = this.pending;
@@ -304,6 +317,11 @@
     } else {
       var kind = classify(s.verb, this.cfg);   // eslint-disable-line no-redeclare
     }
+    // An offhand that shares the 2H's verb (Ribcracker "crush" beside a crushing staff): a 2H word straight after a press,
+    // well before the 2H is due, is the offhand round (the 2H is out of the hand then).
+    var pq = this.pending;
+    if (kind === '2h' && pq && pq.fist == null && t >= pq.firstT && t - pq.lastLoad <= FIST_AFTER_MS
+        && (pq.expected == null || t < pq.expected - CLIP_MS)) kind = 'fist';
     if (s.short && !kind) return false;   // a short-form line counts only for a word the lists know (it has no "You" to prove it is yours)
     if (s.verb && !SPECIAL_VERBS[s.verb]) { this.diag.seen++; if (kind) this.diag.matched++; else this.diag.lastVerb = s.verb; }
     if (!kind) return false;
@@ -458,7 +476,17 @@
       }
       return e || null;
     }
-    function emit(e, st, now) { e.sentAt = now; st.character = e.character; st.source = (now - e.lastPipe <= PIPE_QUIET_MS) ? 'zeal' : 'needs-zeal'; send(st); }
+    function emit(e, st, now) {
+      e.sentAt = now; st.character = e.character; st.source = (now - e.lastPipe <= PIPE_QUIET_MS) ? 'zeal' : 'needs-zeal'; send(st);
+      // Each new outcome sounds once (2026-11-09): a landed weave (a big fist hit its own sound), a clip; nothing else.
+      var oc = st.outcome;
+      if (typeof o.onSound === 'function' && oc && oc.at && oc.at !== e.soundAt) {
+        e.soundAt = oc.at;
+        var cf = e.eng.cfg;
+        var name = oc.kind === 'landed' ? ((oc.dmg || 0) >= cf.bigHit && cf.sndBig ? cf.sndBig : cf.sndLanded) : oc.kind === 'clip' ? cf.sndClip : '';
+        if (name) { try { o.onSound({ name: name, volume: cf.sndVol, character: e.character, kind: oc.kind }); } catch (err) { /* never into the pipe */ } }
+      }
+    }
     return {
       engines: engines,
       setEnabled: function (on) { enabled = !!on; },

@@ -794,7 +794,7 @@ describe('weave attempts: captured, marked by /pipe weave, voided by a failed sw
   it('Mimic appends each attempt to weave-attempts.ndjson, rotated, never throwing into the pipe', () => {
     const m = stripJs(readSource(path.join(MIMIC, 'main.js')));
     expect(m).toContain("const WEAVE_ATTEMPTS_LOG = () => path.join(app.getPath('userData'), 'weave-attempts.ndjson');");
-    expect(m).toContain('const _weaveHub = createWeaveHub({ send: _weaveSend, onAttempt: _writeWeaveAttempt });');
+    expect(m).toContain('const _weaveHub = createWeaveHub({ send: _weaveSend, onAttempt: _writeWeaveAttempt, onSound: _weaveSound });');
   });
 });
 
@@ -1018,5 +1018,57 @@ describe('the blood raven cases', () => {
     e.load('Loading bandolier set [fists]', t0 + 250); e.swing('strike a blood raven for 49', t0 + 340);
     e.swing('crush a blood raven for 120', t0 + 3 * IVB + 300);
     expect(e.outcome.kind).toBe('landed');
+  });
+});
+
+// 2026-11-09, the guild lead: "lets add some sounds into ours" (four Freesound files, sounds/CREDITS.md) and "I'm about to try a
+// ribcracker" (secondary only, 1H blunt, delay 25: its offhand round prints "crush", the 2H staff's own word).
+describe('weave sounds and a crushing offhand', () => {
+  const T = 1_000_000, IVB = 1530;
+  function rig(cfg) {
+    let t = T; const sounds = [];
+    const hub = W.createWeaveHub({ send: () => {}, now: () => t, onSound: (s) => sounds.push(s) });
+    hub.setEnabled(true);
+    hub.setConfig('Aldenmar', Object.assign({ character: 'Aldenmar', cls: 'monk', level: 65, twoHDelay: 30 }, cfg || {}));
+    const chat = (text, colour = 265) => hub.note({ type: 0, character: 'Aldenmar', data: JSON.stringify({ type: colour, text }) });
+    return { chat, step: (ms) => { t += ms; hub.tick(); }, sounds, eng: () => hub.engines.get('aldenmar').eng };
+  }
+  function warm(r) { for (let i = 0; i < 5; i++) { r.chat('crush a blood raven for 120'); r.step(IVB); } r.step(-IVB + 120); }
+  function weave(r, offLine) { r.chat('Loading bandolier set [fists]', 1011); r.step(100); r.chat(offLine); r.step(150); r.chat('Loading bandolier set [2h]', 1011); r.step(IVB - 370); r.chat('crush a blood raven for 120'); r.step(50); }
+
+  it('a landed weave plays the landed sound once; a big fist hit plays its own; a clip plays the clip sound', () => {
+    const r = rig(); warm(r); weave(r, 'strike a blood raven for 49');
+    expect(r.sounds.map(s => [s.name, s.kind, s.volume])).toEqual([['weave-punch', 'landed', 0.8]]);
+    weave(r, 'strike a blood raven for 260');
+    expect(r.sounds.map(s => s.name)).toEqual(['weave-punch', 'weave-smash']);
+    const c = rig(); warm(c);
+    c.chat('Loading bandolier set [fists]', 1011); c.step(100); c.chat('strike a blood raven for 49'); c.step(150);
+    c.chat('Loading bandolier set [2h]', 1011); c.step(IVB - 370 + 700); c.chat('crush a blood raven for 120'); c.step(50);
+    expect(c.sounds.map(s => s.name)).toEqual(['weave-thud']);
+  });
+  it('a sound set to off plays nothing, and an unknown name falls back to the default', () => {
+    const r = rig({ sndLanded: 'off' }); warm(r); weave(r, 'strike a blood raven for 49');
+    expect(r.sounds).toEqual([]);
+    expect(W.cleanCfg({ sndLanded: '../../etc' }).sndLanded).toBe('weave-punch');
+  });
+  it('Ribcracker: a "crush" straight after the press is the offhand round, and the window follows its delay (25)', () => {
+    const r = rig({ offDelay: 25 }); warm(r); weave(r, 'crush a blood raven for 74');
+    expect(r.eng().tally).toMatchObject({ landed: 1, clips: 0, fistTried: 1, fistHit: 1, weaveDmg: 74 });
+    expect(Math.round(r.eng().core().fistInterval)).toBe(Math.round(2500 * IVB / 3000));
+    expect(W.cleanCfg({}).offDelay).toBe(0);
+  });
+  it('the four sounds ship with their credits, and the HUD offers them', () => {
+    const fs = require('node:fs');
+    for (const n of ['weave-punch', 'weave-smash', 'weave-slash', 'weave-thud']) {
+      const p = path.join(MIMIC, 'sounds', n + '.ogg');
+      expect(fs.statSync(p).size, n).toBeLessThan(60 * 1024);
+      expect(fs.readFileSync(p).subarray(0, 4).toString('latin1'), n).toBe('OggS');
+    }
+    const credits = fs.readFileSync(path.join(MIMIC, 'sounds', 'CREDITS.md'), 'utf8');
+    expect(credits).toMatch(/qubodup[^\n]*CC BY 4\.0/);
+    const me = stripJs(readSource(path.join(MIMIC, 'me.html')));
+    expect(me).toContain("var WEAVE_SOUNDS = ['weave-punch', 'weave-smash', 'weave-slash', 'weave-thud', 'slap', 'pop', 'off'];");
+    const trig = stripJs(readSource(path.join(MIMIC, 'triggers.html')));
+    expect(trig).toContain('if (!PART && window.mimic && window.mimic.onWeaveSound) window.mimic.onWeaveSound(function (s) { if (s && s.name) playSound(s.name, s.volume); });');
   });
 });

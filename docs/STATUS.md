@@ -273,7 +273,14 @@ next touch one rather than assuming a missing row means a missing doc.
   weapon, Primal Velium Fist Wraps, delay 20 (a hand-to-hand weapon the fist set puts in the secondary slot; the same 20 as a
   level 65 human's bare fists, so our fist timing held). Its Zeal log shows why the lines are short: the client's "My Hits"
   mode 1 prints "verb target for N" (mode 2: the number alone, which no word reader can use), and Zeal moves strike, kick and
-  backstab to channel 1004 (Zeal `chatfilter.cpp` HandleMyHitsMode).
+  backstab to channel 1004 (Zeal `chatfilter.cpp` HandleMyHitsMode). **Sounds and a crushing offhand (same day,** *"lets add
+  some sounds into ours"*, *"I'm about to try a ribcracker"***):** four Freesound files in `apps/mimic/sounds`
+  (`weave-punch` / `weave-thud` / `weave-smash` CC0, `weave-slash` CC BY 4.0, credited in `sounds/CREDITS.md`; trimmed, mono,
+  levelled to the set's −10 dB peaks); the hub's `onSound` fires once per new outcome (landed, a big fist hit ≥ `bigHit`, clip)
+  and main hands it to the trigger window (`weave-sound`), which plays it by library name and honours mute; the HUD ⚙ picks each
+  sound and the volume. Ribcracker (item 28808, secondary only, 1H blunt, delay 25) prints "crush", the staff's word: a 2H word
+  straight after a press, more than CLIP_MS before the 2H is due, is the offhand round; `offDelay` (HUD "Offhand in the weave
+  set") sets the window from the offhand weapon's delay, 0 = fists.
   **First live report (2026-11-09, agent 4.0.78 beta):** *"WEAVING IS WAITING FOR A FIGHT BUT I'M IN ONE"*. The hub only fed
   the engine lines on colours 265 / 267 (the unverified guess above), so a client whose melee lines arrive on any other colour
   never started a swing. Now it takes any line that starts `You ` on any colour (other people's hits and non-melee are still

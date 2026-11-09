@@ -15849,7 +15849,11 @@ function _writeWeaveAttempt(rec) {
     fs.appendFile(f, line, () => {});
   } catch { /* best effort: never throw into the pipe handler */ }
 }
-const _weaveHub = createWeaveHub({ send: _weaveSend, onAttempt: _writeWeaveAttempt });
+// Weave outcome sounds go to the trigger window, the one voice (it honours mute and plays library names); none when it is gone.
+function _weaveSound(s) {
+  try { if (triggerWindow && !triggerWindow.isDestroyed()) triggerWindow.webContents.send('weave-sound', s); } catch { /* window gone */ }
+}
+const _weaveHub = createWeaveHub({ send: _weaveSend, onAttempt: _writeWeaveAttempt, onSound: _weaveSound });
 ipcMain.on('weave-subscribe', (e) => {
   const wc = e.sender;
   if (_weaveSubs.has(wc)) return;
