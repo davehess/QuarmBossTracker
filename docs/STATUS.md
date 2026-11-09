@@ -211,7 +211,13 @@ next touch one rather than assuming a missing row means a missing doc.
   "Weave timer". Tests `test/weave-engine.test.js`. **Curved on the ring (2026-11-07,** *"please curve the line to match the arc
   for the circle"***):** the ring's canvas covers the ring square and `weaveDraw.js` `drawArc` strokes the lane along the right arc
   (R 172, 56°-124°, `data-wp-weave="arc"`); the Box keeps the straight column (its height spelled out: a canvas with top + bottom
-  and `height:auto` keeps its pixel height).
+  and `height:auto` keeps its pixel height). **The ring lane stayed grey mid-fight (2026-11-09,** *"need the weaving to work"***):**
+  that fight's own log shows 20 crush and 6 punch rounds (the default words) and the engine lights up on a replay of it, so the break
+  is after the engine. Three fixes on beta: the HUD and Timers canvas windows run with `backgroundThrottling:false` (Chromium stops
+  animation frames for a window it counts as hidden or occluded, and the lane painted only on frames); `weaveDraw.js` paints on a
+  50 ms timer when a frame does not come; a lane whose own character is not live draws the character off the pipe that IS (the HUD
+  names the character from the log file, Zeal from the game). The ring now also says why it is idle ("weave: needs Zeal", or the
+  swing word it did not know). If it still sits grey, the next screenshot names the cause.
   **First live report (2026-11-09, agent 4.0.78 beta):** *"WEAVING IS WAITING FOR A FIGHT BUT I'M IN ONE"*. The hub only fed
   the engine lines on colours 265 / 267 (the unverified guess above), so a client whose melee lines arrive on any other colour
   never started a swing. Now it takes any line that starts `You ` on any colour (other people's hits and non-melee are still
