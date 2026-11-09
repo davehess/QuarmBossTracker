@@ -101,13 +101,33 @@
   var HIT_RE = /^You (\w+) (.+?) for (\d+) points? of damage\./i;           // colour 265 (USERCOLOR_YOU_HIT_OTHER)
   var MISS_RE = /^You try to (\w+) (.+?), but /i;                           // colour 267 (USERCOLOR_YOU_MISS_OTHER); dodge, parry, block, riposte too
   var BAND_RE = /^Loading bandolier set \[(.+?)\]/i;                        // Zeal's own channel (the agent maps 1010/1011); text is distinctive enough to match on any colour
-  function bare(text) { return String(text == null ? '' : text).replace(/^\[[^\]]*\]\s*/, '').trim(); }
-  // YOUR melee swing, or null. Only a line that starts "You " counts: another player's hits arrive on other colours,
-  // but this guards anyway.
+  // Zeal's chat timestamps ("/timestamp": [HH:MM:SS], [HH:MM], [hh:mm:ss AM]) can ride in front of a pipe line (the guild lead's
+  // chat, 2026-11-09: "[11:53:53] crush a potameid wildling for 256"), so every check below runs on the line without it.
+  var STAMP_RE = /^\[\d{1,2}:\d{2}(?::\d{2})?(?: ?[AP]M)?\]\s*/i;
+  function unstamp(text) { return String(text == null ? '' : text).replace(STAMP_RE, ''); }
+  function bare(text) { return unstamp(text).replace(/^\[[^\]]*\]\s*/, '').trim(); }
+  // The SHORT form the same chat shows for your own melee: "crush a potameid wildling for 256" — no "You", no "points of
+  // damage". Lowercase first word only (another player's line starts with their name), and only a word the 2H or fist
+  // lists know counts as a swing (classify); "miss" alone names no weapon and is skipped.
+  // Ends at the number: a full line ("… for N points of damage.") is never read this way, and a first word that is an article
+  // ("a gnoll crushes YOU …") is a mob, not your verb.
+  var SHORT_HIT_RE = /^(?!(?:a|an|the|your)\b)([a-z]+) (.+?) for (\d+)\.?$/;
+  // YOUR melee swing, or null. Only a line that starts "You " (or the short form above) counts: another player's hits
+  // arrive on other colours, but this guards anyway.
   function parseSwing(text) {
     var t = bare(text), m = HIT_RE.exec(t), miss = false;
     if (!m) { m = MISS_RE.exec(t); miss = !!m; }
-    return m ? { verb: m[1].toLowerCase(), target: m[2], miss: miss } : null;
+    var short = false;
+    if (!m) { m = SHORT_HIT_RE.exec(t); short = !!m; }
+    if (!m) return null;
+    var out = { verb: m[1].toLowerCase(), target: m[2], miss: miss };
+    if (short) out.short = true;
+    return out;
+  }
+  // Cheap gate for the hub's hot path: could this line be one of your swings?
+  function maybeSwing(text) {
+    var t = unstamp(text);
+    return t.slice(0, 4) === 'You ' || /^[a-z]+ .+ for \d+/.test(t);
   }
   function parseLoad(text) { var m = BAND_RE.exec(bare(text)); return m ? m[1] : null; }
   // '2h', 'fist', or null for a kick, a flying kick or any other special — those are not swings.
@@ -199,6 +219,7 @@
     var s = parseSwing(text);
     if (!s) return false;
     var kind = classify(s.verb, this.cfg);
+    if (s.short && !kind) return false;   // a short-form line counts only for a word the lists know (it has no "You" to prove it is yours)
     if (!SPECIAL_VERBS[s.verb]) { this.diag.seen++; if (kind) this.diag.matched++; else this.diag.lastVerb = s.verb; }
     if (!kind) return false;
     if (this.lastSwingAt != null && t - this.lastSwingAt > FIGHT_GAP_MS) this.fresh();   // a new fight
@@ -301,7 +322,7 @@
         // other client paths print yours on others, and a colour gate left the lane idle mid-fight (the guild lead,
         // 2026-11-08). parseSwing only takes "You <verb> <target> for N points of damage." and "You try to …", never
         // non-melee damage, and classify() only a 2H or fist word.
-        var swing = d.text.charCodeAt(0) === 89 && d.text.slice(0, 4) === 'You ';
+        var swing = maybeSwing(d.text);   // "You …" or the short form, with or without a leading timestamp
         var load = !swing && d.text.indexOf('oading bandolier set') > 0;
         if (!swing && !load) return false;
         if (!e) { e = entry(obj.character, true); e.lastPipe = now; }
@@ -333,6 +354,7 @@
   }
 
   var api = { handToHandDelay: handToHandDelay, cleanCfg: cleanCfg, DEFAULT_CFG: DEFAULT_CFG, parseSwing: parseSwing, parseLoad: parseLoad,
+    maybeSwing: maybeSwing, unstamp: unstamp,
     classify: classify, derive: derive, zones: zones, median: median, WeaveEngine: WeaveEngine, createWeaveHub: createWeaveHub,
     CLIP_MS: CLIP_MS, FIGHT_GAP_MS: FIGHT_GAP_MS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

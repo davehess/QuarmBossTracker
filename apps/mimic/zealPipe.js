@@ -227,7 +227,9 @@ const ENRAGE_FAST_RX = /^.{1,120}? (?:has become ENRAGED|is no longer enraged)\.
 function enrageLineOf(obj, now) {
   const l = chatLineOf(obj);
   if (!l) return null;
-  const text = l.x.trim();
+  // A Zeal chat timestamp can ride in front ([HH:MM:SS], [HH:MM], [hh:mm:ss AM]; the guild lead's chat, 2026-11-09), and the
+  // anchored match below would then never fire: drop it first.
+  const text = l.x.trim().replace(/^\[\d{1,2}:\d{2}(?::\d{2})?(?: ?[AP]M)?\]\s*/i, '');
   if (!ENRAGE_FAST_RX.test(text)) return null;
   return { character: l.c, text, at: now == null ? Date.now() : now };
 }
