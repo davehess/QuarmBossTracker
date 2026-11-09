@@ -376,7 +376,8 @@ describe('both sign-in callbacks record it, after the session is good, and never
   }
   const req = (host) => ({ url: `https://${host}/auth/callback?code=abc&next=%2F`, headers: new Headers({ host }) });
 
-  it.each([['raidmimic.com', 'https://raidmimic.com/guilds'], ['wolfpack.quest', 'https://wolfpack.quest/']])('%s: signing in writes the acceptance row for this terms version', async (host, landed) => {
+  // raidmimic.com lands on /guilds?stay=1 since web 2.1.117 (§556: signing in keeps you on Raid Mimic).
+  it.each([['raidmimic.com', 'https://raidmimic.com/guilds?stay=1'], ['wolfpack.quest', 'https://wolfpack.quest/']])('%s: signing in writes the acceptance row for this terms version', async (host, landed) => {
     const db = fakeDb();
     const { GET, calls } = await load(db);
     const res = await GET(req(host));
@@ -387,7 +388,7 @@ describe('both sign-in callbacks record it, after the session is good, and never
     expect(w[0].payload).toEqual({ user_id: 'auth-u1', discord_id: 'd-100', terms_version: L.TERMS_VERSION, host });
     expect(w[0].opts).toEqual({ onConflict: 'user_id,terms_version', ignoreDuplicates: true });
   });
-  it.each([['raidmimic.com', 'https://raidmimic.com/guilds'], ['wolfpack.quest', 'https://wolfpack.quest/']])('%s: if the insert throws or errors, sign-in still completes (fail-open)', async (host, landed) => {
+  it.each([['raidmimic.com', 'https://raidmimic.com/guilds?stay=1'], ['wolfpack.quest', 'https://wolfpack.quest/']])('%s: if the insert throws or errors, sign-in still completes (fail-open)', async (host, landed) => {
     for (const terms of ['throw', 'error']) {
       const { GET, calls } = await load(fakeDb({ terms }));
       const res = await GET(req(host));

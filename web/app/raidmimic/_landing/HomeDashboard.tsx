@@ -1,18 +1,17 @@
-// `?v=b` "Dashboard": the signed-in top of raidmimic.com as one dense screen (the guild lead, 2026-11-09: "site looks barebones
-// here"). The site bar first, then who you are, then three cards: your characters, your guilds, Mimic. The coordination
-// ideas are one dim line at the bottom: labelled coming, never links or buttons.
+// "Dashboard": the signed-in top of raidmimic.com as one dense screen (the guild lead, 2026-11-09: "site looks barebones
+// here"; picked option B on the Decision Desk the same day). Who you are, then three cards: your characters, your guilds,
+// Mimic. The coordination ideas are one dim line at the bottom: labelled coming, never links or buttons. The site bar is
+// drawn ABOVE this by the page (web/app/raidmimic/page.tsx), so the landing never carries two bars.
 import type { CharacterView } from '@/lib/hubCharactersView';
 import { GUILDS_STAY_PATH } from '@/lib/guildSites';
 import { DASH_WORDS as W, comingLine, type HomeGuild } from '@/lib/raidmimicHome';
-import { HostBar } from '@/components/RaidmimicFrame';
 import { BTN, CARD, LINK, MAX_SHOWN, charactersHref } from './HomeParts';
 
 export default function HomeDashboard({ name, avatarUrl, mine, guilds, downloadUrl }: {
   name: string | null; avatarUrl: string | null; mine: CharacterView[]; guilds: HomeGuild[]; downloadUrl: string;
 }) {
   return (
-    <section id="your-raidmimic" aria-label="Your Raid Mimic" data-home-variant="b" className="mx-auto max-w-5xl px-1">
-      <HostBar />
+    <section id="your-raidmimic" aria-label="Your Raid Mimic" data-home-panel className="mx-auto max-w-5xl px-1 pb-4">
       <div className="flex items-center gap-3">
         {avatarUrl
           ? <img src={avatarUrl} alt="" width={48} height={48} className="h-12 w-12 rounded-full border border-border" />

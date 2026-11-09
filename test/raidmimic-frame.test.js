@@ -26,7 +26,9 @@ describe('the Raid Mimic frame', () => {
     // the landing page takes the same bar under its stage, on a raidmimic host only
     const landing = code('web/app/raidmimic/page.tsx');
     expect(landing).toMatch(/import \{ HostBar \} from '@\/components\/RaidmimicFrame';/);
-    expect(landing).toMatch(/\{onHost && <HostBar \/>\}\s*<FeatureBlocks \/>/);
+    // Signed out the bar sits under the stage; signed in it comes first, above the Dashboard (2026-11-09). Once either way.
+    expect(landing).toMatch(/\{!signedIn && onHost && <HostBar \/>\}\s*<FeatureBlocks \/>/);
+    expect(landing).toMatch(/\{signedIn && onHost && <div className="mx-auto max-w-5xl"><HostBar \/><\/div>\}/);
     expect(frame).toMatch(/if \(!onHost\) return <>\{children\}<\/>;/);
     expect(frame).not.toMatch(/['"]use client['"]/);
   });

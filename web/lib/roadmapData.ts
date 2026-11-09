@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-122-2026-11-09',
+    title: 'Web 2.1.122',
+    version: 'Web 2.1.122',
+    date: '2026-11-09',
+    headline: 'Signed in on raidmimic.com, the top of the page is your dashboard.',
+    features: [
+      { name: 'Your dashboard', blurb: 'Signed in, raidmimic.com opens on you: your characters and their flags, your guilds with a link to each guild\'s own site, and the Mimic download, side by side. The site bar sits at the top where it belongs.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-2-1-121-2026-11-09',
     title: 'Web 2.1.121',
     version: 'Web 2.1.121',

@@ -185,9 +185,8 @@ describe('the wiring: the default page IS the story stage', () => {
 
   it('page.tsx renders the stage with no query: no variants, no beta tag, no other layout', () => {
     expect(page).toMatch(/<StoryStage downloadUrl=\{DOWNLOAD_URL\} onHost=\{onHost\} \/>/);
-    // 2026-11-09: `searchParams` is read for the skip-video previews only (raidmimic-skip-video.test.js pins them and the default).
-    expect(page).not.toMatch(/pick ===|PathsLayout|ChaptersStage|BetaTag/);
-    expect(page.match(/<StoryStage\b/g)).toHaveLength(1);   // the one default; the signed-in previews replace `top` (raidmimic-home-variants.test.js)
+    expect(page).not.toMatch(/searchParams|\?v=|pick ===|PathsLayout|ChaptersStage|BetaTag/);
+    expect(page.match(/<StoryStage\b/g)).toHaveLength(1);
   });
   it('the metadata is the page’s own and unchanged', () => {
     expect(page).toMatch(/const TITLE = 'Raid Mimic · free EverQuest raid overlays';/);
