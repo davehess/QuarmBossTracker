@@ -101,7 +101,7 @@ describe('coming things are labelled coming and are never links or buttons', () 
 
 describe('guilds list', () => {
   it('toHomeGuilds puts the built-in guild first with its configured site, then hosted guilds', () => {
-    const g = toHomeGuilds({ key: 'wp', name: 'Wolf Pack' }, [{ guild_id: 'zz', name: 'Zed', site: null }, { guild_id: 'aa', name: 'Aye', site: 'https://aye.example' }], 'https://wp.example/');
+    const g = toHomeGuilds({ key: 'wp', name: 'Wolf Pack' }, [{ guild_id: 'zz', name: 'Zed', site: null }, { guild_id: 'aa', name: 'Aye', site: 'https://aye.example' }], 'https://wp.example');   // builtinGuildSite() hands it over already cleaned
     expect(g).toEqual([
       { key: 'wp', name: 'Wolf Pack', site: 'https://wp.example' },
       { key: 'zz', name: 'Zed', site: null },
