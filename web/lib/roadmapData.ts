@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-118-2026-11-09',
+    title: 'Web 2.1.118',
+    version: 'Web 2.1.118',
+    date: '2026-11-09',
+    headline: 'Your guilds on raidmimic.com stays on raidmimic.com.',
+    features: [],
+    fixes: [
+      'Opening Your guilds on raidmimic.com no longer sends Wolf Pack members to the Wolf Pack website. The card has the link when you want it.',
+    ],
+  },
+  {
     key: 'web-2-1-117-2026-11-09',
     title: 'Web 2.1.117',
     version: 'Web 2.1.117',

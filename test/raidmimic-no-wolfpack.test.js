@@ -214,9 +214,9 @@ describe('a guild\'s website address (checkSiteUrl)', () => {
 
 describe('the built-in guild\'s site comes from configuration, with today\'s production site as the default', () => {
   afterEach(() => { vi.unstubAllEnvs(); });
-  it('nothing set: the production site, redirect on', () => {
+  it('nothing set: the production site, redirect OFF (2026-11-09, §556: raidmimic.com/guilds must not send Wolf Pack members away)', () => {
     vi.stubEnv('GUILD_SITE_URL', ''); vi.stubEnv('GUILD_SITE_REDIRECT', '');
-    expect(builtinGuildSite()).toEqual({ url: 'https://wolfpack.quest', redirect: true });
+    expect(builtinGuildSite()).toEqual({ url: 'https://wolfpack.quest', redirect: false });
   });
   it('GUILD_SITE_URL overrides it; an unusable value falls back to the default rather than redirecting somewhere wrong', () => {
     vi.stubEnv('GUILD_SITE_URL', 'https://pack.example/');
@@ -226,13 +226,15 @@ describe('the built-in guild\'s site comes from configuration, with today\'s pro
       expect(builtinGuildSite().url, bad).toBe('https://wolfpack.quest');
     }
   });
-  it('GUILD_SITE_REDIRECT=0 (or false / off / no) switches the built-in guild\'s redirect off', () => {
-    for (const off of ['0', 'false', 'OFF', 'no']) {
+  it('GUILD_SITE_REDIRECT=1 (or true / on / yes) switches the built-in guild\'s redirect on; anything else leaves it off', () => {
+    for (const on of ['1', 'true', 'ON', 'yes']) {
+      vi.stubEnv('GUILD_SITE_REDIRECT', on);
+      expect(builtinGuildSite().redirect, on).toBe(true);
+    }
+    for (const off of ['0', 'false', 'off', 'garbage']) {
       vi.stubEnv('GUILD_SITE_REDIRECT', off);
       expect(builtinGuildSite().redirect, off).toBe(false);
     }
-    vi.stubEnv('GUILD_SITE_REDIRECT', '1');
-    expect(builtinGuildSite().redirect).toBe(true);
   });
 });
 

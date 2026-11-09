@@ -492,7 +492,7 @@ next touch one rather than assuming a missing row means a missing doc.
   be created. Test: `test/legal-pages.test.js`.
 - **🟡 raidmimic.com references no Wolf Pack address; a guild's own site and redirect by default (first draft 2026-11-02, not yet shipped; the guild lead).**
   `hub_guilds.website_url` / `redirect_members` (migration `20261102230000_hub_guild_site.sql`, not yet applied: apply BEFORE the web change ships), Wolf Pack's site from
-  `GUILD_SITE_URL` / `GUILD_SITE_REDIRECT` (`web/lib/guildSites.ts`), `/guilds` redirects a one-guild player to it unless `?stay=1`, the privacy page is self-contained.
+  `GUILD_SITE_URL` / `GUILD_SITE_REDIRECT` (`web/lib/guildSites.ts`), `/guilds` redirects a one-guild player to it unless `?stay=1`, the privacy page is self-contained. Web 2.1.117–2.1.118 (§556): sign-in lands on `/guilds?stay=1`, and Wolf Pack's own redirect is off unless `GUILD_SITE_REDIRECT=1`.
   Open: the root layout's title template / `metadataBase` / site name and the `/auth/signin` card still say WolfPack.quest on a raidmimic host; `/api/hubs` still names the
   Wolf Pack site. Tests: `test/raidmimic-no-wolfpack.test.js`.
 - **✅ Self-serve "Download my data" and "Delete my account" (web 2.1.87, `main`; migration `20261101140000_member_self_delete.sql` applied).** A "Your data" section on
