@@ -103,6 +103,9 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **2026-11-09 — raidmimic.com pricing copy = analytics (on beta, awaiting promotion to main).** One paid plan, Pro · Guild $25/month; the Pro · Individual tier, `INDIVIDUAL_PRICE` and the "costs us money" / storage reasons are gone from `raidmimicStory.ts`, `raidmimicStartFree.ts`, `StartFree.tsx` and the terms and refunds pages (DECISIONS §552; guild lead's picks on the Decision Desk). Nothing is charged today; no copy added for the unbuilt 7-day retention, free week page or grace period. Test: `test/raidmimic-landing-variants.test.js`. No web version bump on beta.
+
+
 - **🧪 raidmimic landing: big "Skip video" + signed-in home, two previews on beta awaiting the guild lead's pick (2026-11-09).**
   The guild lead: *"a big skip video button at the top of raidmimic.com and also have users log into it and have their
   information come up on the homepage or redirect instead of hitting the video ... a link 'rewatch the video' up top."*
@@ -117,6 +120,22 @@ next touch one rather than assuming a missing row means a missing doc.
   the release list, alpha included, since /releases/latest skips prereleases); the `test` source (the fork's test-all, rebased
   on v1.5.0-alpha0) is labelled "Ours on 1.5". The Wolf Pack 1.4.x build is no longer offered; a Mimic already set to it keeps
   it and Settings says so. Test: `test/zeal-source.test.js`.
+- **🧪 Gold splits for every scripted PoP event (web 2.1.116 on main, [beta], 2026-11-09, §555).** The guild lead: *"yes make gold
+  splits a site feature for every event, linked for replays and parses"*. https://wolfpack.quest/pop/events/splits (index) and
+  https://wolfpack.quest/pop/events/<slug>/splits (one event): attempts found in `encounters` (`web/lib/eventAttemptsLoad.ts`,
+  grouped by a start match, raid night or a 30-minute gap), stacked timelines first and largest with click-to-align on a key
+  moment and time-to-next, the splits table with gold for each segment's best ever, sum of best and each attempt's possible
+  save; every split links its parse, every attempt its replay window. Hand-written moments for the five elemental events
+  (`web/lib/eventSplitsDefs.ts`), a generic default for the other 98. "Play these attempts together" links to the replay
+  overlay, labelled "coming" until it ships. Tests `test/gold-splits.test.js` (gold comparison mutation-checked).
+
+- **🧾 raidmimic.com front door: C "Home panel" graduated, b deleted (web 2.1.114 on main, 2026-11-09).** Picked on the Decision
+  Desk 2026-11-09 (DECISIONS §546). Signed out: the story stage with a big "Skip video" at the top, remembered per viewer, and
+  "Rewatch the video" (`#video`) on the collapsed bar. Signed in: "Your Raid Mimic" (their characters, what each needs next, the
+  coordination tools marked coming) instead of the video, with "Rewatch the video" revealing the stage in place. The Doorway
+  redirect, the `?v=` reading and `/characters`' rewatch link are gone; the page reads no query. `loadMine` now lives in
+  `web/lib/hubMine.ts`, shared by the page and `/characters`. `test/raidmimic-skip-video.test.js`.
+
 - **🧾 Hail board: the four elemental Essences (bot 4.0.60 · web 2.1.111 on main, 2026-11-09).** The guild lead: *"hails on
   Essence of Water will give you but not say anything it seems. we should include those hails on the command center for each of
   the elemental planes"*. Coirnav, Fennin Ro, Xegony and the Avatar of Earth open `Essence of Water / Fire / Air / Earth` on the
@@ -554,7 +573,7 @@ next touch one rather than assuming a missing row means a missing doc.
   be created. Test: `test/legal-pages.test.js`.
 - **🟡 raidmimic.com references no Wolf Pack address; a guild's own site and redirect by default (first draft 2026-11-02, not yet shipped; the guild lead).**
   `hub_guilds.website_url` / `redirect_members` (migration `20261102230000_hub_guild_site.sql`, not yet applied: apply BEFORE the web change ships), Wolf Pack's site from
-  `GUILD_SITE_URL` / `GUILD_SITE_REDIRECT` (`web/lib/guildSites.ts`), `/guilds` redirects a one-guild player to it unless `?stay=1`, the privacy page is self-contained.
+  `GUILD_SITE_URL` / `GUILD_SITE_REDIRECT` (`web/lib/guildSites.ts`), `/guilds` redirects a one-guild player to it unless `?stay=1`, the privacy page is self-contained. Web 2.1.117–2.1.118 (§556): sign-in lands on `/guilds?stay=1`, and Wolf Pack's own redirect is off unless `GUILD_SITE_REDIRECT=1`.
   Open: the root layout's title template / `metadataBase` / site name and the `/auth/signin` card still say WolfPack.quest on a raidmimic host; `/api/hubs` still names the
   Wolf Pack site. Tests: `test/raidmimic-no-wolfpack.test.js`.
 - **✅ Self-serve "Download my data" and "Delete my account" (web 2.1.87, `main`; migration `20261101140000_member_self_delete.sql` applied).** A "Your data" section on
@@ -7967,3 +7986,36 @@ Mithaniel's notes (:37) and the second reading needs zeks **7** (:57), not 6. Th
 - Parity tests: `test/hub-characters-import.test.js` (file reader vs the agent's `parsePopFlagsFile`, claim rule vs `utils/hubSync.js`, cap, non-export rejected).
 - ⏳ Not run against a live database or a browser; no migration needed (existing columns). Names are 3-24 letters (the table's check), the agent accepts 2+.
 - ⏳ Next in §545: guild raid posts with open slots (step 2).
+
+### 🧾 2026-11-09 — Map: mini mode, a round map with its buttons as dots (Mimic beta draft, awaiting the guild lead's look)
+- The guild lead: *"add a mini mode for the mimic map. keep the quick buttons as dots around, the move icon for pan/zoom, the mobs spawns as a
+  single dot and dot with circle in it toggle. config button, compass rose button that shows the direction, label button"*. `apps/mimic/map.html`
+  (`body.mini`): the map drawn in a circle (a `border-radius` clip on `#mapPane`, no per-frame cost), the zone name above it, and twelve dots on the
+  rim (`#mini`, CSS-placed): Aa labels (all, targets, off), R raider names, ◔ respawn timer rings, •/◉ spawn dot alone or with its aggro ring,
+  + / − zoom, ✋ Pan / zoom (drag to pan, wheel to zoom; not the ✥ window move, which stays), ◎ Follow, ⤢ Fit, ⚙ settings, ▭ leave mini, and a compass
+  dot (its needle points north; click = North up / Heading up). The red N on the rim rides to where north is and takes no click. Each dot clicks its toolbar twin
+  or flips the same `cfg` switch, so there is one copy of each state. In: the toolbar's ◔ Mini, the ✥ right-click menu's "Mini map" (`map-mini-toggle`
+  through main), or right-click a dot. The choice is `wp-map-mini`; the ring choice is `cfg.show.aggro`. Entering asks main for a 260 square
+  (`map-mini-size`, `_mapMiniSize`) and keeps the old size in `cfg.mapPreMini`; leaving restores it from the same top-left corner. Full mode never shows it.
+- **Follow-up, same day (the guild lead: *"mini map can have the options on one sequence and leave room for arrows around the outside edge of their visible
+  viewpoint for group and raid members, and more importantly the target mob and distance, and pet"*).** The twelve dots now sit in ONE run on the lower-left of the
+  rim (200 to 314 degrees, 10+ degrees apart; ⚙ ▭ then + − ✋ ◎ ⤢ Aa R ◔ •/◉ ◇), leaving the top and right free. Off-view things get an **edge arrow** drawn on the
+  canvas at their bearing from you (north up or heading up): the target (largest, target colour, its distance beside it; its name on hover), the pet (pet colour,
+  distance), group (group colour), raid (small, faint, only with Raiders names on, nearest 8, clumps within 9 degrees fold into one arrow with a "+n"). Off-view
+  = past the circle's outer 14 px; the dot that would be half-hidden there is replaced by the arrow. A target IN view gets its distance beside its ring
+  (the dotted line's own mid-line number is off in mini). Positions are the live ones the dots use (`P.target.x/y`, `P.pet.x/y`, `P.group`, `P.raid`); a target or
+  pet with no position gets no arrow, nothing is invented. Mimic beta draft, no version bump. `miniBearing`, `miniInView`, `miniArrowPlan`, `drawMiniArrows`.
+- ⏳ **Open:** not run in Electron (Chromium via Playwright only: the render and the dot clicks). ⚙ leaves mini mode and opens the full settings
+  (the panel does not fit a circle). Right-click on the map itself is unchanged (centre on you); the mini menu is on the dots. Dots are fixed on the rim, the
+  compass dot included; only the N marker moves. Test: `test/map-mini.test.js`.
+### 🧾 2026-11-09 — Event spawns from the quest scripts: Map points + replay timelines (bot 4.0.61 · web 2.1.115, first draft, not yet routed)
+- PoP event mobs (Water, Fire, Air, Earth) are script-spawned and had no spawn2 row. `scripts/gen-event-spawns.js` reads the
+  scripts at a pinned commit into `data/event-spawns.json` (+ `web/lib/eventSpawns.json`); `utils/zoneSpawns.js` adds event points
+  (aggro rings and pinning candidates); the three timeline loaders keep scripted-event kills. See `HOW-ITS-BUILT.md` "Event spawns from the quest scripts".
+- Not done: Mimic map styling for event points (they draw like normal spawn points until a Mimic change reads `event: true`);
+  relative / random spawns (Essences at the killer, Mud mudlings, Vine mangled, Wind storm trap, Air spirits) are listed with no coordinates and not placed;
+  Fishlords' anglerfish spawn at the first waypoint of the script's `GRIDS` and are not placed; the Fire event's other mob types have no
+  `encounters` rows (deaths not recorded; separate investigation).
+- ⏳ Unverified: Fennin's table is "Y, X" in its own comment and the script's spawn call swaps it; the swap is applied as the script does it,
+  but only Coirnav's frame was checked against spawn2 (row 365647 sits inside its spots in the same x, y order). Pairing a plain table with
+  its type is a reading of the code near each use, so spot-check a new zone against the script.

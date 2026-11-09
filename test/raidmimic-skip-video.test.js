@@ -1,8 +1,8 @@
-// test/raidmimic-skip-video.test.js — the raidmimic landing's two skip-video previews (the guild lead, 2026-11-09: "a big skip
-// video button at the top ... users log into it and have their information come up on the homepage or redirect instead of hitting
-// the video ... a link 'rewatch the video' up top"). ?v=b "Doorway" and ?v=c "Home panel" are read on b.wolfpack.quest only.
-// Pins: the default (no v) path is the current stage with no auth call; b redirects a signed-in visitor; c renders the panel
-// with honest "coming" placeholders; the big skip exists in both; the rewatch survives a raidmimic host's query drop (a hash).
+// test/raidmimic-skip-video.test.js — the raidmimic landing's big Skip and signed-in Home panel (the guild lead, 2026-11-09: "a big skip
+// video button at the top ... users log into it and have their information come up on the homepage ... a link 'rewatch the video'
+// up top"; he picked "Home panel" on the Decision Desk, and the Doorway redirect and every `?v=` switch were deleted).
+// Pins: signed out = the story stage with the big Skip; signed in = the panel instead of the video; the page and /characters read no
+// query; storage is guarded; the rewatch is a hash, which survives a raidmimic host's query drop.
 // Source-text assertions run over comment-stripped source (CLAUDE.md "comments satisfy text assertions").
 // Run: npx vitest run test/raidmimic-skip-video.test.js
 
@@ -18,47 +18,37 @@ const stage = code('web/app/raidmimic/_landing/StoryStage.tsx');
 const panel = code('web/app/raidmimic/_landing/HomePanel.tsx');
 const gate = code('web/app/raidmimic/_landing/HomePanelGate.tsx');
 const chars = code('web/app/characters/page.tsx');
+const mine = code('web/lib/hubMine.ts');
 
-describe('the default path (no ?v=) is today\'s page', () => {
-  it('renders the plain stage, and the preview branch is the only code that reads auth', () => {
-    expect(page).toMatch(/let top = <StoryStage downloadUrl=\{DOWNLOAD_URL\} onHost=\{onHost\} \/>;/);
-    const afterDefault = page.slice(page.indexOf('let top ='));
-    const guard = afterDefault.indexOf('if (v) {');
-    expect(guard).toBeGreaterThan(0);
-    expect(afterDefault.indexOf('auth.getUser()')).toBeGreaterThan(guard);
+describe('the page: signed out gets the stage, signed in gets the panel', () => {
+  it('reads the session, and only a Discord id swaps the video for the panel', () => {
+    expect(page).toMatch(/const \{ data: \{ user \} \} = await supabaseServer\(\)\.auth\.getUser\(\);/);
+    expect(page).toMatch(/const discordId = discordIdOf\(user\);/);
+    // 2026-11-09: the default is written as a stage plus an `if (user && discordId)` that swaps in the panel; the signed-in
+    // previews (raidmimic-home-variants.test.js) branch inside it, and no `?v=` keeps this path.
+    expect(page).toMatch(/let top = <StoryStage downloadUrl=\{DOWNLOAD_URL\} onHost=\{onHost\} \/>;\s*if \(user && discordId\) \{[^]*top = <HomePanelGate[^]*<HomePanel mine=\{await loadMine\(discordId\)\}/);
   });
-  it('accepts only b and c as v', () => {
-    expect(page).toMatch(/searchParams\?\.v === 'b' \|\| searchParams\?\.v === 'c'/);
-  });
-  it('the stage without bigSkip draws no big skip and stores nothing', () => {
-    expect(stage).toMatch(/bigSkip = false/);
-    expect(stage).toMatch(/\{bigSkip && !show\.end && \(/);
-    expect(stage).toMatch(/if \(!bigSkip\) return;/);
-  });
-});
-
-describe('b "Doorway"', () => {
-  it('redirects a signed-in visitor to /characters unless the rewatch link asked for the video', () => {
-    expect(page).toMatch(/v === 'b' && searchParams\?\.video !== '1'\) redirect\('\/characters\?v=b'\)/);
-  });
-  it('a signed-out visitor gets the stage with the big skip', () => {
-    const preview = page.slice(page.indexOf('if (v) {'));
-    expect(preview).toMatch(/top = <StoryStage[^>]*bigSkip \/>;/);
-    expect(preview.indexOf('bigSkip')).toBeLessThan(preview.indexOf('redirect('));
-  });
-  it('/characters carries a Rewatch link only under ?v=b', () => {
-    expect(chars).toMatch(/searchParams\?\.v === 'b'/);
-    expect(chars).toMatch(/\{doorway && \(/);
-    expect(chars).toMatch(/rewatchHref\(onHost\)/);
-  });
-});
-
-describe('c "Home panel"', () => {
-  it('shows the panel (with the shared read) in place of the video for a signed-in visitor', () => {
-    expect(page).toMatch(/v === 'c'\) top = <HomePanelGate[^]*<HomePanel mine=\{await loadMine\(discordId\)\}/);
+  it('reads a query only for the signed-in home previews, and no redirect or big-skip variant survives', () => {
+    expect(page).not.toMatch(/\bv === |\?v=|redirect\(|bigSkip/);
+    expect(page).toMatch(/searchParams\?\.v, onHost\)/);
+    expect(page).toMatch(/export default async function RaidmimicPage\(\{ searchParams \}/);
+    expect(chars).not.toMatch(/searchParams|doorway|rewatch|\?v=/i);
     expect(chars).toMatch(/from '@\/lib\/hubMine'/);
     expect(chars).not.toMatch(/from\('hub_characters'\)/);
+    expect(chars).toMatch(/<h1 className="text-2xl text-gold">/);
+    expect(chars).toMatch(/text-text/);
+    expect(Object.keys(H)).not.toContain('rewatchHref');   // no rewatchHref with its `video=1` query
+    expect(Object.keys(H).sort()).toEqual(['DASH_WORDS', 'HOME_WORDS', 'REWATCH_HASH', 'SKIP_KEY', 'STEPS_WORDS', 'checklistSteps', 'comingLine', 'homeVariant', 'toHomeGuilds']);   // + the home previews (raidmimic-home-variants.test.js)
   });
+  it('the shared read pages hub_flags past the 1,000-row cap, ordered on id', () => {
+    expect(mine).toMatch(/selectAll</);
+    expect(mine).toMatch(/\.order\('id', \{ ascending: true \}\)/);
+    expect(mine).toMatch(/hardCap: 20000/);
+    expect(mine).toMatch(/\.eq\('discord_id', discordId\)/);
+  });
+});
+
+describe('the Home panel', () => {
   it('lists characters, a /characters link and four coming placeholders that are not links', () => {
     expect(panel).toMatch(/c\.flagCount/);
     expect(panel).toMatch(/c\.next\.top\[0\]/);
@@ -71,23 +61,27 @@ describe('c "Home panel"', () => {
     expect(coming).not.toMatch(/<a |<button|onClick/);
     expect(panel).not.toMatch(/dangerouslySetInnerHTML/);
   });
-  it('Rewatch reveals the stage in place', () => {
+  it('Rewatch reveals the stage in place, and #video in the address does too', () => {
     expect(gate).toMatch(/setStage\(true\)/);
-    expect(gate).toMatch(/<StoryStage[^>]*bigSkip/);
+    expect(gate).toMatch(/<StoryStage downloadUrl=\{downloadUrl\} onHost=\{onHost\} \/>/);
+    expect(gate).toMatch(/window\.location\.hash === REWATCH_HASH/);
+    expect(gate).not.toMatch(/bigSkip/);
   });
 });
 
-describe('the big skip, in both', () => {
+describe('the big skip on the stage', () => {
   it('sits at the top over the video, is a real button, collapses the stage and remembers it', () => {
-    expect(stage).toMatch(/<button type="button" data-big-skip onClick=\{bigSkipNow\}/);
+    expect(stage).toMatch(/\{!show\.end && \(\s*<button type="button" data-big-skip onClick=\{bigSkipNow\}/);
     expect(stage).toMatch(/top-2 z-50/);
     expect(stage).toMatch(/min-h-12/);
     expect(stage).toMatch(/setItem\(SKIP_KEY, '1'\)/);
     expect(stage).toMatch(/setHidden\(true\)/);
+    expect(stage).not.toMatch(/bigSkip\b(?!Now)/);   // no prop: it is always there
     expect(H.HOME_WORDS.skipBig).toBe('Skip video');
   });
   it('every storage access is guarded, and #video beats a remembered skip', () => {
     expect(stage).toMatch(/try \{\s*if \(window\.location\.hash === REWATCH_HASH\) return;/);
+    expect(stage).toMatch(/getItem\(SKIP_KEY\) === '1'/);
     expect(stage).toMatch(/try \{ window\.localStorage\.setItem/);
   });
   it('a viewer who skipped before sees the Rewatch link at the top', () => {
@@ -97,8 +91,8 @@ describe('the big skip, in both', () => {
 });
 
 describe('rewatch survives a raidmimic host', () => {
-  it('uses a hash on the host (queries are dropped there) and a path plus video=1 plus the hash on Wolf Pack hosts', () => {
-    expect(H.rewatchHref(true)).toBe('/#video');
-    expect(H.rewatchHref(false)).toBe('/raidmimic?video=1#video');
+  it('is a hash, which never leaves the browser (a raidmimic host drops every query)', () => {
+    expect(H.REWATCH_HASH).toBe('#video');
+    expect(H.SKIP_KEY).toBe('rm-skipped-video');
   });
 });

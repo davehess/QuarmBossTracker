@@ -22,6 +22,7 @@
 import { guildByCode } from './zealIcons';
 import { statusWords, parseRefParam } from './feedbackReport';
 import { LEGAL_META } from './legal';
+import { eventBySlug } from './popEvents';
 
 export const SITE_NAME = 'WolfPack.quest';
 export const DEFAULT_DESCRIPTION =
@@ -37,6 +38,7 @@ const STATIC_META: Record<string, PageMeta> = {
   '/pop/latest':   { title: '[beta] Latest flags', description: 'The newest Planes of Power flags the server or an NPC recital confirmed, as a stream and as cards in step order, with who in the raid still needs them.' },
   '/pop/elementals': { title: '[beta] Elemental Planes planning', description: 'Water, Air, Earth and Fire planned for Wolf Pack: maps with a minimal and a full-clear boss path, travel and fight times at our damage rate, the event clocks, the named and the trash.' },
   '/pop/events':   { title: '[beta] PoP events', description: 'Every scripted Planes of Power event with its loot, the drop chances, a score for each item and a ranking of the events.' },
+  '/pop/events/splits': { title: '[beta] Gold splits', description: 'Every scripted Planes of Power event with a recorded attempt: its best full time, how many runs, and the last one, each linked to its splits.' },
   '/pop/flag-events': { title: '[beta] Flag events', description: 'Planes of Power flag events the officers have posted, and for each one which raiders still need it and who signed up.' },
   '/pop/raid':     { title: '[beta] Raid night plan', description: 'Tonight’s Planes of Power targets in order — who still needs a preflag, how to get there, what to expect, and a map with the route.' },
   '/pop/raid/me':  { title: '[beta] Your flags for tonight', description: 'Your characters and the Planes of Power flag steps each one still needs for the next raid night, with where to stand and what to say.' },
@@ -323,6 +325,15 @@ export function metaForPath(rawPath: string): PageMeta {
   if (m) return raidReviewMeta(m[1]);
   m = path.match(/^\/character\/([^/]+)(?:\/([^/]+))?/);
   if (m) return characterMeta(m[1], m[2]);
+  // One splits page per scripted event: the card names the event (public catalog data) and nothing a run recorded.
+  m = path.match(/^\/pop\/events\/([^/]+)\/splits$/);
+  if (m) {
+    const ev = eventBySlug(safeDecode(m[1]));
+    return {
+      title: `[beta] ${ev ? ev.name : 'Event'} · Gold splits`,
+      description: 'Every recorded attempt of one scripted Planes of Power event on stacked timelines, with the best time of each step, the sum of the bests and the time each run could have saved.',
+    };
+  }
   m = path.match(/^\/pvp\/([^/]+)$/);
   if (m) return pvpMeta(m[1]);
   // One demo page per gate (the gate's own name is in the page's tab; the card stays generic and never reads a gate list).

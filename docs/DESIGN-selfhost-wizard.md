@@ -704,7 +704,7 @@ and the same never-refetch guarantee.
   values); the table holds a logo URL, not the image.
 - **2026-11-02 — a guild's own website is configuration, and raidmimic.com redirects to it by default** (the guild lead; web
   `web/lib/guildSites.ts`): a hosted guild keeps `hub_guilds.website_url` and `redirect_members` (default on); the built-in guild's come
-  from the server-only `GUILD_SITE_URL` / `GUILD_SITE_REDIRECT` (default: the production site, redirect on). For the wizard: ask for the
+  from the server-only `GUILD_SITE_URL` / `GUILD_SITE_REDIRECT` (default: the production site, redirect OFF since 2026-11-09, §556; `1` turns it on). For the wizard: ask for the
   guild's site once, store it on the guild row, and never write the address into a Raid Mimic page.
 
 ## 4. Open questions for whoever builds it

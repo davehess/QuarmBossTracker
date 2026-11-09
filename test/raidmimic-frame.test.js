@@ -53,6 +53,8 @@ describe('the Raid Mimic frame', () => {
     expect(page).toMatch(/Open the guild&rsquo;s site &rarr;<\/a>[\s\S]*Open the guild &rarr;<\/a>/);
     expect(page).not.toMatch(/Open my page/);
     expect(page).toMatch(/findNote\(searchParams\.find, searchParams\.found, closed\.length, !!wolf \|\| hub\.length > 0\)/);
-    expect(page).toMatch(/\$\{listed \? 'No other' : 'None'\} of your Discord servers is a guild on Raid Mimic yet/);
+    // Wording from the guild lead, 2026-11-09: "No other guilds of yours have opted into Raid Mimic yet."
+    expect(page).toMatch(/listed \? 'No other guilds of yours have opted into Raid Mimic yet\.' : 'None of your guilds have opted into Raid Mimic yet\.'/);
+    expect(page).not.toMatch(/of your Discord servers is a guild/);
   });
 });

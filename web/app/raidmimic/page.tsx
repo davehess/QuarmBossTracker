@@ -1,7 +1,7 @@
 // raidmimic.com: the player-first front door (the guild lead, 2026-10-18 option C "two doors", reshaped 2026-10-23: "less
 // about me setting it up as a service ... more about here's what you get as a player, here's what you could have as a
 // guild"). Served at the root of raidmimic.com / .net / .quest (middleware.ts rewrites there) and also at
-// wolfpack.quest/raidmimic and b.wolfpack.quest/raidmimic. Public, no sign-in.
+// wolfpack.quest/raidmimic and b.wolfpack.quest/raidmimic. Public; signing in only swaps the video for the player's panel.
 //
 // One page: the "Story stage" (StoryStage.tsx; the guild lead picked C on 2026-11-01 from three previews, then refined it: "start
 // truly as the only thing on the page, fit is the video, fade it into the background color. Slowly add the logos as we go into
@@ -16,12 +16,16 @@
 // form or mailbox of ours), so that form's rules apply: its text is untrusted data that people review, nothing acts on
 // it automatically (CLAUDE.md, AFB).
 import { headers } from 'next/headers';
-import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { discordIdOf } from '@/lib/lockout';
 import { loadMine } from '@/lib/hubMine';
 import HomePanel from './_landing/HomePanel';
 import HomePanelGate from './_landing/HomePanelGate';
+import HomeDashboard from './_landing/HomeDashboard';
+import HomeChecklist from './_landing/HomeChecklist';
+import { loadHomeGuilds } from '@/lib/hubGuildsLoad';
+import { profileOf } from '@/lib/hubRegistry';
+import { homeVariant } from '@/lib/raidmimicHome';
 import type { Metadata } from 'next';
 import { isRaidmimicHost, raidmimicSeo, RAIDMIMIC_SETUP_PATH } from '@/lib/raidmimicHost';
 import { EQMIMIC_FEEDBACK_PATH, EQMIMIC_ORIGIN, interestUrl } from '@/lib/raidmimicLanding';
@@ -45,32 +49,37 @@ export function generateMetadata(): Metadata {
   };
 }
 
-// PREVIEWS (the guild lead, 2026-11-09, awaiting a pick; read at b.wolfpack.quest/raidmimic?v=b and ?v=c, since a raidmimic host drops
-// every query): `v` is read ONLY here. No `v` (production today) renders the stage exactly as before and makes no auth call.
-//   b "Doorway":    a signed-in visitor never sees the video: redirect to /characters (`?video=1` opts out, for "Rewatch the video"),
-//                   a signed-out one gets the stage with a big Skip at the top.
-//   c "Home panel": a signed-in visitor gets the "Your Raid Mimic" panel instead of the video, with a Rewatch link on top;
-//                   a signed-out one gets the stage with the big Skip.
-export default async function RaidmimicPage({ searchParams }: { searchParams?: { v?: string; video?: string } }) {
-  const v = searchParams?.v === 'b' || searchParams?.v === 'c' ? searchParams.v : null;
+// The top of the page (the guild lead picked "Home panel" on the Decision Desk, 2026-11-09): a signed-out visitor gets the story
+// stage with a big Skip (remembered per viewer; "Rewatch the video" on the collapsed bar, via #video); a signed-in one (a
+// Discord id on the session) gets the "Your Raid Mimic" panel instead of the video, with "Rewatch the video" revealing the
+// stage in place. Neither reads a query.
+// PREVIEWS (the guild lead, 2026-11-09, "site looks barebones here"; awaiting a pick): the signed-in top, in two other shapes, read at
+// b.wolfpack.quest/raidmimic?v=b (Dashboard) and ?v=c (Get started). `v` is read ONLY here and only on a Wolf Pack host (a raidmimic
+// host drops every query, and homeVariant ignores it there). No `v`, or signed out, renders exactly what is below.
+export default async function RaidmimicPage({ searchParams }: { searchParams?: { v?: string } }) {
   // On a raidmimic host the form lives on eqmimic.quest and the page is `/`. On the Wolf Pack hosts the form is
   // reached by its real path, so the site header stays above the page.
   const onHost = isRaidmimicHost(headers().get('host'));
   const ctx: Ctx = onHost
     ? { onHost, interest: interestUrl(`${EQMIMIC_ORIGIN}/feedback`), setup: '/setup' }
     : { onHost, interest: interestUrl(EQMIMIC_FEEDBACK_PATH), setup: RAIDMIMIC_SETUP_PATH };
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  const discordId = discordIdOf(user);
+  const variant = homeVariant(searchParams?.v, onHost);
   let top = <StoryStage downloadUrl={DOWNLOAD_URL} onHost={onHost} />;
-  if (v) {
-    top = <StoryStage downloadUrl={DOWNLOAD_URL} onHost={onHost} bigSkip />;   // signed out, or b's rewatch: the stage with the big Skip
-    const { data: { user } } = await supabaseServer().auth.getUser();
-    const discordId = discordIdOf(user);
-    if (user && discordId) {
-      if (v === 'b' && searchParams?.video !== '1') redirect('/characters?v=b');
-      if (v === 'c') top = <HomePanelGate downloadUrl={DOWNLOAD_URL} onHost={onHost} panel={<HomePanel mine={await loadMine(discordId)} />} />;
+  if (user && discordId) {
+    if (variant) {
+      const [mine, guilds] = await Promise.all([loadMine(discordId), loadHomeGuilds(discordId)]);
+      const { displayName, avatarUrl } = profileOf(user);
+      top = variant === 'b'
+        ? <HomeDashboard name={displayName} avatarUrl={avatarUrl} mine={mine} guilds={guilds} downloadUrl={DOWNLOAD_URL} />
+        : <HomeChecklist mine={mine} guilds={guilds} downloadUrl={DOWNLOAD_URL} />;
+    } else {
+      top = <HomePanelGate downloadUrl={DOWNLOAD_URL} onHost={onHost} panel={<HomePanel mine={await loadMine(discordId)} />} />;
     }
   }
   // The stage is outside the width cap so it can span the viewport; the page under it is a reading column. Only the previews
-  // above read a query (`v`); the default reads none: a raidmimic host drops every one in the middleware.
+  // above read a query; the default reads none (a raidmimic host drops every one in the middleware).
   return (
     <div id="raidmimic-home">
       {top}

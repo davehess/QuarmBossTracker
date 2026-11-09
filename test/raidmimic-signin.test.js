@@ -29,6 +29,7 @@ import {
   signInScopes, SCOPES_WOLFPACK, SCOPES_OPEN, SCOPES_FIND_GUILDS, openNext, matchRegisteredGuilds, splitMatchesByOpenJoin, closedMatchesFor,
   normaliseInviteCode, redeemInviteCode, profileOf, INVITE_CODE_RX,
 } from '../web/lib/hubRegistry.ts';
+import { redirectTarget, wantsToStay } from '../web/lib/guildSites.ts';
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const code = (rel) => stripJs(read(rel));
@@ -135,9 +136,16 @@ describe('scopes follow the host', () => {
     expect(btn).not.toMatch(/'identify guilds\.members\.read'/);   // the literal lives in one place (hubRegistry)
   });
   it('/ becomes /guilds on the open path only, and any other page the caller asked for is kept', () => {
-    expect(openNext('/')).toBe('/guilds');
+    expect(openNext('/')).toBe('/guilds?stay=1');
     expect(openNext('/auth/mimic-link?code=K7M2QP')).toBe('/auth/mimic-link?code=K7M2QP');
-    expect(openNext('/guilds')).toBe('/guilds');
+    expect(openNext('/characters')).toBe('/characters');
+  });
+  it('signing in lands on Raid Mimic: the guilds landing carries stay=1, so a one-guild member is not sent to the guild site', () => {
+    // 2026-11-09: a Wolf Pack member signing in on raidmimic.com was forwarded to wolfpack.quest by /guilds' redirect.
+    expect(openNext('/guilds')).toBe('/guilds?stay=1');
+    expect(wantsToStay(Object.fromEntries(new URL(`https://raidmimic.com${openNext('/guilds')}`).searchParams))).toBe(true);
+    expect(redirectTarget([{ guildId: 'wolfpack', url: 'https://wolfpack.example', redirect: true }],
+      wantsToStay(Object.fromEntries(new URL(`https://raidmimic.com${openNext('/')}`).searchParams)))).toBeNull();
   });
 });
 
@@ -383,7 +391,7 @@ describe('the sign-in callback, run (web/app/auth/callback/route.ts)', () => {
       const GET = await load();
       st.member = null;   // would be "not a Wolf Pack member" on the gated path
       const res = await GET(req('raidmimic.com', 'code=abc&next=%2F'));
-      expect(where(res)).toBe('https://raidmimic.com/guilds');
+      expect(where(res)).toBe('https://raidmimic.com/guilds?stay=1');
       expect(st.calls.fetchGuildMember).toBe(0);
       expect(st.calls.fetchUserGuilds).toEqual([]);
       expect(st.calls.signOut).toBe(0);
@@ -404,14 +412,14 @@ describe('the sign-in callback, run (web/app/auth/callback/route.ts)', () => {
       const GET = await load();
       st.member = { ...st.member, roles: [] };
       const res = await GET(req('raidmimic.com', 'code=abc&next=%2Fguilds'));
-      expect(where(res)).toBe('https://raidmimic.com/guilds');
+      expect(where(res)).toBe('https://raidmimic.com/guilds?stay=1');
       expect(st.db.tables.hub_memberships).toEqual([]);
     });
     it('keeps the page the caller asked for (/auth/mimic-link?code=…), and still refuses an off-site next', async () => {
       const GET = await load();
       expect(where(await GET(req('raidmimic.com', 'code=abc&next=' + encodeURIComponent('/auth/mimic-link?code=K7M2QP'))))).toBe('https://raidmimic.com/auth/mimic-link?code=K7M2QP');
-      expect(where(await GET(req('raidmimic.com', 'code=abc&next=' + encodeURIComponent('//evil.example/x'))))).toBe('https://raidmimic.com/guilds');
-      expect(where(await GET(req('raidmimic.com', 'code=abc&next=' + encodeURIComponent('https://evil.example'))))).toBe('https://raidmimic.com/guilds');
+      expect(where(await GET(req('raidmimic.com', 'code=abc&next=' + encodeURIComponent('//evil.example/x'))))).toBe('https://raidmimic.com/guilds?stay=1');
+      expect(where(await GET(req('raidmimic.com', 'code=abc&next=' + encodeURIComponent('https://evil.example'))))).toBe('https://raidmimic.com/guilds?stay=1');
     });
     it('a locked-out Discord id is signed out and sent to /auth/paused, with nothing written', async () => {
       const GET = await load();
@@ -805,7 +813,7 @@ describe('migration 20261031150000_hub_registry_discord_guild.sql', () => {
 });
 
 describe('the /guilds page', () => {
-  const page = code('web/app/guilds/page.tsx');
+  const page = code('web/app/guilds/page.tsx') + code('web/lib/hubGuildsLoad.ts');   // the page's reads moved to the shared loader (2026-11-09)
   it('requires a sign-in and sends the visitor back to /guilds after it', () => {
     expect(page).toMatch(/if \(!user\) redirect\('\/auth\/signin\?next=\/guilds'\);/);
   });

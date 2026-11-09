@@ -1,4 +1,4 @@
-// "Your Raid Mimic": the ?v=c preview's panel for a signed-in visitor, shown INSTEAD of the video at the top of the landing
+// "Your Raid Mimic": the panel for a signed-in visitor, shown INSTEAD of the video at the top of the landing
 // (the guild lead, 2026-11-09). Their own loaded characters (the shared lib/hubMine read), a link to /characters to load more,
 // and the coordination ideas as placeholders. Those are labelled coming and are not links or buttons: nothing here claims
 // they work. Everything player-supplied (a character name) renders as plain text.

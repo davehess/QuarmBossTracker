@@ -37,6 +37,76 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-119-2026-11-09',
+    title: 'Web 2.1.119',
+    version: 'Web 2.1.119',
+    date: '2026-11-09',
+    headline: 'Registering a guild on raidmimic.com works.',
+    features: [],
+    fixes: [
+      'The Register your guild form on raidmimic.com saves again instead of saying registration is not set up. The anonymous feedback form on eqmimic.quest was broken the same way and works too.',
+      'Find my guilds says it plainly when none of your other guilds use Raid Mimic yet.',
+    ],
+  },
+  {
+    key: 'web-2-1-118-2026-11-09',
+    title: 'Web 2.1.118',
+    version: 'Web 2.1.118',
+    date: '2026-11-09',
+    headline: 'Your guilds on raidmimic.com stays on raidmimic.com.',
+    features: [],
+    fixes: [
+      'Opening Your guilds on raidmimic.com no longer sends Wolf Pack members to the Wolf Pack website. The card has the link when you want it.',
+    ],
+  },
+  {
+    key: 'web-2-1-117-2026-11-09',
+    title: 'Web 2.1.117',
+    version: 'Web 2.1.117',
+    date: '2026-11-09',
+    headline: 'Signing in on raidmimic.com keeps you on raidmimic.com.',
+    features: [],
+    fixes: [
+      'Signing in with Discord on raidmimic.com no longer sends a member of one guild straight to that guild\'s own website. You land on Your guilds, and the card still has the link to the guild\'s site.',
+    ],
+  },
+  {
+    key: 'web-2-1-116-2026-11-09',
+    title: 'Web 2.1.116',
+    version: 'Web 2.1.116',
+    date: '2026-11-09',
+    headline: 'Gold splits: every attempt at a Planes of Power event, side by side, with your best time for each part.',
+    features: [
+      { name: 'Gold splits (beta)', blurb: 'Each event gets a splits page: every attempt as a timeline, one under the other. Click a key moment and every attempt lines up on it, showing how long each took to reach the next. The table marks the best time ever for each part in gold, adds them up into the best possible run, and shows how much each attempt could save.' },
+      { name: 'Linked to the fight', blurb: 'Every split opens that kill\'s parse, and every attempt opens the raid replay for its window.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'bot-4-0-61-2026-11-09',
+    title: 'Bot 4.0.61',
+    version: 'Bot 4.0.61 · Web 2.1.115',
+    date: '2026-11-09',
+    headline: 'Event mobs in the elemental planes show up on the map and in the replay timelines.',
+    features: [
+      { name: 'Range and spawn spots on the map', blurb: 'Coirnav’s fiends and minis, Fennin Ro’s army and the Air and Earth event mobs now have spawn spots and range rings on the Mimic map, read from the server’s own event scripts.' },
+      { name: 'Event kills in the timelines', blurb: 'Kills of these event mobs now appear in the replay, spectator and share timelines instead of being left out.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'web-2-1-114-2026-11-09',
+    title: 'Web 2.1.114',
+    version: 'Web 2.1.114',
+    date: '2026-11-09',
+    headline: 'raidmimic.com: a big Skip on the video; signed in, your characters and what’s next come first.',
+    features: [
+      { name: 'A big Skip on the video', blurb: 'Skip it once and raidmimic.com remembers, with a "Rewatch the video" link at the top whenever you want it back.' },
+      { name: 'Your Raid Mimic, when signed in', blurb: 'Sign in and the front page opens on your characters and what each needs next, instead of the video. The coordination tools we are planning are listed there, marked coming.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-2-1-112-2026-11-09',
     title: 'Web 2.1.112',
     version: 'Web 2.1.112',

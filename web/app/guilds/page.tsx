@@ -17,8 +17,9 @@ import type { Metadata } from 'next';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { discordIdOf } from '@/lib/lockout';
-import { GUILD_NAME, GUILD_TAG } from '@/lib/guild';
-import { builtinGuildSite, cleanSiteUrl, redirectTarget, sitePage, siteLabel, wantsToStay, type GuildRef } from '@/lib/guildSites';
+import { GUILD_TAG } from '@/lib/guild';
+import { loadHubGuilds, loadWolfPack, type HubCard } from '@/lib/hubGuildsLoad';
+import { builtinGuildSite, redirectTarget, sitePage, siteLabel, wantsToStay, type GuildRef } from '@/lib/guildSites';
 import { isRaidmimicHost } from '@/lib/raidmimicHost';
 import { closedMatchesFor } from '@/lib/hubRegistry';
 import { EQMIMIC_ORIGIN } from '@/lib/raidmimicLanding';
@@ -36,9 +37,6 @@ export const metadata: Metadata = {
 
 export const dynamic = 'force-dynamic';
 
-type HubCard = { guild_id: string; name: string; role: string; joined_at: string | null; site: string | null; redirect: boolean };
-type WolfCard = { name: string; characters: number };
-
 const ROLE_LABEL: Record<string, string> = { owner: 'Owner', officer: 'Officer', member: 'Member', guest: 'Guest' };
 
 // What "Find my guilds" reports back, by a closed vocabulary: nothing from the query string is echoed.
@@ -49,7 +47,7 @@ function findNote(find: string | undefined, found: string | undefined, closedCou
     if (n > 0) return { text: `Found ${n} guild${n === 1 ? '' : 's'} you are in. They are listed above.`, good: true };
     return closedCount > 0
       ? { text: 'None of your Discord servers is open to join without a code. The ones that are guilds here are listed above.', good: false }
-      : { text: `${listed ? 'No other' : 'None'} of your Discord servers is a guild on Raid Mimic yet. An invite code works without this.`, good: false };
+      : { text: listed ? 'No other guilds of yours have opted into Raid Mimic yet.' : 'None of your guilds have opted into Raid Mimic yet.', good: false };
   }
   if (!find) return null;
   const why: Record<string, string> = {
@@ -59,42 +57,6 @@ function findNote(find: string | undefined, found: string | undefined, closedCou
     error: 'Could not look up guilds just now. Try again in a minute.',
   };
   return { text: why[find] ?? why.error, good: false };
-}
-
-async function loadWolfPack(discordId: string): Promise<WolfCard | null> {
-  try {
-    const admin = supabaseAdmin();
-    const { data: member } = await admin.from('wolfpack_members').select('discord_id, is_member').eq('discord_id', discordId).maybeSingle();
-    if (!member?.is_member) return null;
-    const { count } = await admin.from('characters').select('name', { count: 'exact', head: true })
-      .eq('guild_id', GUILD_TAG).eq('discord_id', discordId);
-    return { name: GUILD_NAME, characters: count ?? 0 };
-  } catch {
-    return null;
-  }
-}
-
-async function loadHubGuilds(discordId: string): Promise<HubCard[]> {
-  try {
-    const admin = supabaseAdmin();
-    const { data: player } = await admin.from('hub_players').select('player_id').eq('discord_id', discordId).is('deleted_at', null).maybeSingle();
-    if (!player) return [];
-    const { data: mine, error } = await admin.from('hub_memberships').select('guild_id, role, joined_at').eq('player_id', player.player_id).is('left_at', null);
-    if (error || !mine?.length) return [];
-    const { data: guilds } = await admin.from('hub_guilds').select('guild_id, display_name, website_url, redirect_members').in('guild_id', mine.map(m => m.guild_id)).is('suspended_at', null);
-    const byId = new Map((guilds ?? []).map(g => [g.guild_id as string, g]));
-    return mine
-      .filter(m => byId.has(m.guild_id))
-      .map(m => {
-        const g = byId.get(m.guild_id)!;
-        // The site was validated on the way in; cleaning it again keeps a hand-edited row from becoming a redirect.
-        return { guild_id: m.guild_id, name: g.display_name as string, role: m.role, joined_at: m.joined_at ?? null,
-          site: cleanSiteUrl(g.website_url), redirect: g.redirect_members !== false };
-      })
-      .sort((a, b) => a.name.localeCompare(b.name));
-  } catch {
-    return [];
-  }
 }
 
 // The Discord matches that need an invite code, named by "Find my guilds" in the redirect (openSignIn.ts) and NEVER stored.

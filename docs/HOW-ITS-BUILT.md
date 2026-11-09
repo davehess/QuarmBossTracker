@@ -148,9 +148,10 @@ writes.
   wolfpack.quest, but we should be able to redirect users to their guild's website at their configuration"*).** `hub_guilds.website_url` (https, 200 characters) and
   `hub_guilds.redirect_members` (default true), migration `20261102230000_hub_guild_site.sql`; an owner or officer sets them on `/guilds/<slug>` (`SiteSettings.tsx`,
   `saveGuildSite` in `[slug]/actions.ts`, which re-checks the role). Wolf Pack is not a `hub_guilds` row, so its site is CONFIGURATION: `web/lib/guildSites.ts`
-  `builtinGuildSite()` reads `GUILD_SITE_URL` (default `PROD_SITE_URL`) and `GUILD_SITE_REDIRECT` (`0` turns it off). On a raidmimic host `/guilds` redirects a player
+  `builtinGuildSite()` reads `GUILD_SITE_URL` (default `PROD_SITE_URL`) and `GUILD_SITE_REDIRECT` (off unless `1`, since web 2.1.118, §556). On a raidmimic host `/guilds` redirects a player
   whose ONLY guild has a site and the redirect on straight to it (`redirectTarget`); `?stay=1` (the bar's "Your guilds", every "back" link, `YOUR_DATA_PATH`) and the
-  Find-my-guilds answer keep them on the page, and two or more guilds never redirect (each card says "Open <guild>'s site"). A site on a Raid Mimic host is refused
+  Find-my-guilds answer keep them on the page, and two or more guilds never redirect (each card says "Open <guild>'s site"). Signing in never redirects
+  (web 2.1.117, §556): the open callback lands on `/guilds?stay=1` (`openNext` in `web/lib/hubRegistry.ts`). A site on a Raid Mimic host is refused
   (it would loop). No raidmimic page spells the Wolf Pack address: the privacy page is self-contained, the set-up guide and the sign-up line link Raid Mimic's own
   privacy page, the Download button goes to the GitHub release, `/auth/claim` is a 404 on the host and `/auth/mimic-link` sends a Wolf Pack code to the configured site.
   Tests: `test/raidmimic-no-wolfpack.test.js` (the ratchet and the redirect choice), `test/guilds-new.test.js`.
@@ -3190,6 +3191,18 @@ overlay at `/api/raid-fights` and a fight's board at `/api/raid-fights/board` (t
 is set from the agent's `_selfCast` at ingest, and `insert_buff_casts` promotes a stored row when the caster's copy lost the
 dedup race; `/api/agent/target-buffs` returns `by_caster` and `target_id` and prefers the caster's row of the same cast.
 
+### Event spawns from the quest scripts — 2026-11-09
+PoP event mobs are spawned by quest scripts (`eq.spawn2` / `eq.unique_spawn`), so they have no `eqemu_spawn2` row.
+`scripts/gen-event-spawns.js` fetches the scripts of powater / pofire / poair / poeartha / poearthb from
+`SecretsOTheP/quests` at a pinned commit (`quests_sha`) and `utils/eventSpawnParse.js` reads them: type constants, coordinate
+tables paired with the type they spawn, literal calls (`fixed`), and spawns at `GetX()` or a random offset (`relative`, no
+coordinates, never invented). Output `data/event-spawns.json`, copied byte-identical to `web/lib/eventSpawns.json` (the web
+imports nothing outside `web/`). Consumers: bot `utils/zoneSpawns.js` adds a `point` per spot (`event: true`, `event_name`,
+id from 9,000,000) with `npcs[]` built by the same NPC_SELECT / helper rule, so the Map ring and the agent's spawn-point pinning
+get a candidate; web `web/lib/eventNpcIds.ts` lets `raidTimelineLoad.ts`, `replayBossesLoad.ts` and
+`api/spectator/replay/bosses/route.ts` keep an encounter whose npc is curated OR a scripted-event npc. Tests:
+`test/event-spawns.test.js`, `test/zone-spawns.test.js` (last describe).
+
 ### Mobs that split, and slow mode, on the Map (zone-spawns) — 2026-11-01 (§511)
 Bot `utils/splitSpawns.js` (called from `zoneSpawns.build` beside the traps, never throws): reads the zone's death scripts from
 `eqemu_quest_scripts` (`event_death` / `event_death_complete`), counts `eq.spawn2` / `eq.unique_spawn` calls placed at the dead
@@ -5085,6 +5098,14 @@ crash card labels it "🐺 Wolf Pack Zeal" (`wpZealBuildTag`). Runbook: `docs/up
   `WISHLIST_BID_KEY` — anything encrypted (bids, UI snapshots) is bot-only;
   the bot must extract/serve plaintext derivatives the web needs.
 
+### Gold splits per scripted event (web 2.1.116, 2026-11-09, §555)
+https://wolfpack.quest/pop/events/splits and `/pop/events/<slug>/splits` ([beta]). Moments per event:
+`web/lib/eventSplitsDefs.ts` (hand-written for the five elemental events, a generic default for the rest of
+`web/lib/popEvents.ts`). Attempts: `web/lib/eventAttempts.ts` (pure grouping) + `web/lib/eventAttemptsLoad.ts` (the only
+reader: `encounters`, guild-scoped, paged). Maths: `web/lib/goldSplits.ts` (segments, gold = best ever, sum of best, time save).
+Timeline + click-to-align: `web/app/pop/events/[slug]/splits/SplitsTimeline.tsx`. Links: parse per split, replay window per
+attempt; the overlay replay link waits for the replay overlay (§555 follow-up). Tests `test/gold-splits.test.js`.
+
 ### Raid timeline strip and Raid routes (web 1.9.20–1.9.21, 2026-10-21, §400)
 - **Raid timeline strip.** `web/components/RaidTimeline.tsx` at the top of `/spectator` (live: polls the members-only
   `/api/spectator/timeline` every 10 s, curated kills by `ended_at`, corrected by the server's `now`) and `/spectator/replay`
@@ -6132,6 +6153,14 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   sets `S.view.rot` every frame (`updateRot` → `rotStep` → `headingRot`); `wpt` / `projectPx` / `unprojectPx` / `screenToServer` / `unturnPx`
   carry it, `headingVec(h, rot)` turns the arrows and slices, `drawCompass` draws the rose and/or edge letters (`cfg.compass`, `cardinalSpots`,
   `roseSpot`). Test: `test/map-heading-up.test.js`.
+- **Map: mini mode** (2026-11-09, Mimic beta draft, `map.html` `body.mini` + the "Mini map" script block, `main.js` `_mapMiniSize`): the map in a circle (`border-radius` clip on
+  `#mapPane`) with twelve button dots on the rim (`#mini`, `.rd`, placed by CSS from `--mini-d` and each dot's `--a`), the zone name above, and a red N on the rim that rides to
+  north (`syncMiniNorth`, written only when the angle moves; the canvas rose is skipped in mini). Each dot clicks its toolbar twin or flips the same `cfg` switch
+  (`miniClick` / `viaBtn`; ring = `cfg.show.aggro`, compass = `setOrient`); `syncMiniDots` reads state off the toolbar by a MutationObserver. Switches: toolbar `#miniBtn`, the ✥ menu's
+  "Mini map" (preload `map-mini-toggle` → main → page `onMapMiniToggle`), a right-click on a dot. Saved as `wp-map-mini`. Window: `map-mini-size` shrinks to 260x260 and keeps the old
+  size in `cfg.mapPreMini`. Full mode never shows it. The dots are one run on the lower-left of the rim (200-314 degrees); the rest of the rim carries **edge arrows**
+  for what is off-view (`drawMiniArrows`, in the canvas pass: target with its distance, pet, group, raid capped at 8 and merged within 9 degrees; bearing is
+  `miniBearing(player, thing, rot)`, so it follows North up / Heading up; two `.ra` buttons carry the target and pet hover names). Test: `test/map-mini.test.js`.
 - **Kite circles on the Map** (2026-10-26, Mimic beta; kite coach 2026-10-15): `apps/mimic/kiteCoach.js` is the pure math (circle fit, laps,
   drift, cause) plus `filterLoops` (Others Live/All by `last_at`, Circles All/My speed/Near me) and `driftForecast`; `map.html` draws it
   (`drawKite`, `visibleLoops`) and owns the three toolbar buttons (`syncKiteBtns`; saved in `cfg.kiteOthers/kiteFilter/kiteDrift`).

@@ -262,6 +262,7 @@ function EventCard({ e, r, rank, scores, itemName, dkp, cls }: {
         </span>
       </header>
       <p className="mt-1 text-[11px] text-dim">{e.kindWhy}</p>
+      <p className="mt-1 text-[11px]"><Link href={`/pop/events/${e.slug}/splits`} className="text-blue hover:underline">Gold splits and attempts</Link></p>
 
       <dl className="mt-2 grid gap-x-4 gap-y-1 text-xs sm:grid-cols-[7rem_1fr]">
         <dt className="text-dim">How it starts</dt><dd>{e.start}</dd>

@@ -8710,6 +8710,27 @@ async function _setMapMode(mode) {
 }
 ipcMain.handle('map-mode-get', () => { try { return loadConfig().mapMode === 'full' ? 'full' : 'window'; } catch { return 'window'; } });
 ipcMain.handle('map-mode-set', (_e, mode) => _setMapMode(mode === 'full' ? 'full' : 'window'));
+// The Map's mini mode (2026-11-09): a small square window so the round map fits. Going in keeps the size it had in
+// cfg.mapPreMini (only the first time, so a restart inside mini mode does not overwrite it with 260); going out gives it back,
+// from the same top-left corner. Full mode owns the window's rectangle, so this does nothing there.
+const _MAP_MINI_PX = 260;
+function _mapMiniSize(on) {
+  if (!_live(mapWindow) || _mapFull) return false;
+  try {
+    const cfg = loadConfig(), b = mapWindow.getBounds();
+    if (on) {
+      if (!cfg.mapPreMini) { cfg.mapPreMini = { width: b.width, height: b.height }; saveConfig(cfg); }
+      mapWindow.setBounds({ x: b.x, y: b.y, width: _MAP_MINI_PX, height: _MAP_MINI_PX });
+    } else {
+      const p = cfg.mapPreMini || { width: 760, height: 480 };
+      if (cfg.mapPreMini) { delete cfg.mapPreMini; saveConfig(cfg); }
+      mapWindow.setBounds({ x: b.x, y: b.y, width: Math.max(_OVERLAY_MIN_W, p.width), height: Math.max(140, p.height) });
+    }
+    return true;
+  } catch { return false; }
+}
+ipcMain.handle('map-mini-size', (_e, on) => _mapMiniSize(!!on));
+ipcMain.handle('map-mini-toggle', () => { if (_live(mapWindow)) { try { mapWindow.webContents.send('map-mini-toggle'); } catch { /* loading */ } } return true; });
 
 // Keep-clear areas. (a) The windows EverQuest has open, from the active character's UI ini: read-only, in EverQuest's
 // own pixels (visibleUiRects), plus Zeal's raid and assist bars as auto-arrange counts them. (b) The raider's own boxes,

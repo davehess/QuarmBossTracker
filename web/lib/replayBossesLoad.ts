@@ -9,6 +9,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { selectAll } from './selectAll';
 import { GUILD_TAG } from './guild';
+import { isEventNpcId } from './eventNpcIds';
 import {
   buildSpawnBosses, chunk, type EncounterRow, type Spawn2Row, type SpawnBoss, type SpawnEntryRow,
 } from './replayBosses';
@@ -45,7 +46,7 @@ export async function loadSpawnBosses(admin: SupabaseClient, fromIso: string, to
     if (error) throw error;
     for (const r of (data ?? []) as { npc_id: number }[]) curated.add(r.npc_id);
   }
-  const encounters: EncounterRow[] = raw.filter(r => curated.has(r.npc_id)).map(r => {
+  const encounters: EncounterRow[] = raw.filter(r => curated.has(r.npc_id) || isEventNpcId(r.npc_id)).map(r => {
     const t = Array.isArray(r.eqemu_npc_types) ? r.eqemu_npc_types[0] : r.eqemu_npc_types;
     return { npc_id: r.npc_id, name: t?.name ?? null, zone_short: r.zone_short, started_at: r.started_at, ended_at: r.ended_at };
   });

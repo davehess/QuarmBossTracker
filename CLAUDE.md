@@ -50,6 +50,12 @@ Every option gets a rendered sample (a PNG sent with the reply, or a beta link f
 a phrase, and a tag that places it: faster / cheaper / can grow into another option / recommended. A
 pick still open from an earlier reply is re-asked the same way, with its pictures again, not by letter.
 
+**Every pick goes on the Decision Desk, with a timeframe** (the guild lead, 2026-11-09: *"everything needing choices
+continues into decision desk. decision desks decisions get a timeframe for sorting as well"*). A choice is a card on the
+guild lead's Decision Desk artifact (find it by title in the artifact list; its picks are read back from the Desk's
+database), with the pictures and one-liners above, and a `when` of now / week / month / later (how soon the work needs the
+answer). The chat reply names the card and links the Desk; it does not hold the only copy of the question.
+
 ### Working rule — minimal diff
 Touch only the code the task requires. If a change appears to need edits to
 adjacent or unrelated code, stop and flag it before proceeding. (The
