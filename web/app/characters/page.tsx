@@ -9,13 +9,12 @@
 import { headers } from 'next/headers';
 import type { Metadata } from 'next';
 import { supabaseServer } from '@/lib/supabase-server';
-import { supabaseAdmin } from '@/lib/supabase';
-import { selectAll } from '@/lib/selectAll';
 import { discordIdOf } from '@/lib/lockout';
 import { isRaidmimicHost } from '@/lib/raidmimicHost';
 import { EQMIMIC_ORIGIN } from '@/lib/raidmimicLanding';
-import { characterView, type CharacterView } from '@/lib/hubCharactersView';
+import { loadMine } from '@/lib/hubMine';
 import { MAX_CHARACTERS_PER_PLAYER } from '@/lib/hubImport';
+import { rewatchHref } from '@/lib/raidmimicHome';
 import NewPageTag from '@/components/NewPageTag';
 import SignInButton from '@/components/SignInButton';
 import HostFrame from '@/components/RaidmimicFrame';
@@ -31,30 +30,10 @@ export const dynamic = 'force-dynamic';
 
 const CARD = 'rounded-lg border border-border bg-panel p-4';
 
-async function loadMine(discordId: string): Promise<CharacterView[]> {
-  try {
-    const admin = supabaseAdmin();
-    const { data: player } = await admin.from('hub_players').select('player_id').eq('discord_id', discordId).is('deleted_at', null).maybeSingle();
-    if (!player) return [];
-    const { data: chars } = await admin.from('hub_characters').select('name, name_lc, proof').eq('player_id', player.player_id).order('first_seen_at').limit(MAX_CHARACTERS_PER_PLAYER * 4);
-    if (!chars?.length) return [];
-    // Every row, past the gateway's 1,000-row cap (re-uploads add rows), ordered on the unique id so pages neither skip nor repeat.
-    const flags = await selectAll<{ name_lc: string; flag_key: string; earned_at: string }>((from, to) => admin.from('hub_flags')
-      .select('name_lc, flag_key, earned_at').eq('player_id', player.player_id).order('id', { ascending: true }).range(from, to),
-      { hardCap: 20000 });
-    const byName = new Map<string, { flag_key: string; earned_at: string }[]>();
-    for (const f of flags ?? []) {
-      const k = f.name_lc as string;
-      if (!byName.has(k)) byName.set(k, []);
-      byName.get(k)!.push({ flag_key: f.flag_key as string, earned_at: f.earned_at as string });
-    }
-    return chars.map(c => characterView(String(c.name).slice(0, 24), String(c.proof), byName.get(c.name_lc as string) ?? []));
-  } catch {
-    return [];
-  }
-}
-
-export default async function CharactersPage() {
+export default async function CharactersPage({ searchParams }: { searchParams?: { v?: string } }) {
+  // ?v=b is the raidmimic landing's "Doorway" preview, which redirects a signed-in visitor here; only then is the
+  // "Rewatch the video" link shown. Without it this page is unchanged.
+  const doorway = searchParams?.v === 'b';
   const onHost = isRaidmimicHost(headers().get('host'));
   const { data: { user } } = await supabaseServer().auth.getUser();
   const discordId = discordIdOf(user);
@@ -77,6 +56,9 @@ export default async function CharactersPage() {
   return (
     <HostFrame onHost={onHost}>
       <div className="mx-auto max-w-3xl px-1 py-2 pb-12">
+        {doorway && (
+          <p className="mb-2 text-right text-sm"><a href={rewatchHref(onHost)} className="inline-flex min-h-11 items-center">Rewatch the video</a></p>
+        )}
         {note}
         <h1 className="text-2xl text-gold">My characters</h1>
         <p className="mt-1 text-sm text-dim">Signed in with Discord. Only you can see this page.</p>

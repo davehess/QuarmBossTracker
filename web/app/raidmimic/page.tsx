@@ -16,6 +16,12 @@
 // form or mailbox of ours), so that form's rules apply: its text is untrusted data that people review, nothing acts on
 // it automatically (CLAUDE.md, AFB).
 import { headers } from 'next/headers';
+import { redirect } from 'next/navigation';
+import { supabaseServer } from '@/lib/supabase-server';
+import { discordIdOf } from '@/lib/lockout';
+import { loadMine } from '@/lib/hubMine';
+import HomePanel from './_landing/HomePanel';
+import HomePanelGate from './_landing/HomePanelGate';
 import type { Metadata } from 'next';
 import { isRaidmimicHost, raidmimicSeo, RAIDMIMIC_SETUP_PATH } from '@/lib/raidmimicHost';
 import { EQMIMIC_FEEDBACK_PATH, EQMIMIC_ORIGIN, interestUrl } from '@/lib/raidmimicLanding';
@@ -39,18 +45,35 @@ export function generateMetadata(): Metadata {
   };
 }
 
-export default function RaidmimicPage() {
+// PREVIEWS (the guild lead, 2026-11-09, awaiting a pick; read at b.wolfpack.quest/raidmimic?v=b and ?v=c, since a raidmimic host drops
+// every query): `v` is read ONLY here. No `v` (production today) renders the stage exactly as before and makes no auth call.
+//   b "Doorway":    a signed-in visitor never sees the video: redirect to /characters (`?video=1` opts out, for "Rewatch the video"),
+//                   a signed-out one gets the stage with a big Skip at the top.
+//   c "Home panel": a signed-in visitor gets the "Your Raid Mimic" panel instead of the video, with a Rewatch link on top;
+//                   a signed-out one gets the stage with the big Skip.
+export default async function RaidmimicPage({ searchParams }: { searchParams?: { v?: string; video?: string } }) {
+  const v = searchParams?.v === 'b' || searchParams?.v === 'c' ? searchParams.v : null;
   // On a raidmimic host the form lives on eqmimic.quest and the page is `/`. On the Wolf Pack hosts the form is
   // reached by its real path, so the site header stays above the page.
   const onHost = isRaidmimicHost(headers().get('host'));
   const ctx: Ctx = onHost
     ? { onHost, interest: interestUrl(`${EQMIMIC_ORIGIN}/feedback`), setup: '/setup' }
     : { onHost, interest: interestUrl(EQMIMIC_FEEDBACK_PATH), setup: RAIDMIMIC_SETUP_PATH };
-  // The stage is outside the width cap so it can span the viewport; the page under it is a reading column. No query is read:
-  // a raidmimic host drops every one in the middleware, and the Wolf Pack hosts show the same page.
+  let top = <StoryStage downloadUrl={DOWNLOAD_URL} onHost={onHost} />;
+  if (v) {
+    top = <StoryStage downloadUrl={DOWNLOAD_URL} onHost={onHost} bigSkip />;   // signed out, or b's rewatch: the stage with the big Skip
+    const { data: { user } } = await supabaseServer().auth.getUser();
+    const discordId = discordIdOf(user);
+    if (user && discordId) {
+      if (v === 'b' && searchParams?.video !== '1') redirect('/characters?v=b');
+      if (v === 'c') top = <HomePanelGate downloadUrl={DOWNLOAD_URL} onHost={onHost} panel={<HomePanel mine={await loadMine(discordId)} />} />;
+    }
+  }
+  // The stage is outside the width cap so it can span the viewport; the page under it is a reading column. Only the previews
+  // above read a query (`v`); the default reads none: a raidmimic host drops every one in the middleware.
   return (
     <div id="raidmimic-home">
-      <StoryStage downloadUrl={DOWNLOAD_URL} onHost={onHost} />
+      {top}
       <div className="mx-auto max-w-5xl pb-12">
         {/* The bar the other raidmimic.com pages carry: it slides in under the stage and stays pinned (the guild lead,
             2026-11-02: "top bar on the raidmimic.com site doesn't lock"). The stage keeps its own header. */}

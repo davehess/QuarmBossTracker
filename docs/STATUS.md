@@ -103,6 +103,15 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 raidmimic landing: big "Skip video" + signed-in home, two previews on beta awaiting the guild lead's pick (2026-11-09).**
+  The guild lead: *"a big skip video button at the top of raidmimic.com and also have users log into it and have their
+  information come up on the homepage or redirect instead of hitting the video ... a link 'rewatch the video' up top."*
+  `https://b.wolfpack.quest/raidmimic?v=b` (Doorway: a signed-in visitor is redirected to /characters, which carries the
+  Rewatch link) and `?v=c` (Home panel: "Your Raid Mimic" panel in place of the video, four coordination placeholders
+  labelled coming). Both: big Skip at the top, remembered per viewer. The default (no `?v=`) is unchanged. Rewatch uses the
+  `#video` hash because a raidmimic host drops queries. `test/raidmimic-skip-video.test.js`. Picked one: graduate it and
+  delete the other.
+
 - **🧾 2026-11-08 — Settings → Zeal: Stable, Zeal 1.5.0, Ours on 1.5 (Mimic beta).** The guild lead: "should be stable, then
   1.5.0, then ours that are updated off of 1.5". `zealUpdater.js` gains source `zeal15` (CoastalRedwood's newest v1.5.x from
   the release list, alpha included, since /releases/latest skips prereleases); the `test` source (the fork's test-all, rebased
