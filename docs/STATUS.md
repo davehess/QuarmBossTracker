@@ -228,7 +228,13 @@ next touch one rather than assuming a missing row means a missing doc.
   swing word) still shows. Dual one-handers log only `punch` (fist), so with no 2H swing there is nothing to weave and the piece
   stays off. **More formats ("arc, thin vertical line, etc."):** the Canvas piece adds `warc` Arc (a horseshoe, `data-wp-arc`
   "165 -125 125 22", the 4th number the band width) and `wbar` Thin bar (`drawBar`: the windows, a white "now" mark, orange swing
-  ticks, a red edge on a fresh clip, no text) beside the Timing highway and Upright lane.
+  ticks, a red edge on a fresh clip, no text) beside the Timing highway and Upright lane. **Attempts captured, `/pipe weave`,
+  failed swaps voided (2026-11-09):** every attempt (landed, clip, miss, void) is a record (`_record`: press, window open/close and
+  phase at the press, fist, expected / actual 2H, interval, outcome, reason) appended to `<userData>/weave-attempts.ndjson`
+  (5 MB rotation). Zeal's `/pipe weave` (custom pipe object, type 4) marks a press and joins the loads within 1.2 s. A bandolier
+  FAILURE (colour 1012, or the words: "canceling set load", "You cannot swap items when", "You are too busy to …") within
+  2.5 s of the press voids it: out of presses / ✓ / ✕ / ·, counted as ⊘. "Already swapping" and "already equipped" are not
+  failures (ordinary channel; an overlapping second load prints them).
   **First live report (2026-11-09, agent 4.0.78 beta):** *"WEAVING IS WAITING FOR A FIGHT BUT I'M IN ONE"*. The hub only fed
   the engine lines on colours 265 / 267 (the unverified guess above), so a client whose melee lines arrive on any other colour
   never started a swing. Now it takes any line that starts `You ` on any colour (other people's hits and non-melee are still

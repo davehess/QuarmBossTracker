@@ -59,7 +59,7 @@
     ctx.font = (bold ? '700 ' : '') + Math.round(px) + 'px ' + fam;
   }
   var KIND_COLOR = { wait: 'blue', go: 'green', late: 'red' };
-  var GLYPH = { landed: ['✓', 'green'], clip: ['✕', 'red'], miss: ['·', 'dim'] };
+  var GLYPH = { landed: ['✓', 'green'], clip: ['✕', 'red'], miss: ['·', 'dim'], void: ['⊘', 'dim'] };   // void: the swap failed (2026-11-09)
 
   // The last press's outcome as one glyph, fading out over the last 3 s of its 10.
   function glyph(c, ctx, st, now, cx, cy, px) {
@@ -259,7 +259,7 @@
     if (st.cfg && st.cfg.showTally !== false && st.tally && st.tally.presses) {
       font(ctx, px - 1); ctx.fillStyle = c.text;
       var t = st.tally;
-      ctx.fillText(t.landed + '✓ ' + t.clips + '✕ ' + t.misses + '·', tx - px - 6, head / 2);
+      ctx.fillText(t.landed + '✓ ' + t.clips + '✕ ' + t.misses + '·' + (t.voided ? ' ' + t.voided + '⊘' : ''), tx - px - 6, head / 2);
     }
     glyph(c, ctx, st, now, tx - px / 2, head / 2, px + 2);
   }

@@ -15834,7 +15834,22 @@ function _weaveSend(st) {
   }
   _weaveHub.setEnabled(_weaveSubs.size > 0);
 }
-const _weaveHub = createWeaveHub({ send: _weaveSend });
+// Every weave attempt, the landed ones too (the guild lead, 2026-11-09: "capture the successful weave attempts as well"), one
+// JSON line each in <userData>/weave-attempts.ndjson: when it was pressed, the window it fell in, when the fist and the 2H
+// came, the outcome, and for a voided press the bandolier failure that voided it. Rotated at 5 MB; best effort only.
+const WEAVE_ATTEMPTS_LOG = () => path.join(app.getPath('userData'), 'weave-attempts.ndjson');
+const WEAVE_ATTEMPTS_CAP = 5 * 1024 * 1024;
+function _writeWeaveAttempt(rec) {
+  let line;
+  try { line = JSON.stringify(Object.assign({ iso: new Date(rec.at).toISOString() }, rec)) + '\n'; } catch { return; }
+  try {
+    const f = WEAVE_ATTEMPTS_LOG();
+    let size = 0; try { size = fs.statSync(f).size; } catch { /* first line */ }
+    if (size + line.length > WEAVE_ATTEMPTS_CAP) { try { fs.renameSync(f, f + '.1'); } catch { /* keep going */ } }
+    fs.appendFile(f, line, () => {});
+  } catch { /* best effort: never throw into the pipe handler */ }
+}
+const _weaveHub = createWeaveHub({ send: _weaveSend, onAttempt: _writeWeaveAttempt });
 ipcMain.on('weave-subscribe', (e) => {
   const wc = e.sender;
   if (_weaveSubs.has(wc)) return;
