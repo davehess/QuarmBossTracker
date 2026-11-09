@@ -2,6 +2,11 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
+import { SIMPLE_GROUPS, groupOfPath } from '../lib/navVariant';
+import { useNavVariant } from './useNavVariant';
+
+// Beta preview of a five-item nav (the guild lead, 2026-11-09), switched by ?nav=a|b — see lib/navVariant.ts.
+export { SIMPLE_GROUPS };
 
 // Four top-level categories (the guild lead, 2026-08-28). Sixteen chips wrapped to three
 // rows on desktop and six on a phone, which pushed the page's whole first
@@ -65,6 +70,9 @@ const chipActive = 'bg-accent border-accent text-white';
 
 export default function Nav({ showAdmin = false, showMe = false }: { showAdmin?: boolean; showMe?: boolean }) {
   const path = usePathname();
+  const variant = useNavVariant();
+  // null on production and on beta with no cookie: today's nav, unchanged.
+  const groups: Group[] = variant ? SIMPLE_GROUPS : GROUPS;
   const [open, setOpen] = useState<string | null>(null);
   const wrap = useRef<HTMLDivElement>(null);
 
@@ -108,7 +116,7 @@ export default function Nav({ showAdmin = false, showMe = false }: { showAdmin?:
   // Navigating closes the panel; without this it survives the route change.
   useEffect(() => { setOpen(null); }, [path]);
 
-  const shown = GROUPS.find(g => g.id === open);
+  const shown = groups.find(g => g.id === open);
 
   return (
     <div ref={wrap} className="relative" onMouseLeave={() => { if (canHover) setOpen(null); }}>
@@ -123,10 +131,20 @@ export default function Nav({ showAdmin = false, showMe = false }: { showAdmin?:
           the outcome the design already had for "not enough room". The
           revealed row below still wraps; it has the full width to itself. */}
       <nav className="flex flex-nowrap items-center gap-1.5 sm:gap-2">
-        <Link href="/" className={`${chip} ${path === '/' ? chipActive : chipIdle}`}>Home</Link>
+        {!variant && <Link href="/" className={`${chip} ${path === '/' ? chipActive : chipIdle}`}>Home</Link>}
 
-        {GROUPS.map(g => {
+        {groups.map(g => {
           const on = open === g.id;
+          // Variant A is all plain links (landing = first page); B drops the chevron for one-page groups.
+          if (variant && (variant === 'a' || g.items.length === 1)) {
+            return (
+              <Link key={g.id} href={g.items[0].href}
+                    aria-current={inGroup(g) ? 'page' : undefined}
+                    className={`${chip} ${inGroup(g) ? chipActive : chipIdle}`}>
+                {g.label}
+              </Link>
+            );
+          }
           return (
             <button
               key={g.id}
@@ -153,7 +171,7 @@ export default function Nav({ showAdmin = false, showMe = false }: { showAdmin?:
             /me redirects to `/auth/signin?next=/me` on its own, so a signed-out
             click lands on sign-in and comes back here rather than dead-ending;
             for a prospective member it is the invitation, not a broken link. */}
-        <Link href="/me" className={`${chip} ${path?.startsWith('/me') ? chipActive : chipIdle}`}>/me</Link>
+        {!variant && <Link href="/me" className={`${chip} ${path?.startsWith('/me') ? chipActive : chipIdle}`}>/me</Link>}
         {showAdmin && <Link href="/admin" className={`${chip} ${path?.startsWith('/admin') ? chipActive : chipIdle}`}>Admin</Link>}
         {/* ⚠ Test server MOVED to the header's utility chips (2026-08-30). The
             brief here is four top-level doors — Raid, Stats, Prep and /me — and
@@ -189,5 +207,30 @@ export default function Nav({ showAdmin = false, showMe = false }: { showAdmin?:
         </div>
       )}
     </div>
+  );
+}
+
+// Variant A's slim second row: the current group's pages, under the header. Renders nothing
+// on production, with no cookie, in variant B, or for a one-page group.
+export function SubNav() {
+  const path = usePathname();
+  const variant = useNavVariant();
+  if (variant !== 'a') return null;
+  const g = groupOfPath(SIMPLE_GROUPS, path);
+  if (!g || g.items.length < 2) return null;
+  return (
+    <nav aria-label={`${g.label} pages`} className="border-t border-border/60 bg-panel/60">
+      <div className="mx-auto flex max-w-[1800px] flex-wrap gap-1.5 px-3 py-1.5 sm:px-4">
+        {g.items.map(i => {
+          const active = path === i.href || path?.startsWith(i.href + '/');
+          return (
+            <Link key={i.href} href={i.href} aria-current={active ? 'page' : undefined}
+                  className={`${chip} inline-flex min-h-11 items-center sm:min-h-0 ${active ? chipActive : chipIdle}`}>
+              {i.label}
+            </Link>
+          );
+        })}
+      </div>
+    </nav>
   );
 }
