@@ -216,8 +216,8 @@ describe('what a press did', () => {
   });
   it('clip: the next 2H round more than 250 ms later than expected (the swap came too late), and that interval is not measured', () => {
     const e = ready();
-    e.load(LOAD(), T + 1600);
-    e.swing(FIST(), T + 1650);
+    e.load(LOAD(), T + 1700);
+    e.swing(FIST(), T + 1750);
     const n = e.samples.length;
     e.swing(TWO(), T + IV + 400);
     expect(e.outcome.kind).toBe('clip');
@@ -227,9 +227,9 @@ describe('what a press did', () => {
   it('250 ms late exactly is still on time, 251 is not', () => {
     // whole-millisecond rounds, so the expected time is exact
     const whole = () => { const e = eng(); rounds(e, 6, 1700, T - 8500); return e; };
-    const a = whole(); a.load(LOAD(), T + 300); a.swing(FIST(), T + 340); a.swing(TWO(), T + 1700 + 250);
+    const a = whole(); a.load(LOAD(), T + 1600); a.swing(FIST(), T + 1640); a.swing(TWO(), T + 1700 + 250);
     expect(a.outcome.kind).toBe('landed');
-    const b = whole(); b.load(LOAD(), T + 300); b.swing(FIST(), T + 340); b.swing(TWO(), T + 1700 + 251);
+    const b = whole(); b.load(LOAD(), T + 1600); b.swing(FIST(), T + 1640); b.swing(TWO(), T + 1700 + 251);
     expect(b.outcome.kind).toBe('clip');
   });
   it('miss: no fist line after the press', () => {
@@ -869,8 +869,8 @@ describe('scoring like Basketweaver: bare misses placed, unseen rounds not clips
     r.step(IVS); r.chat(TWO()); r.step(50);              // one whole swing later than expected: the round between left no line
     expect(r.recs.map(a => a.outcome)).toEqual(['landed']);
     const c = rig(); warm(c);
-    c.chat('Loading bandolier set [fists]', 1011); c.step(150); c.chat('[11:53:56] punch a frost giant elite for 91'); c.step(250);
-    c.chat('Loading bandolier set [2h]', 1011); c.step(IVS - 520 + 700); c.chat(TWO()); c.step(50);   // 700 ms late: a clip
+    c.step(1300); c.chat('Loading bandolier set [fists]', 1011); c.step(50); c.chat('[11:53:56] punch a frost giant elite for 91'); c.step(100);
+    c.chat('Loading bandolier set [2h]', 1011); c.step(IVS - 1570 + 700); c.chat(TWO()); c.step(50);   // pressed late, swapped back late, 700 ms late: a clip
     expect(c.recs.map(a => a.outcome)).toEqual(['clip']);
   });
   it('added DPS is the weaved fists\' damage over the fight; reaction is the press after the window opened', () => {
@@ -1042,8 +1042,8 @@ describe('weave sounds and a crushing offhand', () => {
     weave(r, 'strike a blood raven for 260');
     expect(r.sounds.map(s => s.name)).toEqual(['weave-punch', 'weave-smash']);
     const c = rig(); warm(c);
-    c.chat('Loading bandolier set [fists]', 1011); c.step(100); c.chat('strike a blood raven for 49'); c.step(150);
-    c.chat('Loading bandolier set [2h]', 1011); c.step(IVB - 370 + 700); c.chat('crush a blood raven for 120'); c.step(50);
+    c.step(1250); c.chat('Loading bandolier set [fists]', 1011); c.step(50); c.chat('strike a blood raven for 49'); c.step(100);
+    c.chat('Loading bandolier set [2h]', 1011); c.step(IVB - 1470 + 700); c.chat('crush a blood raven for 120'); c.step(50);
     expect(c.sounds.map(s => s.name)).toEqual(['weave-thud']);
   });
   it('a sound set to off plays nothing, and an unknown name falls back to the default', () => {
@@ -1129,5 +1129,38 @@ describe('/pipe weave, weave1hb, weave2hb: three sets compared', () => {
     expect(r.pipe('fd')).toBe(false);
     expect(r.pipe('weave the night away')).toBe(false);
     expect(r.pipe('weave2hb')).toBe(true);
+  });
+});
+
+// 2026-11-09, the guild lead alternated weave / weave1hb / weave2hb: 8 Ribcracker "clips" in a row, every one late by ~340 ms
+// whatever the press time, with the swap back loaded 190-270 ms BEFORE the 2H was due; and the 4:27 pm run, predicted 846 ms
+// for a real ~1340. A 2H that was back in the hand on time cannot have been clipped: the prediction was off, and it re-locks.
+describe('a late 2H after an early swap back is the prediction off, not a clip', () => {
+  const T = 1_000_000;
+  function run(lockedIv, realIv, n, back) {
+    const e = new W.WeaveEngine({ cls: 'monk', level: 65, twoHDelay: 30 });
+    rounds(e, 6, lockedIv, T);                       // a wrong lock: the engine believes lockedIv
+    let last = T + 5 * lockedIv;
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      e.load('Loading bandolier set [fists]', last + 100);
+      e.swing('You punch a gnoll for 40 points of damage.', last + 200);
+      e.load('Loading bandolier set [caen]', last + back);   // back in the hand well before the (wrong) due time
+      last += realIv;
+      e.swing(TWO(), last);
+      out.push(e.outcome.kind);
+    }
+    return { e, out };
+  }
+  it('the Ribcracker run (believed 1159, really 1500): landed, never clipped, and the engine moves to the real speed', () => {
+    const { e, out } = run(1159, 1500, 8, 900);
+    expect(out).not.toContain('clip');
+    expect(e.tally.clips).toBe(0);
+    expect(Math.abs(e.interval2H() - 1500)).toBeLessThan(75);
+  });
+  it('the 4:27 pm run (believed 846, really 1340): the same', () => {
+    const { e, out } = run(846, 1340, 6, 500);
+    expect(out).not.toContain('clip');
+    expect(Math.abs(e.interval2H() - 1340)).toBeLessThan(70);
   });
 });
