@@ -46,6 +46,7 @@ function agentHarness({ token = 't0k', session = 'sess-abcd1234', dryRun = false
     const AGENT_VERSION = '9.9.9';
     const stats = { characterPrefs: {}, watchedLogs: [], excludedLogs: [] };
     const _optinState = { characterModes: {} };
+    const _isGuestChar = () => false;
     let _uploadOpts = __e.opts;
     let _mimicSessionToken = __e.session;
     let _stateJsonCache = { at: 123, body: 'x' };
@@ -817,7 +818,7 @@ describe('the dashboard\'s per-character control (tray ↔ dashboard parity: the
 
   it('is wired into the Me card and a click on a choice', () => {
     const d = stripJs(dash);
-    expect(d).toMatch(/const charModes = Array\.isArray\(s\.characterModes\) \? s\.characterModes : \[\];\s+if \(charModes\.length > 0\) h \+= wpModesHtml\(charModes\);/);
+    expect(d).toMatch(/const charModes = Array\.isArray\(s\.characterModes\) \? s\.characterModes : \[\];\s+if \(charModes\.length > 0\) h \+= wpModesHtml\(charModes, Array\.isArray\(s\.guest_characters\) \? s\.guest_characters : \[\]\);/);
     expect(d).toMatch(/closest\('\.wp-mode'\)/);
     expect(d).toMatch(/wpSetCharacterMode\(b\.dataset\.char, b\.dataset\.mode\);/);
   });

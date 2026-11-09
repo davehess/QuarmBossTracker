@@ -358,6 +358,10 @@ function defaultConfig() {
     // agent honors this at the OUTERMOST boundary — excluded log files are
     // never opened. Going-forward only; doesn't touch already-uploaded data.
     excludedCharacters: [],
+    // Guest characters: a friend plays HIS characters on this PC. Their logs are still read (overlays, triggers, timers
+    // all work) but nothing attributable to them is uploaded. Same name rules as excludedCharacters; handed to the agent
+    // as WOLFPACK_GUEST_CHARS at launch and pushed live on a change (see _pushGuestCharacters).
+    guestCharacters: [],
     // Overlay positioning. Locked = click-through, lives in place. Unlocked =
     // draggable + resizable handle shown, NOT click-through, so the user can
     // reposition. Toggling lock is a pure window operation — NEVER restarts
@@ -4582,6 +4586,13 @@ async function launchAgent() {
     ? cfg.excludedCharacters.map(s => String(s || '').trim()).filter(Boolean)
     : [];
   if (excluded.length > 0) env.WOLFPACK_EXCLUDED_CHARS = excluded.join(',');
+  // Guest characters (see cfg.guestCharacters): the log is read, nothing from it leaves this PC. Only Mimic's own saved
+  // list counts, so an inherited value is dropped first.
+  delete env.WOLFPACK_GUEST_CHARS;
+  const guests = Array.isArray(cfg.guestCharacters)
+    ? cfg.guestCharacters.map(s => String(s || '').trim()).filter(Boolean)
+    : [];
+  if (guests.length > 0) env.WOLFPACK_GUEST_CHARS = guests.join(',');
   // Opt-in crash telemetry (tray → "Share crash reports"). Env-gated so the
   // agent literally cannot scan the crashes/ folder unless the user opted in.
   if (cfg.crashReports === true) env.WOLFPACK_CRASH_REPORTS = '1';
@@ -14664,7 +14675,13 @@ function _broadcastPointer(cfg) {
 }
 
 ipcMain.handle('save-config', async (_e, incoming) => {
+  const _guestBefore = loadConfig().guestCharacters;
   const merged = Object.assign(loadConfig(), incoming || {});
+  // Guest characters: keep only plain names, then tell the running agent (it also reads the list at launch).
+  if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'guestCharacters')) {
+    merged.guestCharacters = _guestListOf(merged.guestCharacters);
+    _pushGuestCharacters(_guestBefore, merged.guestCharacters).catch(() => {});
+  }
   // Manual /token paste comes in as { token: "wpms_..." }. Route it through
   // the encrypted-at-rest path instead of persisting plaintext, then relaunch
   // the agent so the new token takes effect. A blank/cleared token signs out.
@@ -14914,6 +14931,27 @@ function _agentCall(method, pathname, body) {
     req.on('timeout', () => { req.destroy(); resolve(null); });
     req.end(data || undefined);
   });
+}
+// Guest characters (the guild lead, 2026-11-09): "when a friend is going to take his files and play as a guest on my
+// machine". cfg.guestCharacters is the saved list (the agent reads it at launch as WOLFPACK_GUEST_CHARS); a change saved
+// through save-config is told to the RUNNING agent here, so a name goes private at once with no restart. The agent is
+// the only judge of what is sent: this only keeps the two lists the same.
+function _guestListOf(list) {
+  const seen = new Set(), out = [];
+  for (const raw of (Array.isArray(list) ? list : [])) {
+    const n = String(raw || '').trim();
+    if (!/^[A-Za-z]{1,24}$/.test(n) || seen.has(n.toLowerCase())) continue;
+    seen.add(n.toLowerCase());
+    out.push(n);
+  }
+  return out;
+}
+async function _pushGuestCharacters(before, after) {
+  const b = new Set(_guestListOf(before).map(s => s.toLowerCase()));
+  const a = new Set(_guestListOf(after).map(s => s.toLowerCase()));
+  for (const n of _guestListOf(after)) if (!b.has(n.toLowerCase())) await _agentCall('POST', '/api/guest-character', { character: n, on: true });
+  for (const n of _guestListOf(before)) if (!a.has(n.toLowerCase())) await _agentCall('POST', '/api/guest-character', { character: n, on: false });
+  appendAgentLog(`[mimic] guest characters: ${[...a].join(', ') || '(none)'}\n`);
 }
 ipcMain.handle('character-modes-get', async () => {
   const r = await _agentCall('GET', '/api/character-modes');

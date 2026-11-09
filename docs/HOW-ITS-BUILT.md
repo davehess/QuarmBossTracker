@@ -5351,6 +5351,16 @@ A raider's own DPS per fight over a window they pick. Three surfaces, two data s
   `test/my-parses-tab.test.js` (agent + dashboard + tray + filters + source switch), `test/my-logs-local.test.js`
   (the local fight log and its answer) and `test/dps-trend.test.js` (meter Trend).
 
+### Guest characters — someone else plays this character on this PC (agent 4.0.81 beta, §546)
+A guest's log is still read (overlays, triggers, timers, map) but nothing attributable to it is uploaded; the separate, stronger
+"Hide completely" below stops the log being read at all.
+- **Agent** (`packages/wolfpack-logsync/index.js`): `_isGuestChar` / `_guestChars` (env `WOLFPACK_GUEST_CHARS`, live
+  `POST /api/guest-character`), `shouldUploadForCharacter`, `_guestScrub` at the top of `enqueueUpload`, the tail loop's `_noSend`,
+  the live-state / raid-roster / trigger-relay / map-sync / request-query guards; `/api/state` carries `guest_characters`.
+- **Mimic** (`apps/mimic/main.js`): `cfg.guestCharacters` → `WOLFPACK_GUEST_CHARS`; `save-config` pushes the change to the running
+  agent (`_pushGuestCharacters`). **Dashboard** (`dashboard.html`, Me card): the **Guest** switch per character (`wpSetGuest`).
+- **Tests:** `test/guest-characters.test.js`.
+
 ### Main / alt · Inventory only · Hide completely (bot 3.1.214 · agent 3.7.96, stable in Mimic 2.7.9, §175)
 One choice per character, the same three columns as the switches on `/me` (no second copy):
 show = all off · inventory = `hidden_from_lists` · hidden = all three on. Any other mix reads as `custom`.

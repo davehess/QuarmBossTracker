@@ -352,7 +352,7 @@ describe('the wiring (stripped source): every path that reads a log runs it', ()
   it('the live tail, the --since backfill and the opt-in backfill call it after parsePopFlagLine', () => {
     const calls = src.match(/popFlagsOutputEvents\(line, [a-z]\.character\)/g) || [];
     expect(calls.length).toBe(3);
-    expect(src).toMatch(/if \(!_sourceExcluded\) \{ for \(const pfOut of popFlagsOutputEvents\(line, b\.character\)\) popFlagBuffer\.push\(pfOut\); \}/);
+    expect(src).toMatch(/if \(!_noSend\) \{ for \(const pfOut of popFlagsOutputEvents\(line, b\.character\)\) popFlagBuffer\.push\(pfOut\); \}/);
   });
   it('PRIVACY.md lists it as a thing that leaves the machine, with its exact-line gate', () => {
     const doc = fs.readFileSync(path.join(ROOT, 'docs', 'PRIVACY.md'), 'utf8');

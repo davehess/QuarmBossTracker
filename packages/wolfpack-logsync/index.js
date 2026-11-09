@@ -1599,6 +1599,53 @@ function _offGuildServerChar(character) {
   return server !== undefined && !eqServerCaps(server).guildUpload && !_localOnly();
 }
 
+// ── Guest characters: read here, never sent (the guild lead, 2026-11-09) ──────────────────────────
+// "when a friend is going to take his files and play as a guest on my machine, he's able to do so." His
+// character files sit in this PC's EQ folder and every upload is attributed to the signed-in account, so a
+// guest's combat, chat, roster, buffs and PoP flags would all post as the host. A guest character is
+// STILL tailed (overlays, triggers, timers, the map keep working locally) but nothing attributable to it
+// leaves the PC. ONE predicate, used by every outbound path. Unlike the don't-transmit list
+// (WOLFPACK_EXCLUDED_CHARS) the log is not dropped. Seeded from WOLFPACK_GUEST_CHARS (comma-separated), and
+// changed live by POST /api/guest-character so Mimic never has to restart the engine to make a name private.
+const _guestChars = new Set(
+  (process.env.WOLFPACK_GUEST_CHARS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
+);
+function _isGuestChar(character) {
+  if (!character) return false;
+  return _guestChars.has(String(character).trim().toLowerCase());
+}
+function _guestCharList() { return [..._guestChars].sort(); }
+// Add or remove one guest name while running. Adding also empties the queue of anything already waiting under that name.
+function setGuestCharacter(rawName, on) {
+  const name = String(rawName == null ? '' : rawName).trim();
+  if (!/^[A-Za-z]{1,24}$/.test(name)) return { ok: false, error: 'bad character' };
+  const lc = name.toLowerCase();
+  if (on) {
+    _guestChars.add(lc);
+    try {
+      for (let i = _uploadQueue.length - 1; i >= 0; i--) {
+        const e = _uploadQueue[i];
+        if (e && !_guestScrub(e.kind, e.payload)) _uploadQueue.splice(i, 1);
+      }
+      _saveQueueToDisk();
+    } catch { /* the queue is not up yet: nothing to purge */ }
+  } else {
+    _guestChars.delete(lc);
+  }
+  try { _stateJsonCache = { at: 0, body: null }; scheduleRender(); } catch { /* headless */ }
+  return { ok: true, character: name, guest: !!on, guest_characters: _guestCharList() };
+}
+// True while a guest's client is streaming Zeal state (fresh within a minute). For streams the pipe sends with no character.
+function _guestZealLive() {
+  if (_guestChars.size === 0) return false;
+  const now = Date.now();
+  for (const ch of Object.keys(_zealState || {})) {
+    const st = _zealState[ch];
+    if (_isGuestChar(ch) && st && (now - (st.updatedAt || 0)) < 60_000) return true;
+  }
+  return false;
+}
+
 // ── Encounter detection state machine ───────────────────────────────────────
 // We don't have explicit "encounter started" events in EQ. Heuristic:
 //   - Begin a new encounter when we see a damage event involving a known boss
@@ -13661,6 +13708,9 @@ function _maybeUploadRaidRoster(sample) {
     // defaults TRUE and resets TRUE on any poll failure (same staleness rule as
     // the chat/buffs gates), so a lost elector = everyone uploads.
     if (!_reporterRoles.roster) return;
+    // The raid sample arrives from whichever EQ client's pipe fired, with no character on it. While a guest's client
+    // is live on this PC it may be the guest's own raid view, so nothing goes up (the local state above stays fresh).
+    if (_guestZealLive()) return;
     // Hash composition only — NOT HP. HP changes constantly in combat and we
     // don't want every 1% drop to fire an upload. The heartbeat refreshes HP on
     // a fixed cadence (RAID_ROSTER_HP_HEARTBEAT_MS) so the /raid page + Tank
@@ -13681,7 +13731,8 @@ function _maybeUploadRaidRoster(sample) {
 // Computed lazily so it picks up watched logs registered after startup.
 let _primaryCharacterOverride = null;  // set from args.flags.character in main()
 function _primaryCharacter() {
-  const looksReal = (c) => c && /^[A-Z][a-z]+$/.test(c);
+  // A guest is never the operator: attributing the host's chat/pvp/fun streams to a guest would name him.
+  const looksReal = (c) => c && /^[A-Z][a-z]+$/.test(c) && !_isGuestChar(c);
   if (looksReal(_primaryCharacterOverride)) return _primaryCharacterOverride;
   const wls = (stats && stats.watchedLogs) || [];
   for (const w of wls) if (looksReal(w && w.character)) return w.character;
@@ -13702,9 +13753,43 @@ function _localOnly() { return !!(_uploadOpts && !_uploadOpts.token); }
 const _PLAYER_SCOPE_KINDS = new Set(['pop_flag']);
 function _playerScope() { return !!(_mimicSessionToken && _mimicIdentity && _mimicIdentity.scope === 'player'); }
 
+// The last line of the guest gate: whatever a call site forgot, nothing naming a guest character is queued.
+// Returns false to drop the whole upload. List-shaped payloads lose only the guest's items (the host's
+// own rows in the same batch still go); a batch that was ALL guest is dropped.
+const _GUEST_ITEM_KEYS = ['character', 'caster', 'looter', 'speaker', 'voter_character', 'assister', 'uploadedBy'];
+const _GUEST_LIST_KEYS = ['casts', 'events', 'entries', 'messages', 'votes', 'kills', 'broadcasts', 'assists', 'fires', 'tells', 'reports', 'sets'];
+function _guestItemHit(it) {
+  if (!it || typeof it !== 'object') return false;
+  return _GUEST_ITEM_KEYS.some(k => typeof it[k] === 'string' && _isGuestChar(it[k]));
+}
+function _guestScrub(kind, payload) {
+  if (!payload || typeof payload !== 'object' || _guestChars.size === 0) return true;
+  if (_isGuestChar(payload.character) || _isGuestChar(payload.uploader)) return false;
+  if (typeof payload.by === 'string' && _isGuestChar(payload.by)) payload.by = null;   // rez_dismiss: who clicked
+  for (const k of _GUEST_LIST_KEYS) {
+    const list = payload[k];
+    if (!Array.isArray(list) || list.length === 0) continue;
+    // rolls: a set is the rolls of a whole room; take the guest's own rolls out of each set.
+    if (k === 'sets') {
+      payload[k] = list.map(s => (s && Array.isArray(s.rolls)) ? { ...s, rolls: s.rolls.filter(r => !(r && _isGuestChar(r.name))) } : s)
+        .filter(s => !(s && Array.isArray(s.rolls) && s.rolls.length === 0));
+    } else {
+      payload[k] = list.filter(it => !_guestItemHit(it));
+    }
+    if (payload[k].length === 0) return false;
+  }
+  if (kind === 'raid_roster' && Array.isArray(payload.members)) {
+    payload.members = payload.members.filter(m => !(m && _isGuestChar(m.name)));
+    if (payload.members.length === 0) return false;
+  }
+  return true;
+}
+
 function enqueueUpload(kind, payload) {
   // Local mode: nothing is queued, so nothing can be sent.
   if (_localOnly()) return null;
+  // A guest character's data stays on this PC (see "Guest characters"): checked before anything is queued.
+  if (!_guestScrub(kind, payload)) return null;
   // A player session (no guild) sends PoP flags only; the rest of the streams would be refused.
   if (_playerScope() && !_PLAYER_SCOPE_KINDS.has(kind)) return null;
   // A raid code is active (this PC is in someone else's raid): the record / DKP streams stay on this PC.
@@ -19272,6 +19357,8 @@ function _serializeForDashboard() {
     // Main / alt · Inventory only · Hide completely, per character on this PC (the guild lead, 2026-10-06),
     // including the ones whose log this PC no longer reads. No network, no clock: byte-stable between polls.
     characterModes:     _pcCharacterModeRows(),
+    // Guest characters (WOLFPACK_GUEST_CHARS / POST /api/guest-character): read here, nothing sent. Lowercase names.
+    guest_characters:   _guestCharList(),
     // The first-sign-in "Your characters" card: true while it MAY apply (signed in, not saved or dismissed).
     // The dashboard then asks GET /api/recruit-card, which is the call that reaches the guild server.
     recruitCardPending: !_optinState.recruitCard && !!_mimicSessionToken && !_localOnly()
@@ -20416,6 +20503,11 @@ table.wp-abtbl th.wp-r { color:var(--dim); }
 .wp-mode.on { background:#1f6feb33; color:#e6edf3; }
 .wp-mode.hide.on { background:#f8514922; color:var(--red); }
 .wp-mode:focus-visible { outline:2px solid var(--blue); outline-offset:-2px; }
+/* Guest: a separate on/off beside the three modes (someone else plays this character on this PC). */
+.wp-guestbtn { background:none; border:0; color:var(--dim); font:inherit; font-size:11px; padding:2px 7px; cursor:pointer; white-space:nowrap; }
+.wp-guestbtn:hover { color:var(--text); }
+.wp-guestbtn.on { background:color-mix(in srgb, var(--orange) 20%, transparent); color:var(--orange); }
+.wp-guestbtn:focus-visible { outline:2px solid var(--blue); outline-offset:-2px; }
 /* Sidebar navigation (the guild lead, 2026-08-13: "having to scroll in our dashboard is
    somewhat annoying to navigate"). The row was FULL - 8 tabs plus Tour and
    Panels - so every new destination had to wrap or displace something, which is
@@ -22440,20 +22532,51 @@ function wpModeNote(r) {
   if (r.mode === 'custom') return 'set differently on wolfpack.quest';
   return '';
 }
-function wpModesHtml(modes) {
+// Guest characters (the guild lead, 2026-11-09: "when a friend is going to take his files and play as a guest on my
+// machine, he's able to do so"). A separate switch beside the three modes: a guest's log is still read here (overlays,
+// triggers, timers work) but nothing attributable to it is uploaded. Under Mimic it is saved with the SAME saveConfig
+// call the rest of Settings uses (cfg.guestCharacters; Mimic tells the running engine, no restart); a plain browser
+// posts /api/guest-character, which holds until the engine restarts. The list comes from /api/state guest_characters.
+var _wpGuestNow = [];           // lowercase names the engine says are guests (set each paint)
+var _wpGuestCase = {};          // lowercase -> name as the character list spells it
+function wpGuestOn(name) { return _wpGuestNow.indexOf(String(name).toLowerCase()) >= 0; }
+function wpSetGuest(name, on) {
+  var lc = String(name).toLowerCase();
+  var next = _wpGuestNow.filter(function (n) { return n !== lc; });
+  if (on) next.push(lc);
+  var names = next.map(function (n) { return _wpGuestCase[n] || n; });
+  var viaMimic = !!(window.mimic && window.mimic.saveConfig);
+  var call = viaMimic
+    ? window.mimic.saveConfig({ guestCharacters: names })
+    : fetch('/api/guest-character', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ character: name, on: !!on }) }).then(function (r) { return r.json(); });
+  Promise.resolve(call).then(function (r) {
+    if (r && r.ok === false) { wpModeSay('Could not save that for ' + name + '. Try again.', 'var(--red)'); return; }
+    _wpGuestNow = next;
+    wpModeSay(name + ': ' + (on ? 'guest. Overlays and triggers keep working; nothing from this character is uploaded.' : 'no longer a guest.')
+      + (viaMimic ? '' : ' (Until the engine restarts; set it in Mimic to keep it.)'), 'var(--green)');
+    try { refresh(); } catch (e) { void e; }
+  }).catch(function () { wpModeSay('Could not reach the engine to save that. Try again.', 'var(--red)'); });
+}
+function wpModesHtml(modes, guests) {
+  _wpGuestNow = (guests || []).map(function (n) { return String(n).toLowerCase(); });
+  modes.forEach(function (r) { _wpGuestCase[String(r.name).toLowerCase()] = r.name; });
   var h = '<details ' + wpKeep('me-char-modes') + ' style="margin-top:6px"><summary class="dim" style="cursor:pointer;font-size:11px">'
     + '👁 How each character shows (' + modes.length + ')</summary>'
     + '<div class="dim" style="font-size:10px;margin:4px 0"><b>Inventory only</b>: kept for your account inventory, left out of every list and chart. '
-    + '<b>Hide completely</b>: Mimic stops reading that log and the website hides it. Same switches as My Stats on wolfpack.quest.</div>'
+    + '<b>Hide completely</b>: Mimic stops reading that log and the website hides it. Same switches as My Stats on wolfpack.quest. '
+    + '<b>Guest</b>: someone else plays this character on this PC. Overlays work, nothing is uploaded.</div>'
     + '<div style="font-size:12px;line-height:1.9">';
   modes.forEach(function (r) {
     var note = wpModeNote(r);
+    var isGuest = wpGuestOn(r.name);
     h += '<div><span class="name">' + esc(r.name) + '</span> <span class="wp-seg" role="radiogroup" aria-label="Show ' + esc(r.name) + ' as">'
       + WP_MODES.map(function (m) {
           return '<button type="button" role="radio" aria-checked="' + (r.mode === m[0] ? 'true' : 'false') + '" class="wp-mode' + (r.mode === m[0] ? ' on' : '') + (m[0] === 'hidden' ? ' hide' : '')
             + '" data-char="' + esc(r.name) + '" data-mode="' + m[0] + '">' + m[1] + '</button>';
         }).join('')
-      + '</span>' + (note ? ' <span class="dim" style="font-size:10px">' + esc(note) + '</span>' : '') + '</div>';
+      + '</span> <span class="wp-seg"><button type="button" role="switch" aria-checked="' + (isGuest ? 'true' : 'false') + '" class="wp-guestbtn' + (isGuest ? ' on' : '')
+      + '" data-char="' + esc(r.name) + '" data-guest="' + (isGuest ? '0' : '1') + '" title="Guest: someone else plays this character on this PC. Overlays work, nothing is uploaded.">Guest</button></span>'
+      + (note ? ' <span class="dim" style="font-size:10px">' + esc(note) + '</span>' : '') + '</div>';
   });
   h += '</div>';
   if (_wpModeMsg) h += '<div style="font-size:11px;margin-top:4px;color:' + _wpModeMsg.color + '">' + esc(_wpModeMsg.text) + '</div>';
@@ -22489,6 +22612,12 @@ document.addEventListener('click', function (e) {
   if (!b) return;
   e.preventDefault();
   wpSetCharacterMode(b.dataset.char, b.dataset.mode);
+});
+document.addEventListener('click', function (e) {
+  var b = e.target && e.target.closest ? e.target.closest('.wp-guestbtn') : null;
+  if (!b) return;
+  e.preventDefault();
+  wpSetGuest(b.dataset.char, b.dataset.guest === '1');
 });
 
 // 👋 Your characters — the first-sign-in card (the guild lead, 2026-10-24: "We should be asking what characters
@@ -22772,7 +22901,7 @@ function renderMeCard(s) {
   // Main / alt · Inventory only · Hide completely, per character (see wpModesHtml). Listed even when no
   // log is being watched: a character this PC no longer reads is exactly the one that needs the way back.
   const charModes = Array.isArray(s.characterModes) ? s.characterModes : [];
-  if (charModes.length > 0) h += wpModesHtml(charModes);
+  if (charModes.length > 0) h += wpModesHtml(charModes, Array.isArray(s.guest_characters) ? s.guest_characters : []);
   h += '</div>';
 
   // Recent tells (local only — they never leave the machine).
@@ -37355,6 +37484,7 @@ function startWebDashboard(port) {
         let active = null, activeTs = 0;
         for (const ch of Object.keys(_zealState || {})) {
           const st = _zealState[ch]; const ts = (st && st.updatedAt) || 0;
+          if (_isGuestChar(ch)) continue;   // a guest's vote never names him
           if (ts > activeTs && (Date.now() - ts) < 60_000) { activeTs = ts; active = ch; }
         }
         enqueueUpload('trigger_feedback', {
@@ -37564,7 +37694,8 @@ function startWebDashboard(port) {
           let name = null;
           try { name = (JSON.parse(body || '{}') || {}).name || null; } catch (e) { void e; }
           if (!name) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end('{"error":"name required"}'); }
-          const by = (stats.watchedLogs && stats.watchedLogs[0] && stats.watchedLogs[0].character) || null;
+          const _byLog = (stats.watchedLogs || []).find(w => w && w.character && !_isGuestChar(w.character));
+          const by = (_byLog && _byLog.character) || null;
           noteRezDismiss(name, by);
           enqueueUpload('rez_dismiss', { agent_version: AGENT_VERSION, name: String(name), by, at: new Date().toISOString() });
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -37805,7 +37936,7 @@ function startWebDashboard(port) {
         let slice = null;
         if (p && p.attach_log) {
           const built = buildFeedbackLogSlice(p.minutes || 30, Date.now());
-          if (built.ok) slice = built;
+          if (built.ok && !_isGuestChar(built.character)) slice = built;   // a guest's log excerpt never goes up
         }
         // Screenshots the reporter chose on the card. Passed through as image
         // data URLs; the bot checks every byte (utils/feedbackShots.js).
@@ -38873,6 +39004,17 @@ function startWebDashboard(port) {
       if (req.url === '/api/character-modes' && req.method === 'GET') {
         const out = await characterModesPayload();
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(JSON.stringify(out));
+      }
+      // Guest characters (the guild lead, 2026-11-09): { character, on } adds or removes ONE name; takes hold at once
+      // (no restart), and anything already queued for that name is dropped. Mimic keeps the saved list and hands it
+      // over at launch as WOLFPACK_GUEST_CHARS; this is the live half. See "Guest characters".
+      if (req.url === '/api/guest-character' && req.method === 'POST') {
+        let payload;
+        try { payload = JSON.parse(await _readBody(req, 2 * 1024) || '{}'); }
+        catch { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: false, error: 'invalid json' })); }
+        const out = setGuestCharacter(payload && payload.character, payload && payload.on);
+        res.writeHead(out.ok ? 200 : 400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         return res.end(JSON.stringify(out));
       }
       if (req.url === '/api/character-mode' && req.method === 'POST') {
@@ -41042,6 +41184,7 @@ function _quarmyLocalItems(character) {
 }
 
 function _quarmyPrefsBlock(lowerName) {
+  if (_isGuestChar(lowerName)) return true;   // a guest's Quarmy export is never uploaded
   const p = stats.characterPrefs && stats.characterPrefs[lowerName];
   return !!(p && (p.exclude_inventory || p.exclude_from_stats));
 }
@@ -45487,8 +45630,10 @@ function _reporterHeartbeatOnce() {
   // the fleet).
   let last_line_ms = null, live_character = null;
   try {
-    const lv = _computeLiveness((stats && stats.watchedLogs) || [], Date.now(), LIVE_CHARACTER_IDLE_MS);
+    // A guest's logs and name stay out of the heartbeat (the host's liveness is what the election wants).
+    const lv = _computeLiveness(((stats && stats.watchedLogs) || []).filter(w => !(w && _isGuestChar(w.character))), Date.now(), LIVE_CHARACTER_IDLE_MS);
     last_line_ms = lv.last_line_ms; live_character = lv.live_character;
+    if (_isGuestChar(live_character)) live_character = null;
   } catch { /* best-effort — null falls open to fresh */ }
   // Best-effort context the bot uses for the zone/group-aware election (P1b/c).
   let zone = null, group_num = null, has_zeal = false;
@@ -45830,8 +45975,10 @@ function startChatRelay() {
     // pick the first watched character as the uploader; fall back to "?".
     let uploader = "?";
     for (const w of stats.watchedLogs || []) {
-      if (w && w.character) { uploader = w.character; break; }
+      if (w && w.character && !_isGuestChar(w.character)) { uploader = w.character; break; }
     }
+    // Only a guest's logs are open: the picture is theirs, so nothing is posted.
+    if (uploader === "?" && (stats.watchedLogs || []).some(w => w && _isGuestChar(w.character))) return;
     // Use the queue so a network blip retries with the rest.
     enqueueUpload('threat_snapshot', {
       agent_version: AGENT_VERSION,
@@ -47967,7 +48114,7 @@ function pollBackfillRequests({ botUrl, token }) {
   if (_multiplexActive()) return Promise.resolve();   // #106 — the multiplexed /poll carries backfill-requests
   const chars = (stats.watchedLogs || [])
     .map(w => w && w.character)
-    .filter(Boolean);
+    .filter(c => c && !_isGuestChar(c));   // a guest's name is never put in a request to the bot
   if (chars.length === 0) return Promise.resolve();
 
   // /encounter → /backfill-requests, plus the character filter
@@ -48040,7 +48187,7 @@ function _applyCharacterPrefsResponse(resp) {
 function pollCharacterPrefs({ botUrl, token }) {
   if (!botUrl || !token) return Promise.resolve();
   if (_multiplexActive()) return Promise.resolve();   // #106 — the multiplexed /poll carries character-prefs
-  const chars = (stats.watchedLogs || []).map(w => w && w.character).filter(Boolean);
+  const chars = (stats.watchedLogs || []).map(w => w && w.character).filter(c => c && !_isGuestChar(c));
   if (chars.length === 0) return Promise.resolve();
 
   const url = botUrl.replace(/\/encounter(\?.*)?$/, '/character-prefs')
@@ -48081,6 +48228,8 @@ function pollCharacterPrefs({ botUrl, token }) {
 // poll pending), so we don't accidentally drop anything during startup.
 function shouldUploadForCharacter(character) {
   if (!character) return true;
+  // A guest character (someone else plays it on this PC) feeds nothing to the guild bot, whatever the site says.
+  if (_isGuestChar(character)) return false;
   // A character on a server that is not the guild's (Project 1999, live EQ...) feeds nothing to the guild bot.
   if (_offGuildServerChar(character)) return false;
   const p = stats.characterPrefs && stats.characterPrefs[String(character).toLowerCase()];
@@ -49542,7 +49691,7 @@ function _applyUiEditsResponse(resp, watched, opts) {
 function pollUiPendingEdits({ botUrl, token }) {
   if (!botUrl || !token) return;
   if (_multiplexActive()) return;   // #106 — the multiplexed /poll carries ui-pending-edits
-  const watched = (stats.watchedLogs || []).filter(w => w && w.character && w.logPath);
+  const watched = (stats.watchedLogs || []).filter(w => w && w.character && w.logPath && !_isGuestChar(w.character));
   if (!watched.length) return;
   const qs = '?characters=' + encodeURIComponent(watched.map(w => w.character).join(','));
   const url = botUrl.replace(/\/encounter(\?.*)?$/, '/ui-pending-edits') + qs;
@@ -52999,6 +53148,7 @@ function _hasRecentFire(key, tsMs) {
 // alert). Test fires also skip relay.
 function _relayLocalFire(t, actions, captures, tsMs, key) {
   if (!_isUploaderInstance) return false;
+  if (_isGuestChar(_triggerEvalChar)) return false;   // a guest's fire never fans out to the guild
   if (!t || t._scope === 'personal') return false;
   // Strip discord/relay-only actions so receiving Mimics only run the
   // local-effect ones (text_overlay, voice marks, etc.). Discord-channel
@@ -53360,7 +53510,7 @@ async function _pollMultiplexed() {
   const now      = Date.now();
   const dormant  = _controlStandDown().down;
   const active   = _recentFiresActive();
-  const chars    = (stats.watchedLogs || []).map(w => w && w.character).filter(Boolean);
+  const chars    = (stats.watchedLogs || []).map(w => w && w.character).filter(c => c && !_isGuestChar(c));   // never a guest's name
 
   // Decide which streams to ask for THIS tick (reuse each stream's own cadence).
   // The character-scoped streams (prefs/backfill/ui_edits) are gated on having a
@@ -53556,6 +53706,7 @@ function _getAgentToken() {
 function _broadcastTriggerToDiscord({ name, message, key, tsMs, mode, voiceId }) {
   const text = String(message || '').trim();
   if (!text) return;
+  if (_isGuestChar(_triggerEvalChar)) return;   // a guest's callout is never posted to Discord
   const entry = {
     name:     name || 'trigger',
     mode:     mode === 'voice' ? 'voice' : 'post',
@@ -53992,7 +54143,7 @@ function fetchMobInfo(name, selfChar, zoneId, npcId) {
   // #141 — send the requesting character so the bot zone-scopes the catalog row
   // (id = zoneid*1000+n) to OUR zone; absent → bot falls back catalog-wide.
   let url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/mob-info') + '?name=' + encodeURIComponent(name);
-  if (selfChar) url += '&character=' + encodeURIComponent(selfChar);
+  if (selfChar && !_isGuestChar(selfChar)) url += '&character=' + encodeURIComponent(selfChar);   // a guest's name never rides a request
   if (npcId != null) url += '&npc_id=' + encodeURIComponent(npcId);
   try {
     const u = new URL(url);
@@ -55263,6 +55414,7 @@ function _mapLocalEvent(zone, zd, character, ev, now) {
   if (!_mapFetchAllowed()) return;
   const ch = character || _mapActiveCharacter(now);
   if (!ch) return;
+  if (_isGuestChar(ch)) return;   // a guest's sightings and marks stay on the local map
   if (_mapSync.q.length >= MAP_SYNC_QUEUE_MAX) _mapSync.q.shift();
   _mapSync.q.push({ zone, character: String(ch), ev: e });
   _mapOutboxSaveSoon();
@@ -55474,7 +55626,7 @@ function _mapWatchSet(zone, mark, now, character) {
     delete zw[pid];
     (_mapSync.watchOff[zone] || (_mapSync.watchOff[zone] = {}))[pid] = now;
   }
-  if (_mapFetchAllowed() && character && now >= _mapSync.watchBackoffUntil) {
+  if (_mapFetchAllowed() && character && !_isGuestChar(character) && now >= _mapSync.watchBackoffUntil) {
     const body = { zone, point_id: point.id, named, on, inst: copy ? copy.token : null, character: String(character) };
     _mapSyncRequest('POST', '', body, (err, status, buf) => {
       if (err) return;
@@ -57203,7 +57355,7 @@ function fetchTargetCasts(name, selfChar, targetId) {
   if (cached && (Date.now() - cached.at) < TARGET_CASTS_TTL_MS) return;
   _targetCastsInflight.add(key);
   let url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/target-casts') + '?name=' + encodeURIComponent(name);
-  if (selfChar) url += '&character=' + encodeURIComponent(selfChar);   // #141 zone scope
+  if (selfChar && !_isGuestChar(selfChar)) url += '&character=' + encodeURIComponent(selfChar);   // #141 zone scope
   // Spawn id first, name second — the bot drops casts proven to be on a
   // different same-name spawn. Omitted when unknown → served unfiltered.
   if (targetId != null) url += '&target_id=' + encodeURIComponent(targetId);
@@ -57354,7 +57506,7 @@ function fetchTargetBuffs(name, selfChar, targetId) {
   if (cached && (Date.now() - cached.at) < TARGET_BUFFS_TTL_MS) return;
   _targetBuffsInflight.add(key);
   let url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/target-buffs') + '?name=' + encodeURIComponent(name);
-  if (selfChar) url += '&character=' + encodeURIComponent(selfChar);   // #141 zone scope
+  if (selfChar && !_isGuestChar(selfChar)) url += '&character=' + encodeURIComponent(selfChar);   // #141 zone scope
   // Lets the bot drop rows proven to belong to a different same-name spawn.
   // Omitted when unknown → the bot serves unfiltered, exactly as before.
   if (targetId != null) url += '&target_id=' + encodeURIComponent(targetId);
@@ -57599,7 +57751,7 @@ function fetchRaidBuffQueue(bufferClass, bufferCharacter) {
   _buffQueueInflight.add(key);
   const qs = [];
   if (bufferClass)     qs.push('class=' + encodeURIComponent(bufferClass));
-  if (bufferCharacter) qs.push('character=' + encodeURIComponent(bufferCharacter));
+  if (bufferCharacter && !_isGuestChar(bufferCharacter)) qs.push('character=' + encodeURIComponent(bufferCharacter));
   const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/raid-buff-queue') + (qs.length ? '?' + qs.join('&') : '');
   try {
     const u = new URL(url);
@@ -57780,7 +57932,7 @@ function fetchExtendedTarget(character) {
   // #113 same-zone-only pref (default on). Only send same_zone=0 when the user
   // has turned it OFF — an absent param keeps the bot's default same-zone scope.
   const params = [];
-  if (character) params.push('character=' + encodeURIComponent(character));
+  if (character && !_isGuestChar(character)) params.push('character=' + encodeURIComponent(character));
   if (_optinState.extSameZoneOnly === false) params.push('same_zone=0');
   const qs = params.length ? '?' + params.join('&') : '';
   const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/extended-target') + qs;
@@ -59340,6 +59492,12 @@ function _liveTargetPosDue(prev, cur, now) {
 function _postLiveState(targetUrl, token, payload) {
   if (!token) return;   // Local mode: no token, so the live state (zone, buffs, pet) never leaves the machine.
   if (_playerScope()) return;   // A flag-sync-only session may not post live state (the bot answers 403).
+  // Belt for the guest gate: no state row for a guest character leaves, whichever caller built the payload.
+  if (payload && Array.isArray(payload.states)) {
+    const kept = payload.states.filter(s => !(s && _isGuestChar(s.character)));
+    if (kept.length === 0) return;
+    if (kept.length !== payload.states.length) payload = { ...payload, states: kept };
+  }
   let url;
   try { url = new URL(targetUrl); } catch { return; }
   const mod = url.protocol === 'https:' ? https : http;
@@ -60025,6 +60183,7 @@ function flushLiveStateToBot(opts) {
   for (const ch of Object.keys(_zealState)) {
     const st = _zealState[ch];
     if (!st || (now - (st.updatedAt || 0)) > ZEAL_STALE_MS) continue;  // live chars only
+    if (_isGuestChar(ch)) continue;   // a guest's buffs, zone, target and cooldowns stay on this PC
     const buffs = Array.isArray(st.buffs) ? st.buffs : [];
     // Pet snapshot: name + HP from the live Zeal pet gauge, buffs from the
     // agent's pet-buff tracker (timed, persisted). Owners with no pet send null.
@@ -62927,8 +63086,16 @@ function _afterMyMeleeOk(t, groups, tsMs, charLc) {
   return false;
 }
 
+// Whose line the trigger evaluator is working on right now (sync, restored on exit). A guest's fire stays on this PC:
+// _relayLocalFire and _broadcastTriggerToDiscord read it, since neither is handed a character.
+let _triggerEvalChar = null;
 // Hot-path: called for every kept log line in the tail loop.
 function evaluateTriggersAgainstLine(line, tsMs, fileChar) {
+  const prev = _triggerEvalChar;
+  _triggerEvalChar = fileChar || null;
+  try { return _evaluateTriggersAgainstLineInner(line, tsMs, fileChar); } finally { _triggerEvalChar = prev; }
+}
+function _evaluateTriggersAgainstLineInner(line, tsMs, fileChar) {
   const meleeChar = String(fileChar || '').toLowerCase();
   try { _noteOwnMelee(line, tsMs, meleeChar); } catch { /* a note that fails is a hit not remembered */ }
   const all = [..._personalTriggers, ...(stats.guildTriggers || [])];
@@ -65508,6 +65675,8 @@ async function main() {
     };
 
     for (const b of builders) {
+      // A --since replay exists to upload; a guest's log has nothing to send.
+      if (_isGuestChar(b.character)) { console.log(`[${b.character}] skipped (guest character: nothing is sent)`); continue; }
       console.log(`[${b.character}] scanning ${b.logPath}`);
       await readWindow(b.logPath, since, until, line => {
         // Fun-event detection — mirrors the opt-in backfill path so a CLI
@@ -65765,7 +65934,11 @@ async function main() {
         // has set exclude_from_stats on the source character. Each push
         // below short-circuits on the prefs gate so an excluded character
         // generates zero outbound traffic from this machine.
-        const _sourceExcluded = !shouldUploadForCharacter(b.character);
+        // A GUEST character's log is still read (overlays, triggers, timers, the map all work), so it is NOT "excluded"
+        // here: _sourceExcluded gates the local trackers too. Every stream that LEAVES the PC asks _noSend instead.
+        const _sourceGuest = _isGuestChar(b.character);
+        const _sourceExcluded = !_sourceGuest && !shouldUploadForCharacter(b.character);
+        const _noSend = _sourceExcluded || _sourceGuest;
 
         // /tell handling — MUST be checked BEFORE shouldKeep because the byte-
         // level drop list filters out "tells you" / "you told" so neither the
@@ -65786,7 +65959,7 @@ async function main() {
           const tellEvt = parseTellLine(line, b.character);
           if (tellEvt) {
             _pushRecentTell(tellEvt, b.character);
-            if (_tellPrefs?.tell_relay) {
+            if (_tellPrefs?.tell_relay && !_sourceGuest) {   // a guest's tells are local-only, whatever the site says
               tellBuffer.push({ ...tellEvt, character: b.character });
             }
             // Don't `return` — tells are side-channel. Continue so any further
@@ -65801,7 +65974,7 @@ async function main() {
         // /sll lockout output → bot timer (Available entries silently skipped)
         const lockoutEntry = parseSllLine(line);
         if (lockoutEntry) {
-          if (!_sourceExcluded) _lockoutBuffer.push({ ...lockoutEntry, character: b.character });
+          if (!_noSend) _lockoutBuffer.push({ ...lockoutEntry, character: b.character });
           return;
         }
         // Even if parseSllLine returned null we may have toggled _inLockoutSection;
@@ -65815,7 +65988,7 @@ async function main() {
         const druzzilKill = parseDruzzilKill(line);
         if (druzzilKill) {
           const _dkFp = 'druzzil|' + line.replace(/^\[.+?\]\s*/, '').toLowerCase().replace(/\s+/g, ' ').trim();
-          if (!_sourceExcluded && !_crossLogDupe(_dkFp)) druzzilKillBuffer.push(druzzilKill);
+          if (!_noSend && !_crossLogDupe(_dkFp)) druzzilKillBuffer.push(druzzilKill);
           return;
         }
 
@@ -65825,7 +65998,7 @@ async function main() {
         const slowMode = parseSlowModeLine(line);
         if (slowMode) {
           const _smFp = 'slowmode|' + line.replace(/^\[.+?\]\s*/, '').toLowerCase().replace(/\s+/g, ' ').trim();
-          if (!_sourceExcluded && !_crossLogDupe(_smFp)) uploadSlowMode(slowMode, _uploadOpts || {}).catch(() => {});
+          if (!_noSend && !_crossLogDupe(_smFp)) uploadSlowMode(slowMode, _uploadOpts || {}).catch(() => {});
           return;
         }
 
@@ -65835,7 +66008,7 @@ async function main() {
         const pvpBcast = parsePvpBroadcast(line);
         if (pvpBcast) {
           const _pvpFp = 'pvp|' + line.replace(/^\[.+?\]\s*/, '').toLowerCase().replace(/\s+/g, ' ').trim();
-          if (!_sourceExcluded && !_crossLogDupe(_pvpFp)) {
+          if (!_noSend && !_crossLogDupe(_pvpFp)) {
             pvpBuffer.push(pvpBcast);
 
             // Hate-zone boss kills also fan out to the Supabase-backed
@@ -65865,13 +66038,13 @@ async function main() {
         }
         // No pattern matched — if it still looks like a kill broadcast, capture
         // the raw line for diagnosis (guildless/novel boss-kill phrasings).
-        if (!_sourceExcluded) captureUnmatchedPvpKill(line);
+        if (!_noSend) captureUnmatchedPvpKill(line);
 
         // Fun-event detection — shared gated dispatcher (_collectFunEvents):
         // one toLowerCase + substring gates instead of every detector's
         // regexes per line. Don't `return` after a match — fun events are
         // pure side-channel logging; the line still feeds other parsers.
-        if (!_sourceExcluded) {
+        if (!_noSend) {
           for (const evt of _collectFunEvents(line, b.character)) funEventBuffer.push(evt);
         }
         // Faction hits + /con standing transitions — self-only lines; rides
@@ -65891,17 +66064,17 @@ async function main() {
           }
         }
         const facEvt = parseFactionLine(line, b.character);
-        if (facEvt && !_sourceExcluded) factionBuffer.push(facEvt);
+        if (facEvt && !_noSend) factionBuffer.push(facEvt);
         const conFacEvt = parseConsiderLine(line, b.character);
-        if (conFacEvt && !_sourceExcluded) factionBuffer.push(conFacEvt);
+        if (conFacEvt && !_noSend) factionBuffer.push(conFacEvt);
         // …and its level phrase (Target Info's player level / range).
         try { noteConsiderLevel(line, b.character); } catch (e) { void e; }
         try { _mapNoteCon(line, b.character); } catch (e) { void e; }   // …and its faction tier (the Map's aggro-ring colour)
         try { noteSightCon(line, b.character); } catch (e) { void e; }   // …and, while you are invisible, whether it saw you
         const pfEvt = parsePopFlagLine(line, b.character);
-        if (pfEvt && !_sourceExcluded) popFlagBuffer.push(pfEvt);
+        if (pfEvt && !_noSend) popFlagBuffer.push(pfEvt);
         // …and what `#popflags` printed (popFlagsOutputEvents: an exact-line gate, step keys only, docs/PRIVACY.md).
-        if (!_sourceExcluded) { for (const pfOut of popFlagsOutputEvents(line, b.character)) popFlagBuffer.push(pfOut); }
+        if (!_noSend) { for (const pfOut of popFlagsOutputEvents(line, b.character)) popFlagBuffer.push(pfOut); }
         // A hail, yours or one you witnessed: the Command Center's hail board (the guild lead,
         // 2026-10-05) moves a raider from "still to hail" to "hailed" on this. Only a hail of a flag NPC
         // leaves the machine (_hailNpcWanted), the one /say exception docs/PRIVACY.md names. Every Mimic
@@ -65909,7 +66082,7 @@ async function main() {
         // collapses the rest.
         // Your own flag-NPC hail while invisible: a local "drop invis" callout (FB-116; this PC only).
         try { _hailInvisNoteLine(line, b.character, Date.now()); } catch { void 0; }
-        if (!_sourceExcluded) {
+        if (!_noSend) {
           const hailEvt = parseWitnessedHail(line, b.character);
           if (hailEvt && _hailNpcWanted(hailEvt.npc)
               && !_crossLogDupe('hail|' + hailEvt.character.toLowerCase() + '|' + hailEvt.npc.toLowerCase() + '|' + hailEvt.ts)) {
@@ -65931,7 +66104,7 @@ async function main() {
           // Relay our own cast → bot, so anyone targeting the same mob/player
           // sees it in Mob Info's Casting section (cross-client; only our
           // casts nameable).
-          if (selfCast) relaySelfCastForCasting(line, b.character, selfCast);
+          if (selfCast && !_sourceGuest) relaySelfCastForCasting(line, b.character, selfCast);
           // A DI cast that gets interrupted/fizzles never consumed its recast.
           noteDiInterrupt(line, b.character);
           // Same for a silent pacify: it was stamped at cast begin because no
@@ -65994,7 +66167,7 @@ async function main() {
           // Extended Target as a timer-less "fell off" entry. Same predicate the
           // LOCAL recordTargetBuffLanding drop uses, applied at the source so the
           // relay path is closed too. Real catalogued DoTs/curses still upload.
-          if (!_shouldSuppressBuffLanding(bcEvt) && !_crossLogDupe(_bcFp)) buffCastBuffer.push(bcEvt);
+          if (!_sourceGuest && !_shouldSuppressBuffLanding(bcEvt) && !_crossLogDupe(_bcFp)) buffCastBuffer.push(bcEvt);
           // If the buff landed on one of OUR pets, stamp it for the Pet tracker's
           // countdown (catalog duration anchored to this land). Local UI only.
           recordPetBuffLanding(bcEvt);
@@ -66052,7 +66225,7 @@ async function main() {
             // A member). The bot upserts by (target, spell, cast_at), so every
             // observer of the SAME land collapses to one row — no flood.
             const _dbFp = `buffcast|${dbEvt.target}|${dbEvt.spell_id}|${dbEvt.landing_text}|${dbEvt.cast_at}`;
-            if (!_crossLogDupe(_dbFp)) buffCastBuffer.push(dbEvt);
+            if (!_sourceGuest && !_crossLogDupe(_dbFp)) buffCastBuffer.push(dbEvt);
           }
           // #206 — the THIRD capture path. Only lines neither timed path
           // claimed reach it, which is the whole point: an INSTANT effect has
@@ -66072,7 +66245,7 @@ async function main() {
         // Server-wide PvP earthquake announcement → register the next-quake
         // time so the bot can show a countdown above the PvP timers (Discord +
         // web). Visible to everyone in zone; the bot dedups across agents.
-        if (!_sourceExcluded) {
+        if (!_noSend) {
           const quakeEvt = parseEarthquake(line);
           if (quakeEvt && quakeEvt.next_quake_at !== _lastQuakeSig) {
             _lastQuakeSig = quakeEvt.next_quake_at;
@@ -66221,7 +66394,7 @@ async function main() {
           // (third-person) name is server truth and upgrades a buffered
           // filename-guessed copy in place. See _chatCrossLogArbitrate.
           const _chatFp = `chat|${chatMsg.channel}|${String(chatMsg.text).toLowerCase().replace(/\s+/g, ' ').trim()}`;
-          if (!_sourceExcluded && !_chatCrossLogArbitrate(_chatFp, chatMsg)) chatBuffer.push(chatMsg);
+          if (!_noSend && !_chatCrossLogArbitrate(_chatFp, chatMsg)) chatBuffer.push(chatMsg);
           return;
         }
 
@@ -67798,6 +67971,7 @@ function _rebuildCandidates() {
 function _rebuildExcluded(character) {
   const lc = String(character || '').toLowerCase();
   if (!lc) return true;
+  if (_isGuestChar(lc)) return true;   // a guest's history is not this account's to rebuild
   const listed = String(process.env.WOLFPACK_EXCLUDED_CHARS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
   if (listed.indexOf(lc) >= 0) return true;
   const p = stats.characterPrefs && stats.characterPrefs[lc];
@@ -69396,6 +69570,8 @@ module.exports = {
   _raidCodeNormalize, _raidCodeSet, _raidCodeClear, _raidCodeActive, _raidCodeStatus, _raidCodeHolds, _raidTag, _raidCodeSaveFight, _raidCodeNoteLoot,
   _raidPersonKey, _rmpackBuild, _rmpackParse, _rmpackImport, _rmCleanMinute, _rmMergeMinute, _raidCodeRoute, _raidCodeSetFileForTest,
   RAID_HOLD_KINDS, RAID_CODE_TTL_MS, enqueueUpload,
+  // Guest characters (2026-11-09): see "Guest characters" near _offGuildServerChar.
+  _isGuestChar, setGuestCharacter, _guestCharList, shouldUploadForCharacter,
   // Local item icons (2026-10-21): cut from the player's own dragitem sheets. See the block above module.exports.
   _iconCellOf, _iconDecodeTga, _iconDecodeDds, _iconPng, _iconCut, _localIconPng, _localIconRoute,
   parseEvent, shouldKeep, parseEqTimestamp,

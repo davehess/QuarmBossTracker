@@ -122,6 +122,44 @@ next touch one rather than assuming a missing row means a missing doc.
   awaiting a pick (admin ?v=b, raidmimic ?v=b..d, /about ?v=b/c, /spectator ?v=b/c, /me ?v=b) are now reachable on
   wolfpack.quest with their ?v= as well; the default pages are what beta showed.
 
+- **🧪 Guest characters: read here, nothing sent (agent 4.0.81 beta, 2026-11-09; first draft, not yet routed).** The guild lead:
+  *"make sure that when a friend is going to take his files and play as a guest on my machine, he's able to do so."* A guest's
+  character files sit in the host's EQ folder and every upload is attributed to the signed-in account, so his combat, chat, raid
+  roster, buffs and PoP flags would all post as the host. A guest character is still TAILED (overlays, triggers, timers, the map,
+  the Command Center and Target Info keep working locally) but nothing attributable to it leaves the PC. Unlike **Hide
+  completely** (`WOLFPACK_EXCLUDED_CHARS`, the log is never opened) it does not stop the log being read.
+  - **One predicate.** `_isGuestChar(name)` in the agent, seeded from `WOLFPACK_GUEST_CHARS` (comma-separated, any case) and
+    changed live by `POST /api/guest-character {character, on}` (no restart; adding a name also empties what is already queued
+    for it). `shouldUploadForCharacter` returns false for a guest, which feeds the existing per-log `_sourceExcluded` consumers,
+    the PoP / Quarmy / spellbook / inventory file scans, the encounter and historical-chat paths, and the rebuild.
+  - **Last line of defence.** `enqueueUpload` runs `_guestScrub` before anything is queued: a payload naming a guest is dropped,
+    a batch loses only the guest's rows (casting, looted, rolls, chat, PoP flags, faction, fun events, xp, lockouts, boss kills,
+    buff casts, trigger votes, crash reports, raid roster members). `_primaryCharacter()` never returns a guest, so the
+    operator-level streams are never attributed to one.
+  - **The tail loop splits the two questions.** `_sourceExcluded` (local trackers) stays the `exclude_from_stats` answer only;
+    `_noSend` (= excluded or guest) gates every line that leaves the PC. Tells stay in the local ring and the Chat overlay and are
+    never put in the upload buffer. Buff landings still feed Target Info and the Pet tracker; only the `buff_casts` push is skipped.
+  - **Direct posts.** Live-state skips a guest's Zeal state (and `_postLiveState` strips a guest row whichever caller built it);
+    the raid roster is not posted while a guest's client is live (the type-5 sample names no character, so it may be the guest's own
+    raid view); a trigger fired from a guest's line is not posted to Discord or fanned out to other Mimics; map sightings and
+    watch marks stay on the local map; requests to the bot never carry a guest's name (prefs, backfill, ui edits, the multiplexed
+    poll, mob-info, target buffs and casts, extended target, my-parses); the reporter heartbeat's `live_character` and the
+    feedback log excerpt never name one; the threat snapshot picks a non-guest uploader.
+  - **Mimic.** `cfg.guestCharacters` (default `[]`) → `WOLFPACK_GUEST_CHARS` at launch; `save-config` keeps plain names only and
+    tells the running agent the difference. The dashboard's Me card ("How each character shows") has a **Guest** switch on each
+    row, saved through the same `window.mimic.saveConfig` (a plain browser posts `/api/guest-character`, which holds until the
+    engine restarts). The tray has no per-character modes, so there is nothing to mirror there. The setup walkthrough
+    (`welcome.html`) is untouched: a guest is set up after onboarding.
+  - **The friend's own flags.** He loads them at https://raidmimic.com/characters from his PoPFlags files (that page shipped
+    2026-11-09); the agent never uploads them for him. His names must NOT be linked to the host's account
+    (`characters.discord_id`), or raidmimic.com refuses his claim.
+  - **Known gaps (say so, don't hide them).** The Zeal type-5 raid sample and the Area Rampage fan-out carry no character, so the
+    raid roster is withheld while any guest client is live and a rampage callout derived from a guest's combat line is not
+    attributable here; the local PoP status overlay reads no guest PoPFlags file; `/api/server/*` dashboard passthroughs and a
+    manual UI Studio capture/upload are the host's explicit actions and are not gated. Not yet run against a real second client.
+  - **Tests:** `test/guest-characters.test.js` (the real `enqueueUpload` per kind, the direct posts, the boot filter keeping the
+    log, Mimic's list and launch env, the dashboard switch); existing harnesses that slice the agent gained an `_isGuestChar` stub.
+
 - **🧪 "Vision restored" waits for the real end of a blind (agent 4.0.80 beta, 2026-11-09).** The guild lead, on Azobian the
   Darklord: *"vision restored hits too early"*. Infernal Darkness (spell 3049) is 2 ticks with no fade line, so the catalog
   timer (12 s from the landing) was the only end and fired while the screen was still black (a buff runs to the server tick).
