@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-121-2026-11-09',
+    title: 'Web 2.1.121',
+    version: 'Web 2.1.121',
+    date: '2026-11-09',
+    headline: 'The site menus open over the Raid Mimic video.',
+    features: [],
+    fixes: [
+      'On the Raid Mimic page, the Skip video button no longer sits on top of an open site menu.',
+    ],
+  },
+  {
     key: 'web-2-1-119-2026-11-09',
     title: 'Web 2.1.119',
     version: 'Web 2.1.119',
