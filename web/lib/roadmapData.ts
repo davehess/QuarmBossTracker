@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-112-2026-11-09',
+    title: 'Web 2.1.112',
+    version: 'Web 2.1.112',
+    date: '2026-11-09',
+    headline: 'Load your characters on Raid Mimic from the file Zeal saves when you camp.',
+    features: [
+      { name: 'My characters (new, beta)', blurb: 'Sign in on raidmimic.com, drop in your Name-PoPFlags.txt files, and each character shows its Planes of Power flags and what it needs next. Up to 8 characters per player. Only you can see them.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'bot-4-0-60-2026-11-09',
     title: 'Bot 4.0.60',
     version: 'Bot 4.0.60 · Web 2.1.111',
