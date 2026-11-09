@@ -74,6 +74,10 @@
     // uses its own delay (EQMacEmu Client::SetAttackTimer). The guild lead, 2026-11-09, trying Ribcracker (secondary only,
     // 1H blunt, delay 25) after Primal Velium Fist Wraps (delay 20).
     offDelay: 0,
+    // /pipe weave1hb marks the one-hand-blunt set (Ribcracker): its offhand delay. /pipe weave2hb is the empty offhand slot,
+    // bare fists (the table). Plain /pipe weave keeps offDelay. (The guild lead, 2026-11-09: "we can make two pipes one with
+    // /pipe weave, /pipe weave1hb, /pipe weave2hb" ... "the 2hb hit should just be an empty offhand slot" ... "for comparison".)
+    offDelay1hb: 25,
     // Sounds for a press's outcome (2026-11-09: "lets add some sounds into ours"): names from Mimic's sound library, '' = none.
     sndLanded: 'weave-punch', sndBig: 'weave-smash', sndClip: 'weave-thud', sndVol: 0.8, bigHit: 200,
   };
@@ -101,6 +105,7 @@
       race: String(c.race || '').toLowerCase() === 'iksar' ? 'iksar' : 'human',
       epic: !!c.epic,
       offDelay: intIn(c.offDelay, 0, 60, 0),
+      offDelay1hb: intIn(c.offDelay1hb, 1, 60, 25),
       sndLanded: sndName(c.sndLanded, DEFAULT_CFG.sndLanded), sndBig: sndName(c.sndBig, DEFAULT_CFG.sndBig),
       sndClip: sndName(c.sndClip, DEFAULT_CFG.sndClip),
       sndVol: (function (v) { v = Number(v); return isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_CFG.sndVol; })(c.sndVol),
@@ -219,6 +224,7 @@
     this.onAttempt = null;   // set by the hub: each record goes to Mimic's capture file
     this.hasteN = null; this.hasteAt = null; this.statsDelay = null;   // from /mystats (mystats())
     this.notice = null;
+    this.weaveTag = '';   // the set the last /pipe weave<set> named (marker())
     this.fresh();
   }
   // Words that are not swings at all, so never offered as "your swings say …".
@@ -227,7 +233,7 @@
   WeaveEngine.prototype.fresh = function () {
     this.last2H = null; this.last2HLine = null; this.lastFist = null; this.lastFistLine = null;
     this.samples = []; this.lastSwingAt = null; this.pending = null; this.offBand = []; this.divStreak = 0;
-    this.lastPress = null; this.outcome = null; this.tally = { presses: 0, landed: 0, clips: 0, misses: 0, voided: 0, open: 0,
+    this.lastPress = null; this.outcome = null; this.tally = { presses: 0, landed: 0, clips: 0, misses: 0, voided: 0, open: 0, bySet: {},
       // Basketweaver's terms (2026-11-09): 2H rounds and how many carried a weave, bonus (fist) attacks tried and hit, the
       // damage the weaved fists did, and the press's reaction (press - the window opening).
       rounds: 0, fistTried: 0, fistHit: 0, weaveDmg: 0, reactSum: 0, reactN: 0 };
@@ -265,7 +271,7 @@
   WeaveEngine.prototype.core = function () {
     var iv = this.interval2H(), haste = this.twoHDelay() * 100 / iv;
     return { last2H: this.last2H, lastFist: this.lastFist, interval2H: iv, haste: haste,
-      fistInterval: (this.cfg.offDelay || handToHandDelay(this.cfg)) * 100 / haste, marginMs: this.cfg.marginMs };
+      fistInterval: (this.offDelayFor(this.weaveTag) || handToHandDelay(this.cfg)) * 100 / haste, marginMs: this.cfg.marginMs };
   };
   WeaveEngine.prototype._resolve = function (kind, at) {
     var p = this.pending;
@@ -278,6 +284,12 @@
       if (p.open != null && p.firstT >= p.open) { this.tally.reactSum += p.firstT - p.open; this.tally.reactN++; }
       this.outcome.dmg = p.fistDmg || 0;
     } else if (kind === 'clip') this.tally.clips++; else if (kind === 'open') this.tally.open++; else this.tally.misses++;
+    // Per set the macro named (/pipe weave, weave1hb, weave2hb), for the comparison the guild lead asked for.
+    if (p.tag != null) {
+      var bs = this.tally.bySet[p.tag] || (this.tally.bySet[p.tag] = { n: 0, landed: 0, clips: 0, misses: 0, weaveDmg: 0 });
+      bs.n++;
+      if (kind === 'landed') { bs.landed++; bs.weaveDmg += p.fistDmg || 0; } else if (kind === 'clip') bs.clips++; else if (kind === 'miss') bs.misses++;
+    }
     this._record(p, kind, at, null);
   };
   // Every attempt, the good ones too (the guild lead, 2026-11-09: "capture the successful weave attempts as well"): when it
@@ -289,7 +301,7 @@
       marked: !!p.marked, phase: p.phase || null, open: p.open, close: p.close, last2H: p.last2H, lastFist: p.lastFist,
       fist: p.fist, expected2H: p.expected, actual2H: (kind === 'landed' || kind === 'clip') ? at : null,
       interval2H: Math.round(c.interval2H), fistInterval: Math.round(c.fistInterval), measured: this.measured(),
-      fistDmg: p.fistDmg || 0, fistMissed: !!p.fistMissed, reaction: p.open != null ? p.firstT - p.open : null };
+      tag: p.tag != null ? p.tag : null, fistDmg: p.fistDmg || 0, fistMissed: !!p.fistMissed, reaction: p.open != null ? p.firstT - p.open : null };
     this.attempts.push(rec);
     if (this.attempts.length > 50) this.attempts.shift();
     if (typeof this.onAttempt === 'function') { try { this.onAttempt(rec); } catch (e) { /* a writer must never break timing */ } }
@@ -398,7 +410,21 @@
   };
   // `/pipe weave` in the macro (the guild lead, 2026-11-09: "i can add a /pipe weave into the mix as well after the attempts
   // happen"): Zeal sends it as a custom pipe object; it marks the press for certain. Close to the loads it joins their press.
-  WeaveEngine.prototype.marker = function (t) { this._press(t, 'marker'); return true; };
+  // The set the macro names ('', '1hb', '2hb', or any short word) is kept on the press and becomes the set the next
+  // window is timed for: a marker comes last in the macro, so it cannot change the press it ends.
+  WeaveEngine.prototype.marker = function (t, tag) {
+    this._press(t, 'marker');
+    tag = String(tag || '').toLowerCase().slice(0, 8);
+    if (this.pending) this.pending.tag = tag;
+    this.weaveTag = tag;
+    return true;
+  };
+  // The offhand delay for a set: 1hb = the one-hand-blunt weapon, 2hb = the empty slot (0 = bare fists), else the setting.
+  WeaveEngine.prototype.offDelayFor = function (tag) {
+    if (tag === '1hb') return this.cfg.offDelay1hb;
+    if (tag === '2hb') return 0;
+    return this.cfg.offDelay;
+  };
   WeaveEngine.prototype._press = function (t, how) {
     var p = this.pending;
     if (p && t - p.lastLoad <= PRESS_GROUP_MS) {   // the macro's second load, or its /pipe weave
@@ -441,7 +467,7 @@
   };
   // The tally plus what follows from it: added DPS (the weaved fists' damage over the fight so far) and the average reaction.
   WeaveEngine.prototype.summary = function (now) {
-    var t = Object.assign({}, this.tally);
+    var t = Object.assign({}, this.tally, { bySet: JSON.parse(JSON.stringify(this.tally.bySet)) });
     var end = this.lastSwingAt != null ? Math.max(this.lastSwingAt, Math.min(now, this.lastSwingAt + 3000)) : now;
     var secs = this.fightStart != null ? Math.max(1, (end - this.fightStart) / 1000) : 1;
     t.addedDps = Math.round(t.weaveDmg / secs);
@@ -512,9 +538,10 @@
         if (!d || typeof d.text !== 'string') return false;
         // Type 4 is Zeal's custom pipe object, written by `/pipe <text>`: `/pipe weave` in the macro marks the press.
         if (obj.type === 4) {
-          if (!/^weave\b/i.test(d.text.trim())) return false;
+          var mk = /^weave([a-z0-9]{0,8})$/i.exec(d.text.trim());
+          if (!mk) return false;
           if (!e) { e = entry(obj.character, true); e.lastPipe = now; }
-          e.eng.marker(now);
+          e.eng.marker(now, mk[1]);
           if (now - e.sentAt >= SEND_MS) { e.wasActive = true; emit(e, e.eng.snapshot(now), now); }
           return true;
         }

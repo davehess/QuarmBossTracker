@@ -1082,3 +1082,52 @@ describe('the HUD names the words by hand, not fists', () => {
     expect(me).not.toContain("'Fist verbs'");
   });
 });
+
+// 2026-11-09, the guild lead: "we can make two pipes one with /pipe weave, /pipe weave1hb, /pipe weave2hb" — "the 2hb hit should
+// just be an empty offhand slot" — "for comparison". The marker names the set; it times the NEXT window and tags the attempt.
+describe('/pipe weave, weave1hb, weave2hb: three sets compared', () => {
+  const IVB = 1530;
+  function rig() {
+    let t = 1_000_000; const recs = [];
+    const hub = W.createWeaveHub({ send: () => {}, now: () => t, onAttempt: (r) => recs.push(r) });
+    hub.setEnabled(true);
+    hub.setConfig('Aldenmar', { character: 'Aldenmar', cls: 'monk', level: 65, twoHDelay: 30, offDelay: 20, offDelay1hb: 25 });
+    const chat = (text, colour = 265) => hub.note({ type: 0, character: 'Aldenmar', data: JSON.stringify({ type: colour, text }) });
+    const pipe = (text) => hub.note({ type: 4, character: 'Aldenmar', data: JSON.stringify({ text }) });
+    return { chat, pipe, step: (ms) => { t += ms; hub.tick(); }, recs, eng: () => hub.engines.get('aldenmar').eng };
+  }
+  function warm(r) { for (let i = 0; i < 5; i++) { r.chat('crush a blood raven for 120'); r.step(IVB); } r.step(-IVB + 120); }
+  function weave(r, offLine, marker) {
+    r.chat('Loading bandolier set [1]', 1011); r.step(100); r.chat(offLine); r.step(150);
+    r.chat('Loading bandolier set [2]', 1011); r.pipe(marker); r.step(IVB - 370); r.chat('crush a blood raven for 120'); r.step(50);
+  }
+  const off = (r) => Math.round(r.eng().core().fistInterval * 3000 / (100 * IVB));   // back to the offhand delay
+
+  it('each marker sets the window for the next press: weave = the setting (20), weave1hb = 25, weave2hb = bare fists (20 at 65 human)', () => {
+    const r = rig(); warm(r);
+    expect(off(r)).toBe(20);
+    weave(r, 'strike a blood raven for 49', 'weave1hb');
+    expect(off(r)).toBe(25);
+    weave(r, 'crush a blood raven for 74', 'weave2hb');
+    expect(off(r)).toBe(20);
+    expect(r.eng().offDelayFor('2hb')).toBe(0);   // 0 = the bare-hand table
+  });
+  it('every attempt carries its set, and the tally keeps a count per set', () => {
+    const r = rig(); warm(r);
+    weave(r, 'strike a blood raven for 49', 'weave');
+    weave(r, 'crush a blood raven for 74', 'weave1hb');
+    weave(r, 'punch a blood raven for 30', 'weave2hb');
+    expect(r.recs.map(a => [a.tag, a.outcome])).toEqual([['', 'landed'], ['1hb', 'landed'], ['2hb', 'landed']]);
+    expect(r.eng().summary(Date.now()).bySet).toEqual({
+      '': { n: 1, landed: 1, clips: 0, misses: 0, weaveDmg: 49 },
+      '1hb': { n: 1, landed: 1, clips: 0, misses: 0, weaveDmg: 74 },
+      '2hb': { n: 1, landed: 1, clips: 0, misses: 0, weaveDmg: 30 },
+    });
+  });
+  it('only "weave" plus a short word is a marker; /pipe fd is not', () => {
+    const r = rig(); warm(r);
+    expect(r.pipe('fd')).toBe(false);
+    expect(r.pipe('weave the night away')).toBe(false);
+    expect(r.pipe('weave2hb')).toBe(true);
+  });
+});
