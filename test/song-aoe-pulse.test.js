@@ -246,9 +246,9 @@ describe('FB-57 — the agent reads the flag off the catalog it loaded', () => {
       const fsStub = { existsSync: () => true, readFileSync: (f) => files[f] };
       const block = sliceBlock(src, 'function _loadSpellCatalogFromDisk() {', '\n}\n');
       // eslint-disable-next-line no-new-func
-      return new Function('fs', 'SPELL_CATALOG_FILE', '_catalogHasAe', '_rebuildBuffMatchers', '_rebuildMechanicMatchers', 'console',
+      return new Function('fs', 'SPELL_CATALOG_FILE', '_catalogHasAe', '_catalogHasHaste', '_rebuildBuffMatchers', '_rebuildMechanicMatchers', 'console',
         `let _spellByNameLower = new Map(); let _spellCatalogMeta = null;\n${block}\n_loadSpellCatalogFromDisk();\nreturn _spellCatalogMeta;`)(
-        fsStub, 'cat.json', hasAe, () => {}, () => {}, { log() {}, warn() {} });
+        fsStub, 'cat.json', hasAe, () => false, () => {}, () => {}, { log() {}, warn() {} });
     };
     expect(run([{ id: 1, name: 'A' }, { id: 2, name: 'B', ae: true }])).toMatchObject({ count: 2, hasAe: true });
     expect(run([{ id: 1, name: 'A' }, { id: 2, name: 'B' }])).toMatchObject({ count: 2, hasAe: false });
@@ -256,6 +256,6 @@ describe('FB-57 — the agent reads the flag off the catalog it loaded', () => {
 
   it('the live fetch sets it too', () => {
     const code = stripJs(src);
-    expect(code).toContain('count: data.entries.length, hasAe: _catalogHasAe(data.entries) };');
+    expect(code).toContain('count: data.entries.length, hasAe: _catalogHasAe(data.entries), hasHaste: _catalogHasHaste(data.entries) };');
   });
 });

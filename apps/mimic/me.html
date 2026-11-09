@@ -2022,6 +2022,8 @@
     return { character: s.character, cls: String(s['class'] || '').toLowerCase(), level: s.level,
       // Read from the character (agent /api/me `gear`): the server's own test is Celestial Fists (10652) in the Hands slot.
       race: g.race ? (/iksar/i.test(g.race) ? 'iksar' : 'human') : p.weaveRace, epic: g.hands_id === 10652,
+      // The haste the buffs and gear add up to (agent gear.haste, the server's own sum): the engine knows the new swing time the moment a buff lands or fades.
+      hasteN: g.haste && g.haste.value > 0 ? g.haste.value : null,
       twoHDelay: p.weaveDelay, marginMs: p.weaveSwapMs, offDelay: p.weaveOffDelay === 'fists' ? 0 : p.weaveOffDelay, offDelay1hb: p.weaveOffDelay1hb,
       sndLanded: p.weaveSndLanded, sndBig: p.weaveSndBig, sndClip: p.weaveSndClip, sndVol: Number(p.weaveSndVol), bigHit: p.weaveBigHit, showTally: !!p.weaveTally, twoVerbs: p.weave2hVerbs, fistVerbs: p.weaveFistVerbs };
   }

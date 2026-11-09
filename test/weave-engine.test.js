@@ -804,15 +804,15 @@ describe('weave attempts: captured, marked by /pipe weave, voided by a failed sw
 // Dark Hand Wraps (28949) are armour. The swap's round trip is 400 ms (Basketweaver's measured "Weave Off Delay"), not 150.
 describe('the weave reads the character: epic from the Hands slot, race from /who; the swap time is 400 ms', () => {
   const agentSrc = readSource(path.join(ROOT, 'packages', 'wolfpack-logsync', 'index.js'));
-  const block = sliceBlock(agentSrc, 'function _meGear(character, who) {', '\n  };\n}');
-  const gearOf = (invs, who) => new Function('stats', block + '\nreturn _meGear;')({ characterInventories: invs })('aldenmar', who);
+  const block = sliceBlock(agentSrc, 'function _meGear(character, who, level, st) {', '\n  };\n}');
+  const gearOf = (invs, who) => new Function('stats', '_meHaste', block + '\nreturn _meGear;')({ characterInventories: invs }, () => null)('aldenmar', who);
   it('_meGear: the Hands item, the weapons and /who race, from the inventory the agent already parsed', () => {
     const invs = { Aldenmar: { worn: { Hands: { id: 28949, name: 'Dark Hand Wraps' } },
       weapons: { primary: { id: 26599, name: 'Caen\'s Bo Staff of Fury' } }, _updatedAt: '2026-11-09T17:48:11Z' } };
     expect(gearOf(invs, { race: 'Iksar' })).toEqual({ hands_id: 28949, primary: { id: 26599, name: 'Caen\'s Bo Staff of Fury' },
-      secondary: null, race: 'Iksar', inventory_at: '2026-11-09T17:48:11Z' });
-    expect(gearOf({}, null)).toEqual({ hands_id: null, primary: null, secondary: null, race: null, inventory_at: null });
-    expect(agentSrc).toContain('    gear: _meGear(active, who),');
+      secondary: null, race: 'Iksar', inventory_at: '2026-11-09T17:48:11Z', haste: null });
+    expect(gearOf({}, null)).toEqual({ hands_id: null, primary: null, secondary: null, race: null, inventory_at: null, haste: null });
+    expect(agentSrc).toContain('    gear: _meGear(active, who, level, st),');
   });
   it('the HUD sends epic only for Celestial Fists in Hands, race from /who, and the new swap-time key', () => {
     const me = stripJs(readSource(path.join(MIMIC, 'me.html')));
