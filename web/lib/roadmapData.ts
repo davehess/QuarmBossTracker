@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-114-2026-11-09',
+    title: 'Web 2.1.114',
+    version: 'Web 2.1.114',
+    date: '2026-11-09',
+    headline: 'raidmimic.com: a big Skip on the video; signed in, your characters and what’s next come first.',
+    features: [
+      { name: 'A big Skip on the video', blurb: 'Skip it once and raidmimic.com remembers, with a "Rewatch the video" link at the top whenever you want it back.' },
+      { name: 'Your Raid Mimic, when signed in', blurb: 'Sign in and the front page opens on your characters and what each needs next, instead of the video. The coordination tools we are planning are listed there, marked coming.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-2-1-112-2026-11-09',
     title: 'Web 2.1.112',
     version: 'Web 2.1.112',

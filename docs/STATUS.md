@@ -103,6 +103,13 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧾 raidmimic.com front door: C "Home panel" graduated, b deleted (web 2.1.114 on main, 2026-11-09).** Picked on the Decision
+  Desk 2026-11-09 (DECISIONS §546). Signed out: the story stage with a big "Skip video" at the top, remembered per viewer, and
+  "Rewatch the video" (`#video`) on the collapsed bar. Signed in: "Your Raid Mimic" (their characters, what each needs next, the
+  coordination tools marked coming) instead of the video, with "Rewatch the video" revealing the stage in place. The Doorway
+  redirect, the `?v=` reading and `/characters`' rewatch link are gone; the page reads no query. `loadMine` now lives in
+  `web/lib/hubMine.ts`, shared by the page and `/characters`. `test/raidmimic-skip-video.test.js`.
+
 - **🧾 Hail board: the four elemental Essences (bot 4.0.60 · web 2.1.111 on main, 2026-11-09).** The guild lead: *"hails on
   Essence of Water will give you but not say anything it seems. we should include those hails on the command center for each of
   the elemental planes"*. Coirnav, Fennin Ro, Xegony and the Avatar of Earth open `Essence of Water / Fire / Air / Earth` on the
