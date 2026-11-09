@@ -19,8 +19,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import Nav, { GROUPS, SIMPLE_GROUPS, SubNav } from './Nav';
-import { useNavVariant } from './useNavVariant';
+import Nav, { GROUPS } from './Nav';
 import TimezonePicker from './TimezonePicker';
 import { CHANNELS, ChannelLink } from './HeaderIcons';
 
@@ -45,8 +44,6 @@ export default function SiteHeader({
   search: ReactNode;
 }) {
   const path = usePathname();
-  const variant = useNavVariant();
-  const menuGroups = variant ? SIMPLE_GROUPS : GROUPS;
   const [scrolled, setScrolled] = useState(false);
   const [roomy, setRoomy] = useState(true);
   const [menu, setMenu] = useState(false);
@@ -213,8 +210,6 @@ export default function SiteHeader({
         )}
       </div>
 
-      <SubNav />
-
       {/* The folded half of the bar. Rendered in flow, never over the page. */}
       {compact && menu && (
         <div id="site-menu" className="border-t border-border/60 bg-panel/95 backdrop-blur">
@@ -228,7 +223,7 @@ export default function SiteHeader({
                 💰 OpenDKP <span aria-hidden className="text-[10px] text-dim">↗</span>
               </a>
             </div>
-            {menuGroups.map(g => (
+            {GROUPS.map(g => (
               <div key={g.id} className="mt-3">
                 <div className="mb-1.5 font-mono text-[10px] uppercase tracking-widest text-dim">{g.label}</div>
                 <div className="flex flex-wrap gap-1.5">
