@@ -933,6 +933,7 @@
   // below; the ⚙ in its corner switches each on or off, saved on this
   // computer. Every part has a fixed place on the ring, so switching one off
   // leaves a gap rather than moving the others under the player's eye.
+  var WEAVE_SOUNDS = ['weave-punch', 'weave-smash', 'weave-slash', 'weave-thud', 'slap', 'pop', 'off'];
   var WEAVE_DELAYS = [20, 22, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 38, 40, 42, 45];
   var HUD_PARTS = [
     ['Target', [['target', 'Name, health, level, class'], ['tot', 'Its target (on top)'], ['tres', 'Its resists'], ['status', 'Slow · F/R · summon · enrage']]],
@@ -950,6 +951,12 @@
       // here (2026-11-09: "auto-detect epic fists instead of the checkbox"); the race below is only the fallback.
       ['weaveDelay', 'Your 2H weapon delay', WEAVE_DELAYS], ['weaveSwapMs', 'Swap time, press to 2H back (ms)', [200, 300, 400, 500, 600, 700]],
       ['weaveRace', 'Monk race if /who has not seen you', ['human', 'iksar']],
+      // 2026-11-09 (Ribcracker, secondary only, delay 25; Primal Velium Fist Wraps, delay 20): the weave set's offhand.
+      ['weaveOffDelay', 'Offhand in the weave set: fists, or its weapon delay', ['fists', 16, 18, 19, 20, 21, 22, 23, 24, 25, 26, 28, 30]],
+      // Sounds (2026-11-09: "lets add some sounds into ours"): Mimic's sound library by name; sounds/CREDITS.md.
+      ['weaveSndLanded', 'Sound: weave landed', WEAVE_SOUNDS], ['weaveSndBig', 'Sound: big fist hit', WEAVE_SOUNDS],
+      ['weaveBigHit', 'Big fist hit from', [100, 150, 200, 300, 400]], ['weaveSndClip', 'Sound: clipped', WEAVE_SOUNDS],
+      ['weaveSndVol', 'Weave sound volume', ['0.4', '0.6', '0.8', '1']],
       ['weaveTally', 'Fight tally (on the wide Canvas piece)'],
       ['weave2hVerbs', '2H swing verbs', 'text'], ['weaveFistVerbs', 'Fist verbs', 'text']]],
     ['Hits', [['hitsIn', 'Hits on you (left)'], ['hitsOut', 'Your hits (right)'], ['ds', 'Damage shield'],
@@ -969,7 +976,8 @@
   var HUD_DEFAULTS = { target: 1, tot: 1, status: 1, hp: 1, mana: 1, end: 1, regen: 1, dps: 1, focus: 1, tick: 1, swing: 1, cast: 1, cooldowns: 1,
     hitsIn: 1, hitsOut: 1, ds: 1, procs: 1, rounds: 5, split: 2, hitsSide: 'inside', resists: 1, tres: 1, weight: 'thin',
     track: 1, trackShow: 'all', ramp: 1, lowhp: 1, clickies: 1, clickyRows: 1, clickyPick: [], sizes: {},
-    weave: 'auto', weaveDir: 'down', weaveDelay: 30, weaveSwapMs: 400, weaveRace: 'human', weaveTally: 1,
+    weave: 'auto', weaveDir: 'down', weaveOffDelay: 'fists', weaveSndLanded: 'weave-punch', weaveSndBig: 'weave-smash',
+    weaveBigHit: 200, weaveSndClip: 'weave-thud', weaveSndVol: '0.8', weaveDelay: 30, weaveSwapMs: 400, weaveRace: 'human', weaveTally: 1,
     weave2hVerbs: 'crush, crushes', weaveFistVerbs: 'punch, punches, hit, hits, strike, strikes' };
   // The Weave timer lane is on when picked, or by default for the two classes that hand-to-hand weave. It takes the right
   // arc's place (the mana or endurance BAR; the label beside it stays).
@@ -2008,7 +2016,8 @@
     return { character: s.character, cls: String(s['class'] || '').toLowerCase(), level: s.level,
       // Read from the character (agent /api/me `gear`): the server's own test is Celestial Fists (10652) in the Hands slot.
       race: g.race ? (/iksar/i.test(g.race) ? 'iksar' : 'human') : p.weaveRace, epic: g.hands_id === 10652,
-      twoHDelay: p.weaveDelay, marginMs: p.weaveSwapMs, showTally: !!p.weaveTally, twoVerbs: p.weave2hVerbs, fistVerbs: p.weaveFistVerbs };
+      twoHDelay: p.weaveDelay, marginMs: p.weaveSwapMs, offDelay: p.weaveOffDelay === 'fists' ? 0 : p.weaveOffDelay,
+      sndLanded: p.weaveSndLanded, sndBig: p.weaveSndBig, sndClip: p.weaveSndClip, sndVol: Number(p.weaveSndVol), bigHit: p.weaveBigHit, showTally: !!p.weaveTally, twoVerbs: p.weave2hVerbs, fistVerbs: p.weaveFistVerbs };
   }
   function layoutWeave(s){
     var cv = document.getElementById('weavecv');

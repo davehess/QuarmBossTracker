@@ -1564,6 +1564,8 @@ contextBridge.exposeInMainWorld('mimic', {
   // ~30×/s while a fight is on. Subscribing asks main to send this window (and its frames: the Canvas draws panels in
   // iframes); setWeaveConfig is the HUD builder's settings plus the character's level and race.
   onWeaveState:   (cb)    => { ipcRenderer.send('weave-subscribe'); ipcRenderer.on('weave-state', (_e, st) => cb(st)); },
+  // The weave outcome sounds (2026-11-09), played by the trigger window, the one voice: { name, volume, character, kind }.
+  onWeaveSound:   (cb)    => { ipcRenderer.on('weave-sound', (_e, s) => cb(s)); },
   setWeaveConfig: (cfg)   => ipcRenderer.send('weave-config', cfg),
   // Setup-mode state — pushed to each overlay with its identifying key so
   // the renderer can show the per-window control strip (opacity slider, etc.)
