@@ -88,6 +88,9 @@
     if (!o || o.kind !== 'landed' || now - o.at >= FLASH_MS) return;
     ctx.save(); ctx.globalAlpha = 1 - (now - o.at) / FLASH_MS; ctx.strokeStyle = c.green; ctx.lineWidth = 2; stroke(); ctx.restore();
   }
+  // The engine's latest re-sync (SYNC +180 ms, SPEED 1.65 → 3.65 s, /mystats …), for NOTE_MS after it happened.
+  var NOTE_MS = 2000;
+  function noticeOf(st, now) { var n = st && st.notice; return n && now - n.at < NOTE_MS ? n : null; }
   // The ring's short idle reason, or '' (nothing to say: waiting for a fight is the normal rest state).
   function idleReason(st) {
     if (!st) return '';
@@ -193,6 +196,12 @@
     z.swings.forEach(function (sw) { var a = aOf(sw.at); if (a >= lo && a <= hi) tick(a, c.orange, 1.5, band / 2); });
     tick(hitA, c.text, 1.5, band / 2 + 2 * s);
     weaveFlash(c, ctx, st, now, function () { ctx.lineWidth = band + 4 * s; ctx.beginPath(); ctx.arc(cx, cy, R, rad(a0), rad(a1)); ctx.stroke(); });
+    var an = noticeOf(st, now);
+    if (an) {
+      var np = gx(endA + 14 * sgn);
+      ctx.save(); font(ctx, Math.max(8, 9 * s)); ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.globalAlpha = 1 - (now - an.at) / NOTE_MS;
+      ctx.fillStyle = an.kind === 'speed' ? c.orange : c.blue; ctx.fillText(an.text, np[0], np[1]); ctx.restore();
+    }
     ctx.restore();
     glyph(c, ctx, st, now, gp[0], gp[1], gpx);
   }
@@ -281,6 +290,11 @@
       ctx.fillText('WEAVE' + (o.dmg ? ' +' + o.dmg : ''), w / 2, head / 2); ctx.globalAlpha = 1;
     }
     weaveFlash(c, ctx, st, now, function () { ctx.strokeRect(1, laneTop, w - 2, laneH); });
+    var nt = noticeOf(st, now);
+    if (nt && !(o && (o.kind === 'clip' || o.kind === 'landed') && now - o.at < 1500)) {
+      ctx.globalAlpha = 1 - (now - nt.at) / NOTE_MS; ctx.fillStyle = nt.kind === 'speed' ? c.orange : c.blue; ctx.textAlign = 'center';
+      ctx.fillText(nt.text, w / 2, head / 2); ctx.globalAlpha = 1;
+    }
     ctx.textAlign = 'right';
     var tx = w - 2;
     if (st.cfg && st.cfg.showTally !== false && st.tally && st.tally.presses) {

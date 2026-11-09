@@ -960,3 +960,37 @@ describe('/mystats calibrates the 2H delay', () => {
     expect(s.eng().statsDelay).toBe(30);
   });
 });
+
+// 2026-11-09, the guild lead: Basketweaver "will also 'autocalibrate' when it detects a swing, and then it gets back to correct.
+// we do that too, but it jumps and doesn't say anything". Every re-sync now leaves a notice the painters show for two seconds.
+describe('the timer says when it re-syncs', () => {
+  function eng(gaps, cfg) {
+    const e = new W.WeaveEngine(Object.assign({ cls: 'monk', level: 65, twoHDelay: 30 }, cfg || {}));
+    let t = 1_000_000;
+    e.swing('You crush a gnoll for 200 points of damage.', t);
+    for (const g of gaps) { t += g; e.swing('You crush a gnoll for 200 points of damage.', t); }
+    return { e, t };
+  }
+  it('a 2H swing 180 ms off the prediction: SYNC +180 ms; a 40 ms wobble says nothing', () => {
+    expect(eng([1650, 1650, 1650, 1830]).e.notice).toMatchObject({ kind: 'sync', text: 'SYNC +180 ms' });
+    expect(eng([1650, 1650, 1650, 1690]).e.notice).toBe(null);
+  });
+  it('a new swing speed: SPEED 1.65 → 3.65 s', () => {
+    const n = eng([1650, 1650, 1650, 1650, 3650, 3650]).e.notice;
+    expect(n).toMatchObject({ kind: 'speed', text: 'SPEED 1.65 → 3.65 s' });
+  });
+  it('/mystats: says what it calibrated, or that it will on the next swings', () => {
+    const a = eng([1648, 1648, 1648, 1648]); a.e.mystats(182, a.t);
+    expect(a.e.notice).toMatchObject({ kind: 'stats', text: '/mystats: 2H delay 30, haste 82%' });
+    const b = new W.WeaveEngine({ cls: 'monk', level: 65 }); b.mystats(182, 5);
+    expect(b.notice).toMatchObject({ kind: 'stats', text: '/mystats: haste 82% (calibrates on the next swings)' });
+  });
+  it('the state carries it and the highway and the ring show it', () => {
+    const { e, t } = eng([1650, 1650, 1650, 1830]);
+    expect(e.snapshot(t).notice).toMatchObject({ kind: 'sync' });
+    const d = stripJs(readSource(path.join(MIMIC, 'weaveDraw.js')));
+    expect(d).toContain('function noticeOf(st, now) { var n = st && st.notice; return n && now - n.at < NOTE_MS ? n : null; }');
+    expect(d).toContain('ctx.fillText(nt.text, w / 2, head / 2);');
+    expect(d).toContain('ctx.fillText(an.text, np[0], np[1]);');
+  });
+});

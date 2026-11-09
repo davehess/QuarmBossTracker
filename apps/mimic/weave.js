@@ -184,7 +184,8 @@
   var CLIP_MS = 250;         // the next 2H round later than expected by more than this = clipped
   var FIGHT_GAP_MS = 12000;  // no swing this long: the fight is over, the tally and the samples reset
   var MAX_SAMPLES = 6;
-  var BARE_MISS_2H_MS = 300; // a bare "miss" this close to a predicted 2H swing is that round missing
+  var BARE_MISS_2H_MS = 300;
+  var SYNC_NOTE_MS = 150;   // a 2H swing at least this far from the prediction is a re-sync worth saying // a bare "miss" this close to a predicted 2H swing is that round missing
   // `late` (ms past the expected 2H) is a whole number of swings, give or take CLIP_MS.
   function onBeat(late, iv) { var k = Math.round(late / iv); return k >= 1 && Math.abs(late - k * iv) <= CLIP_MS; }
   var VOID_AFTER_MS = 2500;  // a bandolier failure this soon after the press's last load voids it (a set swaps over a few ticks)
@@ -203,6 +204,7 @@
     this.attempts = [];      // the last 50 attempt records (_record), kept across fights
     this.onAttempt = null;   // set by the hub: each record goes to Mimic's capture file
     this.hasteN = null; this.hasteAt = null; this.statsDelay = null;   // from /mystats (mystats())
+    this.notice = null;
     this.fresh();
   }
   // Words that are not swings at all, so never offered as "your swings say …".
@@ -223,6 +225,8 @@
   // (Client::SetAttackTimer). With N and a measured 2H interval the 2H's real delay follows, and from it the haste at any
   // later interval: the fist window no longer leans on the "2H weapon delay" setting. Kept across fights; a new /mystats
   // recalibrates (another weapon).
+  // The latest re-sync, for the painters to say for a moment: { kind: sync | speed | stats, text, at }.
+  WeaveEngine.prototype._note = function (kind, text, at) { this.notice = { kind: kind, text: text, at: at }; };
   WeaveEngine.prototype.twoHDelay = function () { return this.statsDelay || this.cfg.twoHDelay; };
   WeaveEngine.prototype.interval2H = function () {
     if (this.samples.length >= 3) return median(this.samples);
@@ -232,12 +236,16 @@
     if (!(hasteN > 0 && hasteN < 400)) return false;
     this.hasteN = hasteN; this.hasteAt = t; this.statsDelay = null;
     this._calibrate();
+    if (!this.statsDelay) this._note('stats', '/mystats: haste ' + (hasteN - 100) + '% (calibrates on the next swings)', t);
     return true;
   };
   WeaveEngine.prototype._calibrate = function () {
     if (!this.hasteN || this.statsDelay || !this.measured()) return;
     var d = this.interval2H() * this.hasteN / 10000, r = Math.round(d);
-    if (r >= 10 && r <= 60 && Math.abs(d - r) <= 0.6) this.statsDelay = r;   // a weapon delay is a whole number of tenths
+    if (r >= 10 && r <= 60 && Math.abs(d - r) <= 0.6) {   // a weapon delay is a whole number of tenths
+      this.statsDelay = r;
+      this._note('stats', '/mystats: 2H delay ' + r + ', haste ' + (this.hasteN - 100) + '%', this.lastSwingAt || this.hasteAt || 0);
+    }
   };
   WeaveEngine.prototype.measured = function () { return this.samples.length >= 3; };
   WeaveEngine.prototype.core = function () {
@@ -315,6 +323,12 @@
       }
       if (this.last2H != null) {
         var dt = t - this.last2H, med = this.samples.length >= 3 ? median(this.samples) : null;
+        // Say when the timeline moves (the guild lead, 2026-11-09: Basketweaver "will also autocalibrate when it detects a swing
+        // ... we do that too, but it jumps and doesn't say anything"): a 2H swing this far off the prediction re-syncs it.
+        if (med != null) {
+          var kp = Math.max(1, Math.round(dt / med)), drift = Math.round(dt - kp * med);
+          if (Math.abs(drift) >= SYNC_NOTE_MS && Math.abs(drift) < med / 2) this._note('sync', 'SYNC ' + (drift > 0 ? '+' : '') + drift + ' ms', t);
+        }
         // A gap of two or three swings (rounds we never saw) is that many intervals, not one long one; a clipped interval is
         // longer than the weapon's own, and a gap past a fight break is not an interval.
         var raw = dt, kk = med != null ? Math.round(dt / med) : 1;
@@ -333,7 +347,9 @@
           if (this.offBand.length > 3) this.offBand.shift();
           var ob = this.offBand, a = ob[ob.length - 1], b = ob[ob.length - 2];
           if (b != null && Math.abs(a - b) <= 0.15 * Math.max(a, b)) {
+            var was = this.samples.length >= 3 ? median(this.samples) : null;
             this.samples = [b, a, (a + b) / 2];
+            if (was != null) this._note('speed', 'SPEED ' + (was / 1000).toFixed(2) + ' → ' + ((a + b) / 2000).toFixed(2) + ' s', t);
             this.offBand = []; this.divStreak = 0;
           }
         }
@@ -420,6 +436,7 @@
       cfg: { showTally: this.cfg.showTally, marginMs: this.cfg.marginMs },
       diag: { seen: this.diag.seen, matched: this.diag.matched, lastVerb: this.diag.lastVerb },
       stats: { hasteN: this.hasteN, delay: this.statsDelay, at: this.hasteAt },
+      notice: this.notice,
     };
   };
 
