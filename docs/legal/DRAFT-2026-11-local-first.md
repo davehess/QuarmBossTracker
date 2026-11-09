@@ -167,7 +167,7 @@ Why: "deleted after 7 days" is false if either copy keeps it longer without sayi
 ### 2.8 NEW section "When a guild stops paying"
 
 > ## When a guild stops paying
-> - The guild keeps read access and an **export** for **30 days** [CONFIRM the number] after its last paid day. We tell the
+> - The guild keeps read access and an **export** for **30 days** (decided 2026-11-09, §551) after its last paid day. We tell the
 >   guild's owner before it starts and before it ends.
 > - After that, the data the guild held is deleted, files and index rows both. Players' own PC copies are not touched.
 > - A player's characters go back to the 7-day rule from the day the claim ends.
@@ -244,7 +244,7 @@ Current (T:70-71):
 **This turns false.** Proposed:
 > - **What is sold is the analytics** (raid reviews, merged parses, trends, attendance, flag planning). Storage comes with
 >   them; it is not the product.
-> - **Going back to Free:** you keep an export window of **30 days** [CONFIRM] after your last paid day. Download your
+> - **Going back to Free:** you keep an export window of **30 days** after your last paid day. Download your
 >   guild's data in that time. After it, the data is deleted (see the Privacy policy). Write to us to have it removed sooner.
 
 Why: §547 replaces "keeps forever" with "keeps while it pays".
@@ -314,7 +314,7 @@ Current (R:49):
 > You **keep Pro until the end of the month you have paid for**, then you are back on the free tier.
 
 Proposed, add:
-> Your guild's hosted data stays for a **30-day grace period** [CONFIRM] after that so you can download it. A refund does
+> Your guild's hosted data stays for a **30-day grace period** after that so you can download it. A refund does
 > not change this.
 
 Current (R:56-57): "if your guild did not use Pro that month, you get that charge back." Keep. Nothing else in R changes, and
@@ -333,7 +333,7 @@ Proposed:
 > player's choice, never the guild's.
 
 Current (W:615 area, first rule, "Observations made under your deployment belong to your guild"): add "A guild that stops
-paying has a 30-day [CONFIRM] export window, then its hosted data is deleted."
+paying has a 30-day export window, then its hosted data is deleted."
 
 Current (W:620-621): "A future per-person 'be known' opt-in ... does not exist today." The per-character publish switch is
 that opt-in; update it **only when the switch exists**.
