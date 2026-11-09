@@ -5805,7 +5805,7 @@ function _blindCatalogTexts() {
     const you = e.you ? String(e.you).trim() : '';
     const fade = e.fades ? String(e.fades).trim() : '';
     if (e.blind) {
-      if (you && !youBlind.has(you)) youBlind.set(you, _catalogDurationSec(e.name));
+      if (you && !youBlind.has(you)) youBlind.set(you, { secs: _catalogDurationSec(e.name), name: e.name });
       if (fade) fadeBlind.add(fade);
     } else {
       if (you) youOther.add(you);
@@ -5831,11 +5831,12 @@ function noteBlindLine(line, character) {
       const cl = String(character).toLowerCase();
       const ts = parseEqTimestamp(line);
       const atMs = ts ? ts.getTime() : Date.now();
-      const secs = bt.start.get(msg);
+      const hit = bt.start.get(msg), secs = hit.secs;
       _blindState[cl] = {
         active: true, source: 'npc_blind', since: atMs,
         expiresAt: atMs + (secs ? secs * 1000 : _BLIND_DUR_GENERIC_MS),
         target: _zealTargetForChar(cl) || null, selfHits: 0,
+        spell: hit.name,   // so the Zeal buff window can say when it really ends (_expireStaleBlinds)
       };
       _pushBlindEvent('blind_start', '👁 Blinded' + (secs ? ' — ' + secs + 's' : ''), 'Blinded', atMs);
       return;
@@ -5907,10 +5908,38 @@ function noteBlindLine(line, character) {
 // Time-based auto-expire so a missed fade line doesn't leave the overlay
 // auto-popped forever. Cheap, called from the same lazy spot the dashboard
 // state poll hits.
+// The catalog timer is only a guess at the end: a buff runs to the server's tick, not from its landing line, and
+// some blinds print no fade at all (Infernal Darkness: 2 ticks, `spell_fades` empty, so "Vision restored" came
+// ~12 s after the landing while the screen was still black; the guild lead, 2026-11-09: "vision restored hits too
+// early"). Zeal's buff window is the client's own countdown, so while it still shows the blinding spell the blind
+// stays on, and the moment it leaves the window is the real end. With no fresh Zeal, or a spell Zeal never
+// listed, the timer stands as before.
+const _BLIND_ZEAL_FRESH_MS = 5_000;
+function _zealHasBuff(cl, spell, now) {
+  const norm = (s) => String(s || '').toLowerCase().replace(/['’]/g, '`');
+  const want = norm(spell);
+  for (const ch of Object.keys(_zealState || {})) {
+    if (ch.toLowerCase() !== cl) continue;
+    const st = _zealState[ch];
+    if (!st || !Array.isArray(st.buffs) || !(st.updatedAt && now - st.updatedAt <= _BLIND_ZEAL_FRESH_MS)) return null;
+    return st.buffs.some(b => b && b.name && norm(b.name) === want);
+  }
+  return null;
+}
 function _expireStaleBlinds() {
   const now = Date.now();
   for (const cl of Object.keys(_blindState)) {
     const s = _blindState[cl];
+    if (s && s.active && s.spell) {
+      const z = _zealHasBuff(cl, s.spell, now);
+      if (z === true) { s.zealSeen = true; continue; }   // still in the buff window: still blind
+      if (z === false && s.zealSeen) {                    // it left the window: that is the fade
+        s.active = false;
+        s.endedAt = now;
+        _pushBlindEvent('blind_end', '👁 Vision restored', 'Vision restored', now);
+        continue;
+      }
+    }
     if (s && s.active && s.expiresAt && now > s.expiresAt) {
       s.active = false;
       s.endedAt = now;
