@@ -8358,7 +8358,7 @@ function createCanvasWindow() {
     x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height,
     frame: false, transparent: true, resizable: false, movable: false,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: _wpPrefs('Timers canvas', { nodeIntegrationInSubFrames: true }),
+    webPreferences: _wpPrefs('Timers canvas', { nodeIntegrationInSubFrames: true, backgroundThrottling: false }),   // the Weaving timer piece paints on animation frames too
   });
   canvasWindow.setAlwaysOnTop(true, 'screen-saver');
   canvasWindow.setVisibleOnAllWorkspaces(true);
@@ -8590,7 +8590,9 @@ function createMeOverlay() {
     minWidth: _OVERLAY_MIN_W, minHeight: 90,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: _wpPrefs('Me'),
+    // backgroundThrottling:false: the Weave timer lane paints on animation frames, which Chromium stops for a window it
+    // counts as hidden or occluded (the guild lead, 2026-11-09: "need the weaving to work", the lane idle mid-fight).
+    webPreferences: _wpPrefs('Me', { backgroundThrottling: false }),
   });
   meWindow.setAlwaysOnTop(true, 'screen-saver');
   meWindow.setVisibleOnAllWorkspaces(true);

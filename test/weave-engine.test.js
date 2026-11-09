@@ -488,9 +488,64 @@ describe('wiring', () => {
   });
   it('the painter asks for frames only while a fight is live, and the lane never takes clicks', () => {
     const draw = src('weaveDraw.js');
-    expect(draw).toContain('if (any) raf = root.requestAnimationFrame(frame);');
-    expect(draw.match(/requestAnimationFrame/g).length).toBe(3);   // the guard, the loop, the schedule
+    expect(draw).toContain('if (any) schedule();');
+    expect(draw).toMatch(/if \(root\.requestAnimationFrame\) raf = root\.requestAnimationFrame\(frame\);\s*backup = setTimeout\(frame, 50\);/);
     expect(meHtml).toContain('#weavecv{display:none;position:absolute;pointer-events:none;');
+  });
+});
+
+// 2026-11-09, the guild lead: "need the weaving to work" — the ring's lane sat grey through a fight whose log shows 20 crush and
+// 6 punch rounds (the engine's own words), so the break was between the engine and the paint. Three fixes, each run here.
+describe('the lane paints when frames stop, follows the fighting character, and says why it is idle', () => {
+  function harness({ raf = true, char = 'Aldenmar' } = {}) {
+    const calls = [], texts = [];
+    const ctx = new Proxy({ arc: (x, y, r, a, b) => calls.push({ r, a, b }), fillText: (t) => texts.push(String(t)) },
+      { get: (t, k) => (k in t ? t[k] : () => {}), set: () => true });
+    const attrs = { 'data-wp-weave': 'arc', 'data-wp-arc': '172 56 124', 'data-wp-char': char };
+    const cv = { clientWidth: 400, clientHeight: 400, width: 0, height: 0, getAttribute: (k) => attrs[k] || null, getContext: () => ctx };
+    const win = { WpWeave: W, devicePixelRatio: 1, getComputedStyle: () => ({ getPropertyValue: () => '', fontFamily: 'monospace' }),
+      document: { querySelectorAll: () => [cv], documentElement: {}, body: {} } };
+    if (raf) win.requestAnimationFrame = () => 1;   // frames that never come: a hidden / occluded window
+    // eslint-disable-next-line no-new-func
+    new Function('window', readSource(path.join(MIMIC, 'weaveDraw.js')))(win);
+    return { win, calls, texts };
+  }
+  const live = (character, now) => ({ character, active: true, source: 'zeal',
+    core: { last2H: now - 300, lastFist: null, interval2H: IV, haste: 1.7, fistInterval: 2600 / 1.7, marginMs: 150 } });
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+
+  it('a timer paints within 50 ms when animation frames never fire', async () => {
+    const h = harness({ raf: true });
+    h.win.WpWeaveDraw._onState(live('Aldenmar', Date.now()));
+    expect(h.calls.length).toBe(0);
+    await wait(80);
+    expect(h.calls.length).toBeGreaterThan(1);   // the track plus at least one coloured window
+  });
+  it('a lane named for one character draws another character that IS fighting when its own is not', async () => {
+    const h = harness({ char: 'Aldenmar' });
+    h.win.WpWeaveDraw._onState({ character: 'Aldenmar', active: false, source: 'zeal', core: {}, diag: { seen: 0, matched: 0 } });
+    h.win.WpWeaveDraw._onState(live('Brackwyn', Date.now()));
+    await wait(80);
+    expect(h.calls.length).toBeGreaterThan(1);
+  });
+  it('idle on the ring: "needs Zeal", or the swing word it did not know; nothing at plain rest', async () => {
+    let h = harness();
+    h.win.WpWeaveDraw._onState({ character: 'Aldenmar', active: false, source: 'needs-zeal', core: {} });
+    await wait(80);
+    expect(h.texts).toContain('weave: needs Zeal');
+    h = harness();
+    h.win.WpWeaveDraw._onState({ character: 'Aldenmar', active: false, source: 'zeal', core: {}, diag: { seen: 4, matched: 0, lastVerb: 'bludgeon' } });
+    await wait(80);
+    expect(h.texts.some(t => /swings say "bludgeon"/.test(t))).toBe(true);
+    h = harness();
+    h.win.WpWeaveDraw._onState({ character: 'Aldenmar', active: false, source: 'zeal', core: {}, diag: { seen: 0, matched: 0 } });
+    await wait(80);
+    expect(h.texts.filter(t => /^weave:/.test(t))).toEqual([]);
+  });
+  it('the HUD and the Timers canvas windows are not throttled in the background', () => {
+    const main = stripJs(readSource(path.join(MIMIC, 'main.js')));
+    expect(main).toContain("webPreferences: _wpPrefs('Me', { backgroundThrottling: false }),");
+    expect(main).toContain("_wpPrefs('Timers canvas', { nodeIntegrationInSubFrames: true, backgroundThrottling: false })");
   });
 });
 

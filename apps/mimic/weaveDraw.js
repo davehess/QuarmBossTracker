@@ -32,9 +32,15 @@
   }
   function liveOf(st, now) { return !!(st && st.active && st.core && now - st.rx <= STALE_MS); }
   function canvases() { return root.document ? root.document.querySelectorAll('canvas[data-wp-weave]') : []; }
+  // The canvas's own character first. If that one is not live but another character off the pipe IS fighting, draw that one:
+  // the HUD names the character from the log file and Zeal from the game, and a lane that waits on a name the pipe never
+  // sends stays grey all fight (the guild lead, 2026-11-09: "need the weaving to work").
   function pick(cv) {
-    var ch = cv.getAttribute('data-wp-char');
-    return ch ? (states[lc(ch)] || null) : (latest ? states[latest] : null);
+    var ch = cv.getAttribute('data-wp-char'), own = ch ? (states[lc(ch)] || null) : null;
+    var other = latest ? states[latest] : null, now = Date.now();
+    if (!ch) return other;
+    if (!liveOf(own, now) && liveOf(other, now)) return other;
+    return own;
   }
   function fit(cv) {
     var w = cv.clientWidth, h = cv.clientHeight, d = root.devicePixelRatio || 1;
@@ -70,6 +76,14 @@
     ctx.fillStyle = c[g[1]];
     ctx.fillText(g[0], cx, cy);
     ctx.restore();
+  }
+  // The ring's short idle reason, or '' (nothing to say: waiting for a fight is the normal rest state).
+  function idleReason(st) {
+    if (!st) return '';
+    if (st.source === 'needs-zeal') return 'weave: needs Zeal';
+    var dg = st.diag;
+    if (dg && dg.seen > 0 && dg.matched === 0 && dg.lastVerb) return 'weave: swings say "' + String(dg.lastVerb).slice(0, 12) + '" (HUD ⚙)';
+    return '';
   }
   function note(c, ctx, text, w, h) {
     ctx.save();
@@ -138,6 +152,13 @@
     if (!live) {
       ctx.restore();
       glyph(c, ctx, st, now, gp[0], gp[1], gpx);
+      // Why it is idle, as the Box lane and the Canvas piece already say: the ring's grey arc alone gave no reason (2026-11-09).
+      var why = idleReason(st);
+      if (why) {
+        var wp = gx(a1 + 14);
+        ctx.save(); font(ctx, Math.max(8, 9 * s)); ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = c.dim; ctx.globalAlpha = 0.85; ctx.fillText(why, wp[0], wp[1]); ctx.restore();
+      }
       return;
     }
     var z = WV.zones(st.core, now, 3);
@@ -237,13 +258,23 @@
     (kind === 'highway' ? drawHighway : kind === 'arc' ? drawArc : drawLane)(c, f, st, live, now, cv);
     return live;
   }
+  // Painted on animation frames, with a timer as the backstop: Chromium stops animation frames for a window it counts as
+  // hidden or occluded, and a click-through overlay over a full-screen game can be counted so, which left the lane frozen
+  // on its first idle paint (2026-11-09). Whichever fires first paints; the other is cancelled.
+  var backup = 0;
   function frame() {
-    raf = 0;
+    if (raf && root.cancelAnimationFrame) root.cancelAnimationFrame(raf);
+    if (backup) clearTimeout(backup);
+    raf = 0; backup = 0;
     var now = Date.now(), any = false, list = canvases();
     for (var i = 0; i < list.length; i++) if (drawOne(list[i], now)) any = true;
-    if (any) raf = root.requestAnimationFrame(frame);   // idle = no frames requested
+    if (any) schedule();   // idle = nothing requested
   }
-  function schedule() { if (!raf && root.requestAnimationFrame) raf = root.requestAnimationFrame(frame); }
+  function schedule() {
+    if (raf || backup) return;
+    if (root.requestAnimationFrame) raf = root.requestAnimationFrame(frame);
+    backup = setTimeout(frame, 50);
+  }
 
   function onState(st) {
     if (!st || typeof st.character !== 'string') return;
