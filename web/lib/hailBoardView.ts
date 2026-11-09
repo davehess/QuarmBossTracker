@@ -79,6 +79,23 @@ export const HAIL_BOSSES: HailCfg[] = [
     zone: 'Plane of Earth', zoneShort: 'poeartha',
     npc: 'A Planar Projection', npcKeys: PROJECTION, flagCap: 72,
     done: ['earthb_key_1', 'arbitor_dead'], checklist: null, prior: [] },
+  // The four elemental Essences: a silent hail that hands the element's item (utils/hailBoard.js has the scripts).
+  { id: 'coirnav', name: 'Coirnav the Avatar of Water', names: ['coirnav the avatar of water', 'coirnav'],
+    zone: 'Plane of Water', zoneShort: 'powater',
+    npc: 'Essence of Water', npcKeys: ['essence of water'], flagCap: 72,
+    done: ['coirnav_dead', 'time_1'], checklist: null, prior: [] },
+  { id: 'fennin_ro', name: 'Fennin Ro', names: ['fennin ro the tyrant of fire', 'fennin ro, the tyrant of fire', 'fennin ro'],
+    zone: 'Plane of Fire', zoneShort: 'pofire',
+    npc: 'Essence of Fire', npcKeys: ['essence of fire'], flagCap: 72,
+    done: ['fennin_dead', 'time_1'], checklist: null, prior: [] },
+  { id: 'xegony', name: 'Xegony the Queen of Air', names: ['xegony the queen of air', 'xegony, the queen of air', 'xegony'],
+    zone: 'Plane of Air', zoneShort: 'poair',
+    npc: 'Essence of Air', npcKeys: ['essence of air'], flagCap: 72,
+    done: ['xegony_dead', 'time_1'], checklist: null, prior: [] },
+  { id: 'rathe_council', name: 'The Avatar of Earth', names: ['avatar of earth', 'the avatar of earth'],
+    zone: 'Plane of Earth', zoneShort: 'poearthb',
+    npc: 'Essence of Earth', npcKeys: ['essence of earth'], flagCap: 72,
+    done: ['rathe_dead', 'time_1'], checklist: null, prior: [] },
 ];
 
 export const HAIL_FLAGGERS: HailCfg[] = [
