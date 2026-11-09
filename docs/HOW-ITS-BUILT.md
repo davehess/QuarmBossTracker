@@ -6132,6 +6132,12 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   sets `S.view.rot` every frame (`updateRot` → `rotStep` → `headingRot`); `wpt` / `projectPx` / `unprojectPx` / `screenToServer` / `unturnPx`
   carry it, `headingVec(h, rot)` turns the arrows and slices, `drawCompass` draws the rose and/or edge letters (`cfg.compass`, `cardinalSpots`,
   `roseSpot`). Test: `test/map-heading-up.test.js`.
+- **Map: mini mode** (2026-11-09, Mimic beta draft, `map.html` `body.mini` + the "Mini map" script block, `main.js` `_mapMiniSize`): the map in a circle (`border-radius` clip on
+  `#mapPane`) with twelve button dots on the rim (`#mini`, `.rd`, placed by CSS from `--mini-d` and each dot's `--a`), the zone name above, and a red N on the rim that rides to
+  north (`syncMiniNorth`, written only when the angle moves; the canvas rose is skipped in mini). Each dot clicks its toolbar twin or flips the same `cfg` switch
+  (`miniClick` / `viaBtn`; ring = `cfg.show.aggro`, compass = `setOrient`); `syncMiniDots` reads state off the toolbar by a MutationObserver. Switches: toolbar `#miniBtn`, the ✥ menu's
+  "Mini map" (preload `map-mini-toggle` → main → page `onMapMiniToggle`), a right-click on a dot. Saved as `wp-map-mini`. Window: `map-mini-size` shrinks to 260x260 and keeps the old
+  size in `cfg.mapPreMini`. Full mode never shows it. Test: `test/map-mini.test.js`.
 - **Kite circles on the Map** (2026-10-26, Mimic beta; kite coach 2026-10-15): `apps/mimic/kiteCoach.js` is the pure math (circle fit, laps,
   drift, cause) plus `filterLoops` (Others Live/All by `last_at`, Circles All/My speed/Near me) and `driftForecast`; `map.html` draws it
   (`drawKite`, `visibleLoops`) and owns the three toolbar buttons (`syncKiteBtns`; saved in `cfg.kiteOthers/kiteFilter/kiteDrift`).

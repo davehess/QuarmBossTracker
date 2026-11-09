@@ -7970,3 +7970,17 @@ Mithaniel's notes (:37) and the second reading needs zeks **7** (:57), not 6. Th
 - Parity tests: `test/hub-characters-import.test.js` (file reader vs the agent's `parsePopFlagsFile`, claim rule vs `utils/hubSync.js`, cap, non-export rejected).
 - ⏳ Not run against a live database or a browser; no migration needed (existing columns). Names are 3-24 letters (the table's check), the agent accepts 2+.
 - ⏳ Next in §545: guild raid posts with open slots (step 2).
+
+### 🧾 2026-11-09 — Map: mini mode, a round map with its buttons as dots (Mimic beta draft, awaiting the guild lead's look)
+- The guild lead: *"add a mini mode for the mimic map. keep the quick buttons as dots around, the move icon for pan/zoom, the mobs spawns as a
+  single dot and dot with circle in it toggle. config button, compass rose button that shows the direction, label button"*. `apps/mimic/map.html`
+  (`body.mini`): the map drawn in a circle (a `border-radius` clip on `#mapPane`, no per-frame cost), the zone name above it, and twelve dots on the
+  rim (`#mini`, CSS-placed): Aa labels (all, targets, off), R raider names, ◔ respawn timer rings, •/◉ spawn dot alone or with its aggro ring,
+  + / − zoom, ✋ Pan / zoom (drag to pan, wheel to zoom; not the ✥ window move, which stays), ◎ Follow, ⤢ Fit, ⚙ settings, ▭ leave mini, and a compass
+  dot (its needle points north; click = North up / Heading up). The red N on the rim rides to where north is and takes no click. Each dot clicks its toolbar twin
+  or flips the same `cfg` switch, so there is one copy of each state. In: the toolbar's ◔ Mini, the ✥ right-click menu's "Mini map" (`map-mini-toggle`
+  through main), or right-click a dot. The choice is `wp-map-mini`; the ring choice is `cfg.show.aggro`. Entering asks main for a 260 square
+  (`map-mini-size`, `_mapMiniSize`) and keeps the old size in `cfg.mapPreMini`; leaving restores it from the same top-left corner. Full mode never shows it.
+- ⏳ **Open:** not run in Electron (Chromium via Playwright only: the render and the dot clicks). ⚙ leaves mini mode and opens the full settings
+  (the panel does not fit a circle). Right-click on the map itself is unchanged (centre on you); the mini menu is on the dots. Dots are fixed on the rim, the
+  compass dot included; only the N marker moves. Test: `test/map-mini.test.js`.

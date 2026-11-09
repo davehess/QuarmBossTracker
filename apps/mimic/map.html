@@ -225,6 +225,39 @@
   #clearList .crow:hover{background:rgba(88,166,255,0.14)}
   #clearList .crow .sub{color:var(--wp-dim)}
   #clearList .crow.off .bl{color:#8b949e}
+  /* Mini map (the guild lead, 2026-11-09: "add a mini mode for the mimic map ... keep the quick buttons as dots around"):
+     the map in a circle with its buttons as dots on the rim. The circle is a border-radius clip on #mapPane, so it costs
+     nothing per frame; the dots sit on the rim by CSS alone (rotate out to the radius, rotate back so the glyph stays
+     upright), from --mini-d. Only #mini's own buttons take the mouse. Full mode never shows it (body.mini:not(.full)). */
+  #mini,#miniZone,#miniMenu{display:none}
+  #miniBtn{margin-left:2px}
+  body.full #miniBtn{display:none}
+  body.mini:not(.full){--mini-d:min(calc(100vw - 30px),calc(100vh - 40px))}
+  body.mini:not(.full) #wrap{display:block}
+  body.mini:not(.full) #side,body.mini:not(.full) #cfg,body.mini:not(.full) #tools,body.mini:not(.full) #sideBtn,
+  body.mini:not(.full) #locBar,body.mini:not(.full) .wp-name-chip{display:none !important}
+  body.mini:not(.full) #mapPane,body.mini:not(.full) #mini{position:absolute;left:calc(50% - var(--mini-d) / 2);top:calc(50% - var(--mini-d) / 2 + 6px);
+    width:var(--mini-d);height:var(--mini-d)}
+  body.mini:not(.full) #mapPane{flex:none;border-radius:50%;box-shadow:0 0 0 1.5px rgba(139,148,158,0.75),0 0 0 3px rgba(0,0,0,0.35)}
+  body.mini:not(.full) #mini{display:block;z-index:7;pointer-events:none;--n:0deg}
+  body.mini:not(.full) #miniZone{display:block;position:absolute;top:3px;left:34px;right:34px;text-align:center;font-size:9px;line-height:12px;
+    color:var(--wp-text);text-shadow:0 0 3px black,0 0 2px black;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
+  #mini .rd,#mini #miniN{position:absolute;left:50%;top:50%;transform:rotate(var(--a)) translateY(calc(var(--mini-d) / -2)) rotate(calc(var(--a) * -1))}
+  #mini .rd{width:22px;height:22px;margin:-11px 0 0 -11px;padding:0;border:0;background:transparent;display:flex;align-items:center;justify-content:center;
+    pointer-events:auto;cursor:pointer}
+  #mini .rd i,#mini #miniN{display:flex;align-items:center;justify-content:center;box-sizing:border-box;border-radius:50%;font:normal bold 9px/1 ui-monospace,Consolas,monospace}
+  #mini .rd i{width:14px;height:14px;background:rgba(14,17,22,0.92);border:1px solid rgba(139,148,158,0.85);color:var(--wp-text)}
+  #mini .rd.on i{background:rgba(88,166,255,0.55);border-color:var(--wp-blue);color:white}
+  #mini .rd:hover i,#mini .rd:focus-visible i{border-color:white;color:white}
+  #mini .rd svg{width:10px;height:10px;display:block;transform:rotate(var(--n))}
+  /* The N on the rim: it rides round to wherever north is (heading up turns it), and never takes a click. */
+  #mini #miniN{--a:var(--n);width:16px;height:16px;margin:-8px 0 0 -8px;background:rgba(13,17,23,0.92);border:1px solid rgb(255,107,94);color:rgb(255,107,94);pointer-events:none}
+  #miniMenu{position:fixed;z-index:70;min-width:150px;padding:4px;border-radius:6px;background:rgba(var(--wp-bg-rgb),0.97);
+    border:1px solid rgba(110,118,129,0.5);font-size:10.5px;color:var(--wp-text)}
+  #miniMenu button{display:block;width:100%;text-align:left;margin-top:3px;padding:3px 6px;border-radius:4px;background:rgba(var(--wp-panel-rgb),.9);
+    color:var(--wp-text);border:1px solid rgba(110,118,129,0.45);font:inherit;cursor:pointer}
+  #miniMenu button:first-child{margin-top:0}
+  #miniMenu button:hover{border-color:var(--wp-blue);color:white}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner - same on every overlay)">✥</button>
@@ -274,6 +307,7 @@
         <button class="tb" id="kiteFilterBtn" type="button" hidden title="Which of those circles are drawn. All: every one. My speed: only circles with about your own lap time (within 25% of your current circle's). Near me: only circles whose centre is within 300 units of where you stand.">Circles: All</button>
         <button class="tb" id="kiteDriftBtn" type="button" hidden title="Where your circle will be if its drift holds. Off: just the numbers. On: an arrow along the drift to a thin ring where the circle lands, with how many laps and seconds that is.">Drift: off</button>
         <button class="tb" id="modeBtn" type="button" title="Full screen: the Map covers EverQuest's window and you click straight through it to the game. Window: the Map is a window you place, as before. The same switch as ⚙ → Mode and the tray.">▣ Full</button>
+        <button class="tb" id="miniBtn" type="button" title="Mini map: the map in a small circle with its buttons as dots round the rim, in a small square window. Click again (or the ▭ dot, or right-click a dot) to go back to the full Map and its old size. The same switch as the ✥ right-click menu's Mini map.">◔ Mini</button>
         <button class="tb" id="cfgBtn" type="button" title="Map settings: what is drawn, the height ranges, the ability icons, colours and the background">⚙</button>
       </div>
       <button class="tb" id="sideBtn" type="button" title="Slide the respawn timers list in or out. Slid in, the map takes the whole width.">Timers ▸</button>
@@ -287,6 +321,25 @@
         <div id="clearBar"><span id="clearHint">Drag to mark an area to keep clear · ✕ removes a box</span><button id="clearAll" type="button">Clear all</button><button id="clearDone" type="button">Done</button></div>
       </div>
     </div>
+      <!-- Mini map: the zone name and the rim dots (buttons, so the locked window is click-through between them). Angles run
+           clockwise from the top; the moving N is not a button. See the Mini map block in the script. -->
+      <div id="miniZone"></div>
+      <div id="mini" role="toolbar" aria-label="Mini map controls">
+        <span id="miniN" aria-hidden="true">N</span>
+        <button class="rd" id="mdLabels" type="button" style="--a:24deg"><i>Aa</i></button>
+        <button class="rd" id="mdRaiders" type="button" style="--a:50deg"><i>R</i></button>
+        <button class="rd" id="mdTimers" type="button" style="--a:76deg"><i>◔</i></button>
+        <button class="rd" id="mdRing" type="button" style="--a:102deg"><i>•</i></button>
+        <button class="rd" id="mdZoomIn" type="button" style="--a:130deg" title="Zoom in" aria-label="Zoom in"><i>+</i></button>
+        <button class="rd" id="mdZoomOut" type="button" style="--a:154deg" title="Zoom out" aria-label="Zoom out"><i>−</i></button>
+        <button class="rd" id="mdPan" type="button" style="--a:182deg"><i>✋</i></button>
+        <button class="rd" id="mdFollow" type="button" style="--a:210deg"><i>◎</i></button>
+        <button class="rd" id="mdFit" type="button" style="--a:234deg"><i>⤢</i></button>
+        <button class="rd" id="mdCfg" type="button" style="--a:258deg"><i>⚙</i></button>
+        <button class="rd" id="mdExit" type="button" style="--a:286deg" title="Back to the full Map" aria-label="Back to the full Map"><i>▭</i></button>
+        <button class="rd" id="mdNorth" type="button" style="--a:322deg"><i><svg viewBox="0 0 10 10" aria-hidden="true"><polygon points="5,0.5 7.4,5 2.6,5" fill="rgb(255,107,94)"/><polygon points="5,9.5 7.4,5 2.6,5" fill="rgb(201,209,217)"/></svg></i></button>
+      </div>
+      <div id="miniMenu" data-wp-interact></div>
       <!-- ⚙ Map settings (the guild lead, 2026-10-12: "a config section for the map that pops up similar to the hud's").
            Rows are built in JS from CFG_SHOW / CFG_GLYPHS / CFG_COLS; data-wp-interact arms the click-through window. -->
       <div id="cfg" hidden data-wp-interact>
@@ -1871,6 +1924,7 @@
     var on = S.panMode || (_unlocked && S.mode !== 'full');   // Full is click-through always: unlocking does not wall off the game
     if (on) stage.setAttribute('data-wp-interact', ''); else stage.removeAttribute('data-wp-interact');
     document.getElementById('panBtn').classList.toggle('on', S.panMode);
+    var mdp = document.getElementById('mdPan'); if (mdp) mdp.classList.toggle('on', S.panMode);   // the mini map's Pan / zoom dot
   }
 
   // ── map prep: walls into typed arrays per floor, already in the screen frame ──
@@ -3317,7 +3371,7 @@
         ctx.closePath(); ctx.fillStyle = CO.you; ctx.fill(); ctx.lineWidth = 1.2; ctx.strokeStyle = '#ffffff'; ctx.stroke();
       }
     }
-    drawCompass(rot);
+    if (S.miniOn) syncMiniNorth(rot); else drawCompass(rot);   // the mini map's compass is the N on its rim, not a rose on the canvas
     if (!animating || rt - lastHits >= HITS_MS) { lastHits = rt; layoutHits(SH.dots ? vis : trapSpots); layoutTrapHits(trapHits); layoutCorpseHits(corpseVis); }   // hidden points take no clicks (a trap spot is still a △ with Spawn points off)
     if (posAgeEl && rt - lastAge >= 200) { lastAge = rt; posAgeEl.textContent = S.sampleAt ? posAgeText(rt - S.sampleAt, S.sampleSrc) : ''; }
     if (rt - lastLoc >= 200) { lastLoc = rt; updateLocBar(rt); }
@@ -3629,6 +3683,8 @@
     var zEl = document.getElementById('zone'), cp = copyLabel(P && P.copy, Date.now());   // who_at is the agent's own clock, not the skewed map clock
     zEl.textContent = ((P && (P.long_name || P.zone)) ? (P.long_name || P.zone) : 'Map') + (cp ? ' · ' + cp.text : '');
     zEl.title = cp ? cp.title : '';
+    var mz = document.getElementById('miniZone'), mzt = (P && (P.long_name || P.zone)) ? (P.long_name || P.zone) : 'Map';
+    if (mz && mz.textContent !== mzt) mz.textContent = mzt;   // the mini map's zone name (written only when it changes)
     var tg = document.getElementById('tgt');
     if (P && P.target) tg.textContent = '◎ ' + P.target.name + (P.target.dist != null ? ' · ' + (rangeText(targetRange(P.self, P.target)) || P.target.dist) : (P.target.x == null ? ' · no position' : '')) + (P.target.point_id != null ? ' → pinned' : '') + (P.target.tot ? ' · on ' + P.target.tot.name : '');
     else tg.textContent = '';
@@ -3977,7 +4033,7 @@
   } catch (e) {}
   // ⚙ Map settings: built from CFG_SHOW / CFG_GLYPHS / CFG_COLS on first open, saved on every change.
   var cfgEl = document.getElementById('cfg'), cfgBtn = document.getElementById('cfgBtn');
-  function cfgCommit() { saveCfg(); applyCfgCss(); syncAggroBtn(); syncDotsBtn(); syncNamesBtn(); syncKiteBtns(); syncOrientBtn(); syncRouteNote(); syncClearCtl(); rebuildClear(); }
+  function cfgCommit() { saveCfg(); applyCfgCss(); syncAggroBtn(); syncDotsBtn(); syncNamesBtn(); syncKiteBtns(); syncOrientBtn(); syncRouteNote(); syncClearCtl(); syncMiniDots(); rebuildClear(); }
   // ◯ on the toolbar (the guild lead, 2026-10-13: "add aggro rings onto the map, make a circle icon on the main
   // screen"): the same switch as ⚙ → Show → Aggro rings.
   var aggroBtn = document.getElementById('aggroBtn');
@@ -4254,6 +4310,118 @@
     if (S.p && S.p.self) { var s = toScreen(S.p.self.x, S.p.self.y); S.view.cx = s.sx; S.view.cy = s.sy; renderMap(); }
   });
 
+  // ── Mini map (the guild lead, 2026-11-09: "add a mini mode for the mimic map. keep the quick buttons as dots around, the
+  // move icon for pan/zoom, the mobs spawns as a single dot and dot with circle in it toggle. config button, compass rose
+  // button that shows the direction, label button") ──
+  // The map in a circle (CSS: body.mini), a small square window (main: map-mini-size, the old size comes back on the way
+  // out), and the buttons as dots on the rim. Every dot drives the SAME state as its toolbar twin: it clicks that button (or
+  // flips the same cfg switch), so nothing here keeps a second copy. ✥ stays the window move; the ✋ dot is Pan / zoom.
+  //   Aa labels (all > targets > off)  R raider names  ◔ respawn timer rings  •/◉ spawn dot alone / with its aggro ring
+  //   + − zoom  ✋ pan/zoom  ◎ follow  ⤢ fit  ⚙ settings (leaves mini, opens them)  ▭ leave mini  ◇ compass (north up / heading up)
+  // The N on the rim rides to where north is. Saved as wp-map-mini; the ring choice is cfg.show.aggro (wp-map-cfg).
+  var miniEl = document.getElementById('mini'), miniMenuEl = document.getElementById('miniMenu'), miniBtn = document.getElementById('miniBtn');
+  var miniNorthA = null, miniMenuT = 0;
+  S.mini = lsGet('wp-map-mini') === '1'; S.miniOn = false;
+  function miniWanted() { return !!S.mini && S.mode !== 'full' && !PART_TIMERS; }
+  function setAttrIf(e, k, v) { if (e && e.getAttribute(k) !== v) e.setAttribute(k, v); }
+  function setTextIf(e, t) { if (e && e.textContent !== t) e.textContent = t; }
+  function syncMiniDots() {   // reads the state off the toolbar twins, so a change from anywhere shows on the rim
+    if (!miniEl) return;
+    var on = function (id, v) { var e = document.getElementById(id); if (e && e.classList.contains('on') !== !!v) e.classList.toggle('on', !!v); };
+    var q = function (id) { var e = document.getElementById(id); return !!(e && e.classList.contains('on')); };
+    on('mdLabels', S.labels !== 'off'); on('mdRaiders', q('namesBtn')); on('mdTimers', S.cfg.show.timers !== false);
+    on('mdRing', !!S.cfg.show.aggro); on('mdFollow', !!S.follow); on('mdNorth', S.cfg.orient === 'heading');
+    var ring = document.getElementById('mdRing');
+    setTextIf(ring && ring.firstChild, S.cfg.show.aggro ? '◉' : '•');
+    setTextIf(document.getElementById('mdLabels').firstChild, S.labels === 'targets' ? 'T' : 'Aa');
+    var t = function (id, s) { var e = document.getElementById(id); setAttrIf(e, 'title', s); setAttrIf(e, 'aria-label', s); };
+    t('mdLabels', 'Labels: ' + S.labels + ' (click: all, targets, off)');
+    t('mdRaiders', 'Raider names: ' + (q('namesBtn') ? 'on' : 'off'));
+    t('mdTimers', 'Respawn timer rings: ' + (S.cfg.show.timers !== false ? 'on' : 'off'));
+    t('mdRing', S.cfg.show.aggro ? 'Spawns: each dot with its aggro ring (click for the dot alone)' : 'Spawns: a single dot each (click to add the aggro ring)');
+    t('mdPan', 'Pan / zoom the map (not the window move ✥): ' + (S.panMode ? 'on, drag the map to pan, wheel to zoom' : 'off, click to turn on; wheel over this dot zooms, drag from it pans'));
+    t('mdFollow', document.getElementById('followBtn').textContent + ' (click to change)');
+    t('mdFit', document.getElementById('fitBtn').textContent + ' (click to cycle zone, group, raid)');
+    t('mdCfg', 'Map settings (leaves the mini map)');
+    t('mdNorth', S.cfg.orient === 'heading' ? 'Heading up: the N on the rim is north. Click for North up' : 'North up: the N on the rim is north. Click for Heading up');
+  }
+  function syncMiniNorth(rot) {   // where north points on screen, in degrees clockwise from the top; written only when it moves
+    var n = turnVec(0, -1, rot), a = Math.round(Math.atan2(n.dx, -n.dy) * 180 / Math.PI * 2) / 2;
+    if (a === miniNorthA || !miniEl) return;
+    miniNorthA = a; miniEl.style.setProperty('--n', a + 'deg');
+  }
+  function syncMini(first) {
+    var on = miniWanted(), was = !!S.miniOn;
+    S.miniOn = on;
+    document.body.classList.toggle('mini', on);
+    miniBtn.classList.toggle('on', !!S.mini);
+    if (on) syncMiniDots();
+    if (on !== was) { closeMiniMenu(); if (!first) resize(); }   // at load the stage's ResizeObserver does it (the clear-area code below is not set up yet)
+  }
+  // Entering asks main for the small square window and remembers the old size; leaving gives it back. Answers when main has.
+  function setMini(on) {
+    on = !!on;
+    if (on === !!S.mini) return Promise.resolve();
+    S.mini = on; lsSet('wp-map-mini', on ? 1 : 0);
+    if (on && cfgOpen()) setCfgOpen(false);
+    syncMini();
+    var ask = S.mode !== 'full' && window.mimic && window.mimic.mapMiniSize;
+    return ask ? Promise.resolve(window.mimic.mapMiniSize(on)).catch(function () {}) : Promise.resolve();
+  }
+  miniBtn.addEventListener('click', function () { setMini(!S.mini); });
+  window.mimic && window.mimic.onMapMiniToggle && window.mimic.onMapMiniToggle(function () { setMini(!S.mini); });
+  var miniClick = function (id, fn) { document.getElementById(id).addEventListener('click', function () { fn(); syncMiniDots(); }); };
+  var viaBtn = function (btnId) { return function () { document.getElementById(btnId).click(); }; };
+  miniClick('mdLabels', viaBtn('labelsBtn'));
+  miniClick('mdRaiders', viaBtn('namesBtn'));
+  miniClick('mdRing', viaBtn('aggroBtn'));
+  miniClick('mdFollow', viaBtn('followBtn'));
+  miniClick('mdFit', viaBtn('fitBtn'));
+  miniClick('mdNorth', viaBtn('orientBtn'));   // the same North up / Heading up switch as the toolbar and ⚙ → Map up
+  miniClick('mdTimers', function () { S.cfg.show.timers = S.cfg.show.timers === false; if (cfgBuilt) buildCfg(); cfgCommit(); });
+  miniClick('mdZoomIn', function () { zoomBy(-200, null, null); });
+  miniClick('mdZoomOut', function () { zoomBy(200, null, null); });
+  miniClick('mdExit', function () { setMini(false); });
+  miniClick('mdCfg', function () { setMini(false).then(function () { setTimeout(function () { setCfgOpen(true); }, 150); }); });   // no room for the panel in the circle: back to the full Map, then open it
+  // ✋ Pan / zoom: the same as the toolbar's button - a click switches Pan on (the whole circle drags and wheel-zooms), the wheel
+  // over the dot zooms and a drag from it pans even while the map is locked.
+  var mdPanEl = document.getElementById('mdPan');
+  mdPanEl.addEventListener('click', function () {
+    if (S.panDragged) { S.panDragged = false; return; }
+    S.panMode = !S.panMode; syncInteract(); syncMiniDots();
+  });
+  mdPanEl.addEventListener('wheel', function (e) { e.preventDefault(); zoomBy(e.deltaY, null, null); }, { passive: false });
+  mdPanEl.addEventListener('mousedown', function (e) {
+    if (e.button !== 0) return;
+    closeMenu(); closeMiniMenu();
+    S.drag = { x: e.clientX, y: e.clientY, cx: S.view.cx, cy: S.view.cy, moved: false, btn: true };
+  });
+  // Right-click a dot: centre on you, leave mini, settings. (The ✥ right-click menu has Mini map too, for the way back in.)
+  function closeMiniMenu() { clearTimeout(miniMenuT); if (miniMenuEl) miniMenuEl.style.display = 'none'; }
+  function miniMenuItem(label, fn) {
+    var b = el('button', null, label); b.type = 'button';
+    b.addEventListener('click', function () { closeMiniMenu(); fn(); });
+    miniMenuEl.appendChild(b);
+  }
+  miniEl.addEventListener('contextmenu', function (e) {
+    e.preventDefault();
+    miniMenuEl.innerHTML = '';
+    miniMenuItem('Centre on you', function () {
+      if (S.p && S.p.self) { var s = toScreen(S.p.self.x, S.p.self.y); S.view.cx = s.sx; S.view.cy = s.sy; renderMap(); }
+    });
+    miniMenuItem('Leave the mini map', function () { setMini(false); });
+    miniMenuItem('Map settings', function () { document.getElementById('mdCfg').click(); });
+    miniMenuEl.style.display = 'block';
+    var bw = miniMenuEl.offsetWidth, bh = miniMenuEl.offsetHeight;
+    miniMenuEl.style.left = Math.max(2, Math.min(e.clientX, window.innerWidth - bw - 2)) + 'px';
+    miniMenuEl.style.top = Math.max(2, Math.min(e.clientY, window.innerHeight - bh - 2)) + 'px';
+    clearTimeout(miniMenuT); miniMenuT = setTimeout(closeMiniMenu, 6000);
+  });
+  try {   // a toolbar twin changing (follow, labels, fit, north, ...) repaints the rim; nothing runs per frame
+    new MutationObserver(syncMiniDots).observe(toolsEl, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class'] });
+  } catch (e) {}
+  syncMini(true);
+
   // ── Window / Full mode, and the keep-clear areas ─────────────────────────────────────────────────────────────────
   // Main owns the mode (cfg.mapMode) because the tray and the dashboard flip it too: this page asks main to change it,
   // and follows what main says. Full lays the window over EverQuest and makes it click-through (main.js _setMapMode);
@@ -4270,7 +4438,7 @@
     modeBtn.textContent = full ? '▢ Window' : '▣ Full';
     modeBtn.classList.toggle('on', full);
     cfgModeSel.value = S.mode;
-    syncInteract(); syncClearCtl();
+    syncInteract(); syncClearCtl(); syncMini();   // Full never shows the mini map
     resize();
   }
   function applyMode(m) {
