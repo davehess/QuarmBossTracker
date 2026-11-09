@@ -10,6 +10,7 @@ import { headers } from 'next/headers';
 import type { Metadata } from 'next';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { selectAll } from '@/lib/selectAll';
 import { discordIdOf } from '@/lib/lockout';
 import { isRaidmimicHost } from '@/lib/raidmimicHost';
 import { EQMIMIC_ORIGIN } from '@/lib/raidmimicLanding';
@@ -37,7 +38,10 @@ async function loadMine(discordId: string): Promise<CharacterView[]> {
     if (!player) return [];
     const { data: chars } = await admin.from('hub_characters').select('name, name_lc, proof').eq('player_id', player.player_id).order('first_seen_at').limit(MAX_CHARACTERS_PER_PLAYER * 4);
     if (!chars?.length) return [];
-    const { data: flags } = await admin.from('hub_flags').select('name_lc, flag_key, earned_at').eq('player_id', player.player_id).limit(20000);
+    // Every row, past the gateway's 1,000-row cap (re-uploads add rows), ordered on the unique id so pages neither skip nor repeat.
+    const flags = await selectAll<{ name_lc: string; flag_key: string; earned_at: string }>((from, to) => admin.from('hub_flags')
+      .select('name_lc, flag_key, earned_at').eq('player_id', player.player_id).order('id', { ascending: true }).range(from, to),
+      { hardCap: 20000 });
     const byName = new Map<string, { flag_key: string; earned_at: string }[]>();
     for (const f of flags ?? []) {
       const k = f.name_lc as string;
@@ -86,7 +90,7 @@ export default async function CharactersPage() {
           {mine.map(c => (
             <article key={c.name} className={CARD}>
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <h2 className="text-lg text-[#f2ede1]">{c.name}</h2>
+                <h2 className="text-lg text-text">{c.name}</h2>
                 <span className="text-xs text-dim">{c.flagCount} flag{c.flagCount === 1 ? '' : 's'}{c.lastExport ? ` · export of ${c.lastExport.slice(0, 10)}` : ''}</span>
                 {c.proof === 'contested' && <span className="rounded border border-orange/50 px-2 text-xs text-orange">name claimed by another player too</span>}
               </div>
