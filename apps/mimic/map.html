@@ -2831,6 +2831,11 @@
     return (kind === 'boss' ? 'bold ' : kind === 'room' ? 'italic ' : '') + px + 'px ui-monospace,Consolas,monospace';
   }
   var LABEL_ROOMS_MAX = 400;   // the nearest this many on-screen room names are considered per frame
+  var LABEL_SAME_MAX = 2;      // the nearest this many mobs of one name are named (2026-11-09: one name filled the screen)
+  // A map-file point that is a way out: "to_Oggok", "to The Plane of Knowledge", "PoK Book", a PoK stone, a translocator,
+  // a druid ring or wizard spire (the guild lead, 2026-11-09: "we're missing POK books and other points on our map").
+  var TRAVEL_RE = /^to[\s_]|plane of knowledge|\bpok\b|\bbook\b|\bstone\b|translocator|\bportal\b|\bspires?\b|\bring\b/i;
+  function isTravelPoint(text) { return TRAVEL_RE.test(String(text || '')); }
   var textW = {}, textWn = 0;
   function measure(text, font) {
     var k = font + '|' + text, c = textW[k];
@@ -2854,13 +2859,30 @@
     else ref = { x: -S.view.cx, y: -S.view.cy };
     var dist = function (x, y) { return Math.hypot(x - ref.x, y - ref.y); };
     var cands = boss.map(function (c) { c.pri = c.tier * 1e7 + dist(c.wx, c.wy); return c; });
+    // One name, many mobs (the guild lead, 2026-11-09: "we're missing POK books and other points on our map", the screen full of
+    // "lizard man broodling"): only the LABEL_SAME_MAX nearest of a name are named; the rest keep their dots. Your target always.
+    var seenName = {};
+    cands = cands.sort(function (a, b) { return a.pri - b.pri; }).filter(function (c) {
+      if (c.tgt) return true;
+      var k = String(c.text).replace(/\s+#\d+$/, '').toLowerCase();
+      seenName[k] = (seenName[k] || 0) + 1;
+      return seenName[k] <= LABEL_SAME_MAX;
+    });
     var rooms = [];
     var ll = S.local && S.labels === 'all' && S.cfg.show.rooms ? S.local.labels : [];
     var roomFont = labelFont('room'), roomCol = S.cfg.col.room;
     for (var i = 0; i < ll.length; i++) {
       var q = wpt(ll[i][0], ll[i][1]);
       if (q[0] < -40 || q[0] > w + 40 || q[1] < -20 || q[1] > h + 20) continue;
-      rooms.push({ text: String(ll[i][3]), x: q[0], y: q[1], z: ll[i][2], col: roomCol, tier: 2, align: 'center', font: roomFont, pri: 2e7 + dist(ll[i][0], ll[i][1]) });
+      // The map file's points: a way out of the zone (a zone line, a Plane of Knowledge book or stone, a translocator) ranks
+      // above every other name and keeps the file's own colour, as the in-game map shows it; the rest rank last as before.
+      var travel = isTravelPoint(ll[i][3]);
+      rooms.push({ text: String(ll[i][3]), x: q[0], y: q[1], z: ll[i][2], col: travel && ll[i][4] ? ll[i][4] : roomCol, tier: travel ? -2 : 2, align: 'center', font: roomFont,
+        pri: (travel ? -2e7 : 2e7) + dist(ll[i][0], ll[i][1]) });
+      // A small + at the point itself, placed or not, so the spot shows even when its name does not fit.
+      ctx.globalAlpha = 0.85; ctx.strokeStyle = travel && ll[i][4] ? ll[i][4] : roomCol; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(q[0] - 3, q[1]); ctx.lineTo(q[0] + 3, q[1]); ctx.moveTo(q[0], q[1] - 3); ctx.lineTo(q[0], q[1] + 3); ctx.stroke();
+      ctx.globalAlpha = 1;
     }
     rooms.sort(function (a, b) { return a.pri - b.pri; });
     if (rooms.length > LABEL_ROOMS_MAX) rooms.length = LABEL_ROOMS_MAX;
