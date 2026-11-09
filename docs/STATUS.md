@@ -108,6 +108,13 @@ next touch one rather than assuming a missing row means a missing doc.
   the release list, alpha included, since /releases/latest skips prereleases); the `test` source (the fork's test-all, rebased
   on v1.5.0-alpha0) is labelled "Ours on 1.5". The Wolf Pack 1.4.x build is no longer offered; a Mimic already set to it keeps
   it and Settings says so. Test: `test/zeal-source.test.js`.
+- **🧾 Hail board: the four elemental Essences (bot 4.0.60 · web 2.1.111 on main, 2026-11-09).** The guild lead: *"hails on
+  Essence of Water will give you but not say anything it seems. we should include those hails on the command center for each of
+  the elemental planes"*. Coirnav, Fennin Ro, Xegony and the Avatar of Earth open `Essence of Water / Fire / Air / Earth` on the
+  board (`utils/hailBoard.js` HAIL_BOSSES, the Flag lab copy in `web/lib/hailBoardView.ts`). The Essence puts its item on the
+  cursor with no line (`lua_modules/projection_eligibility.lua`, 20 minutes, the killing raid or group), so a witnessed hail or a
+  tap marks a raider; `done` is the guide's hail step or `time_1`. Tests `test/hail-board.test.js`. Agent unchanged: a window's
+  `npc_name` is what `_hailNpcWanted` matches.
 
 - **🧾 2026-11-08 — Web 2.1.110: all of beta's website promoted to main.** The guild lead: "you can push the pets website
   too", then "All of beta's website" when asked which. Every beta-only web file, its tests, `scripts/raidmimic-shots`, the
