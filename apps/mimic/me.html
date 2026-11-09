@@ -941,8 +941,13 @@
     // The Weave timer (the guild lead, 2026-11-07): a slim vertical lane on the right of the ring, where the mana
     // arc is, timing a monk's bandolier weave. apps/mimic/weave.js runs it in Mimic's main process from the Zeal pipe.
     ['Weave timer', [['weave', 'Lane on the right (auto = Monk and Beastlord)', ['auto', 'on', 'off']],
-      ['weaveDelay', 'Your 2H weapon delay', WEAVE_DELAYS], ['weaveMargin', 'Swap margin (ms)', [50, 100, 150, 200, 250, 300]],
-      ['weaveRace', 'Monk race (Iksar fists are slower)', ['human', 'iksar']], ['weaveEpic', 'Celestial Fists equipped'],
+      // Swap time: from the press to the 2H back in hand. 400 ms is what Basketweaver measured ("Weave Off Delay"); the old 150
+      // (key weaveMargin) left the last quarter second of green clipping (the guild lead, 2026-11-09: "Our weaving timer is
+      // being unreliable"). A new key, so a save holding the old default does not keep it.
+      // Celestial Fists and Iksar fists are read from the character (the inventory export's Hands slot, /who's race), not set
+      // here (2026-11-09: "auto-detect epic fists instead of the checkbox"); the race below is only the fallback.
+      ['weaveDelay', 'Your 2H weapon delay', WEAVE_DELAYS], ['weaveSwapMs', 'Swap time, press to 2H back (ms)', [200, 300, 400, 500, 600, 700]],
+      ['weaveRace', 'Monk race if /who has not seen you', ['human', 'iksar']],
       ['weaveTally', 'Fight tally (on the wide Canvas piece)'],
       ['weave2hVerbs', '2H swing verbs', 'text'], ['weaveFistVerbs', 'Fist verbs', 'text']]],
     ['Hits', [['hitsIn', 'Hits on you (left)'], ['hitsOut', 'Your hits (right)'], ['ds', 'Damage shield'],
@@ -962,7 +967,7 @@
   var HUD_DEFAULTS = { target: 1, tot: 1, status: 1, hp: 1, mana: 1, end: 1, regen: 1, dps: 1, focus: 1, tick: 1, swing: 1, cast: 1, cooldowns: 1,
     hitsIn: 1, hitsOut: 1, ds: 1, procs: 1, rounds: 5, split: 2, hitsSide: 'inside', resists: 1, tres: 1, weight: 'thin',
     track: 1, trackShow: 'all', ramp: 1, lowhp: 1, clickies: 1, clickyRows: 1, clickyPick: [], sizes: {},
-    weave: 'auto', weaveDelay: 30, weaveMargin: 150, weaveRace: 'human', weaveEpic: 0, weaveTally: 1,
+    weave: 'auto', weaveDelay: 30, weaveSwapMs: 400, weaveRace: 'human', weaveTally: 1,
     weave2hVerbs: 'crush, crushes', weaveFistVerbs: 'punch, punches, hit, hits, strike, strikes' };
   // The Weave timer lane is on when picked, or by default for the two classes that hand-to-hand weave. It takes the right
   // arc's place (the mana or endurance BAR; the label beside it stays).
@@ -1997,8 +2002,11 @@
   var _weaveCfgSent = '', _weaveBox = '';
   function weaveConfig(s){
     var p = hudParts;
-    return { character: s.character, cls: String(s['class'] || '').toLowerCase(), level: s.level, race: p.weaveRace, epic: !!p.weaveEpic,
-      twoHDelay: p.weaveDelay, marginMs: p.weaveMargin, showTally: !!p.weaveTally, twoVerbs: p.weave2hVerbs, fistVerbs: p.weaveFistVerbs };
+    var g = s.gear || {};
+    return { character: s.character, cls: String(s['class'] || '').toLowerCase(), level: s.level,
+      // Read from the character (agent /api/me `gear`): the server's own test is Celestial Fists (10652) in the Hands slot.
+      race: g.race ? (/iksar/i.test(g.race) ? 'iksar' : 'human') : p.weaveRace, epic: g.hands_id === 10652,
+      twoHDelay: p.weaveDelay, marginMs: p.weaveSwapMs, showTally: !!p.weaveTally, twoVerbs: p.weave2hVerbs, fistVerbs: p.weaveFistVerbs };
   }
   function layoutWeave(s){
     var cv = document.getElementById('weavecv');

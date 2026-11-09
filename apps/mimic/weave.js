@@ -67,7 +67,8 @@
     // confirmed, so all three plausible ones are listed and BOTH lists stay configurable.
     twoVerbs: ['crush', 'crushes'],
     fistVerbs: ['punch', 'punches', 'hit', 'hits', 'strike', 'strikes'],
-    marginMs: 150, showTally: true,
+    // The swap's round trip, press to 2H back in hand: 400 ms, as Basketweaver measured it (2026-11-09; was 150, too short).
+    marginMs: 400, showTally: true,
     cls: 'monk', level: 60, race: 'human', epic: false,
   };
   function verbList(v, dflt) {
@@ -85,7 +86,7 @@
       twoHDelay: intIn(c.twoHDelay, 10, 60, DEFAULT_CFG.twoHDelay),
       twoVerbs: verbList(c.twoVerbs, DEFAULT_CFG.twoVerbs),
       fistVerbs: verbList(c.fistVerbs, DEFAULT_CFG.fistVerbs),
-      marginMs: intIn(c.marginMs, 0, 500, DEFAULT_CFG.marginMs),
+      marginMs: intIn(c.marginMs, 0, 1000, DEFAULT_CFG.marginMs),
       showTally: c.showTally === undefined ? true : !!c.showTally,
       cls: String(c.cls || '').toLowerCase() === 'beastlord' ? 'beastlord' : 'monk',
       level: intIn(c.level, 1, 65, DEFAULT_CFG.level),

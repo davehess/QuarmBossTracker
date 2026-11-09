@@ -17976,6 +17976,25 @@ function _meBardCounts(cls, level, manaCur, gems, charmLeft) {
   };
 }
 
+// What the HUD's Weave timer reads from the character instead of asking (the guild lead, 2026-11-09: "auto-detect epic fists
+// instead of the checkbox - and most of us don't wear them anymore since we have access to Dark handwraps"): the Hands slot
+// (the server gives a monk's bare fists delay 16 only for Celestial Fists, item 10652, in slot 12 — EQMacEmu
+// Client::GetHandToHandDelay; Dark Hand Wraps are armour and change nothing), the weapons, and /who's race (Iksar fists are
+// slower). From the newest <Char>-Inventory.txt the agent already parses; null where it has none.
+function _meGear(character, who) {
+  const invs = stats.characterInventories || {};
+  const key = Object.keys(invs).find(k => k.toLowerCase() === String(character || '').toLowerCase());
+  const inv = key ? invs[key] : null;
+  const item = (e) => (e && e.id ? { id: e.id, name: String(e.name || '').slice(0, 64) } : null);
+  return {
+    hands_id: inv && inv.worn && inv.worn.Hands && inv.worn.Hands.id ? inv.worn.Hands.id : null,
+    primary: inv ? item(inv.weapons && inv.weapons.primary) : null,
+    secondary: inv ? item(inv.weapons && inv.weapons.secondary) : null,
+    race: who && who.race ? String(who.race) : null,
+    inventory_at: inv && inv._updatedAt ? inv._updatedAt : null,
+  };
+}
+
 function _serializeMeState() {
   const now = Date.now();
   let active = null, activeTs = 0;
@@ -18133,6 +18152,7 @@ function _serializeMeState() {
     character: active,
     generated_at: now,
     level, class: cls,
+    gear: _meGear(active, who),
     // Warriors, rogues and monks have no mana at all (the guild lead, 2026-09-24:
     // "don't expose that for them"); a class we cannot read falls back to an
     // empty pool.
