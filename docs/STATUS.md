@@ -264,7 +264,16 @@ next touch one rather than assuming a missing row means a missing doc.
   slowed (Basketweaver's 3.65 s). **Re-syncs are said out loud (same day: "it jumps and doesn't say anything"):** the engine
   keeps `notice` { kind, text, at }: `SYNC ±N ms` when a 2H swing lands ≥ 150 ms off the prediction, `SPEED a → b s` on a
   re-lock, `/mystats: 2H delay D, haste H%` on a calibration; the highway's header and the ring (beside the arc's end) show it
-  for 2 s, fading.
+  for 2 s, fading. **Reconciled on the guild lead's own data (same day; our `weave-attempts.ndjson` and Basketweaver's
+  `%APPDATA%\Basketweaver` folder):** for a blood raven Basketweaver recorded 43 of 48 rounds weaved, 76 fist attempts / 46
+  landed, 2,930 fist damage, +37.9 dps, 287 ms average reaction (its `leaderboard.json`); our current build landed 40 of 50
+  presses, 4 clips, 6 with no fist line. Across the day's builds: before beta.13 21 of 151 landed, beta.13 260 of 994, beta.14+
+  108 of 129. Two of the four clips were scoring artefacts: a re-press before the 2H line arrived (now `open`, outside ✓ ✕ ·)
+  and two swings + 302 ms late (the on-beat tolerance now widens 100 ms a swing). Basketweaver's settings name the real fist
+  weapon, Primal Velium Fist Wraps, delay 20 (a hand-to-hand weapon the fist set puts in the secondary slot; the same 20 as a
+  level 65 human's bare fists, so our fist timing held). Its Zeal log shows why the lines are short: the client's "My Hits"
+  mode 1 prints "verb target for N" (mode 2: the number alone, which no word reader can use), and Zeal moves strike, kick and
+  backstab to channel 1004 (Zeal `chatfilter.cpp` HandleMyHitsMode).
   **First live report (2026-11-09, agent 4.0.78 beta):** *"WEAVING IS WAITING FOR A FIGHT BUT I'M IN ONE"*. The hub only fed
   the engine lines on colours 265 / 267 (the unverified guess above), so a client whose melee lines arrive on any other colour
   never started a swing. Now it takes any line that starts `You ` on any colour (other people's hits and non-melee are still

@@ -187,7 +187,8 @@
   var BARE_MISS_2H_MS = 300;
   var SYNC_NOTE_MS = 150;   // a 2H swing at least this far from the prediction is a re-sync worth saying // a bare "miss" this close to a predicted 2H swing is that round missing
   // `late` (ms past the expected 2H) is a whole number of swings, give or take CLIP_MS.
-  function onBeat(late, iv) { var k = Math.round(late / iv); return k >= 1 && Math.abs(late - k * iv) <= CLIP_MS; }
+  // The tolerance widens by 100 ms a swing: two unseen swings drift further than one (a blood raven press 2 swings + 302 ms late).
+  function onBeat(late, iv) { var k = Math.round(late / iv); return k >= 1 && Math.abs(late - k * iv) <= CLIP_MS + 100 * (k - 1); }
   var VOID_AFTER_MS = 2500;  // a bandolier failure this soon after the press's last load voids it (a set swaps over a few ticks)
 
   function median(a) {
@@ -213,7 +214,7 @@
   WeaveEngine.prototype.fresh = function () {
     this.last2H = null; this.last2HLine = null; this.lastFist = null; this.lastFistLine = null;
     this.samples = []; this.lastSwingAt = null; this.pending = null; this.offBand = []; this.divStreak = 0;
-    this.lastPress = null; this.outcome = null; this.tally = { presses: 0, landed: 0, clips: 0, misses: 0, voided: 0,
+    this.lastPress = null; this.outcome = null; this.tally = { presses: 0, landed: 0, clips: 0, misses: 0, voided: 0, open: 0,
       // Basketweaver's terms (2026-11-09): 2H rounds and how many carried a weave, bonus (fist) attacks tried and hit, the
       // damage the weaved fists did, and the press's reaction (press - the window opening).
       rounds: 0, fistTried: 0, fistHit: 0, weaveDmg: 0, reactSum: 0, reactN: 0 };
@@ -263,7 +264,7 @@
       this.tally.weaveDmg += p.fistDmg || 0;   // a landed weave's fist round is extra: the 2H swung on time as well
       if (p.open != null && p.firstT >= p.open) { this.tally.reactSum += p.firstT - p.open; this.tally.reactN++; }
       this.outcome.dmg = p.fistDmg || 0;
-    } else if (kind === 'clip') this.tally.clips++; else this.tally.misses++;
+    } else if (kind === 'clip') this.tally.clips++; else if (kind === 'open') this.tally.open++; else this.tally.misses++;
     this._record(p, kind, at, null);
   };
   // Every attempt, the good ones too (the guild lead, 2026-11-09: "capture the successful weave attempts as well"): when it
@@ -387,7 +388,9 @@
       if (how === 'marker') p.marked = true; else p.loads++;
       return;
     }
-    if (p) this._resolve(p.fist != null ? 'clip' : 'miss', t);   // an earlier press that never saw its 2H round
+    // An earlier press whose 2H round never came before this one: with its fist seen it cannot be judged (no 2H to time),
+    // so it is `open`, not a clip (2026-11-09: a blood raven "clip" 217 ms late was a re-press before the 2H line arrived).
+    if (p) this._resolve(p.fist != null ? 'open' : 'miss', t);
     var exp = null;
     if (this.last2H != null) { var iv = this.interval2H(), b = this.last2H; while (b + iv + CLIP_MS < t) b += iv; exp = b + iv; }
     var d = this.active(t) ? derive(this.core(), t) : null;      // the window this press landed in, for the record
@@ -414,7 +417,7 @@
   // Settle what time alone decides, and reset after a fight. Returns true when the fight just ended.
   WeaveEngine.prototype.tick = function (now) {
     var p = this.pending;
-    if (p && now > Math.max(p.expected != null ? p.expected : 0, p.lastLoad) + 2500) this._resolve(p.fist != null ? 'clip' : 'miss', now);
+    if (p && now > Math.max(p.expected != null ? p.expected : 0, p.lastLoad) + 2500) this._resolve(p.fist != null ? 'open' : 'miss', now);
     if (this.lastSwingAt != null && !this.active(now)) { this.fresh(); return true; }
     return false;
   };
