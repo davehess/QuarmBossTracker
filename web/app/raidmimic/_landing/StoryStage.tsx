@@ -84,7 +84,7 @@ export default function StoryStage({ downloadUrl, onHost = false }: { downloadUr
   if (hidden) {
     // The way back is a "Rewatch the video" link along the top.
     return (
-      <section id="top" aria-label="Raid Mimic" data-story-stage="hidden" className={`relative ${place} min-h-[7rem] border-b border-border`}>
+      <section id="top" aria-label="Raid Mimic" data-story-stage="hidden" className={`relative isolate ${place} min-h-[7rem] border-b border-border`}>
         {header}
         <div className="absolute inset-x-0 top-0 z-40 flex justify-center">
           <button type="button" data-rewatch onClick={again} className={`${QUIET_BTN} underline`}>{HOME_WORDS.rewatch}</button>
@@ -94,9 +94,11 @@ export default function StoryStage({ downloadUrl, onHost = false }: { downloadUr
     );
   }
 
+  // `isolate` (both sections): the stage's own layers (the Skip button is z-50) stay inside it, so the site menu's dropdown opens
+  // OVER the stage instead of under the Skip button (the guild lead, 2026-11-09: "also not overlap").
   return (
     <section id="top" aria-label="Raid Mimic: the story" data-story-stage={onHost ? 'host' : 'site'}
-      className={`rm-stage relative ${place} overflow-hidden bg-bg`}>
+      className={`rm-stage relative isolate ${place} overflow-hidden bg-bg`}>
       <noscript><style>{'[data-reveal]{opacity:1!important;visibility:visible!important}'}</style></noscript>
 
       <StoryVideo ref={handle} onTime={onTime} onEnd={() => setEnded(true)} halted={skipped || ended} reduced={reduced}
