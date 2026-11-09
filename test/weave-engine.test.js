@@ -16,7 +16,7 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { readSource, stripJs, ROOT } from './_source-slice.js';
+import { readSource, stripJs, sliceBlock, ROOT } from './_source-slice.js';
 
 const require = createRequire(import.meta.url);
 const MIMIC = path.join(ROOT, 'apps', 'mimic');
@@ -792,5 +792,37 @@ describe('weave attempts: captured, marked by /pipe weave, voided by a failed sw
     const m = stripJs(readSource(path.join(MIMIC, 'main.js')));
     expect(m).toContain("const WEAVE_ATTEMPTS_LOG = () => path.join(app.getPath('userData'), 'weave-attempts.ndjson');");
     expect(m).toContain('const _weaveHub = createWeaveHub({ send: _weaveSend, onAttempt: _writeWeaveAttempt });');
+  });
+});
+
+// 2026-11-09, the guild lead: "auto-detect epic fists instead of the checkbox - and most of us don't wear them anymore since we have
+// access to Dark handwraps", then "Our weaving timer is being unreliable while the timer from the basketweaver is very reliable".
+// The server (EQMacEmu Client::GetHandToHandDelay) gives bare fists delay 16 only for Celestial Fists (10652) in the Hands slot;
+// Dark Hand Wraps (28949) are armour. The swap's round trip is 400 ms (Basketweaver's measured "Weave Off Delay"), not 150.
+describe('the weave reads the character: epic from the Hands slot, race from /who; the swap time is 400 ms', () => {
+  const agentSrc = readSource(path.join(ROOT, 'packages', 'wolfpack-logsync', 'index.js'));
+  const block = sliceBlock(agentSrc, 'function _meGear(character, who) {', '\n  };\n}');
+  const gearOf = (invs, who) => new Function('stats', block + '\nreturn _meGear;')({ characterInventories: invs })('aldenmar', who);
+  it('_meGear: the Hands item, the weapons and /who race, from the inventory the agent already parsed', () => {
+    const invs = { Aldenmar: { worn: { Hands: { id: 28949, name: 'Dark Hand Wraps' } },
+      weapons: { primary: { id: 26599, name: 'Caen\'s Bo Staff of Fury' } }, _updatedAt: '2026-11-09T17:48:11Z' } };
+    expect(gearOf(invs, { race: 'Iksar' })).toEqual({ hands_id: 28949, primary: { id: 26599, name: 'Caen\'s Bo Staff of Fury' },
+      secondary: null, race: 'Iksar', inventory_at: '2026-11-09T17:48:11Z' });
+    expect(gearOf({}, null)).toEqual({ hands_id: null, primary: null, secondary: null, race: null, inventory_at: null });
+    expect(agentSrc).toContain('    gear: _meGear(active, who),');
+  });
+  it('the HUD sends epic only for Celestial Fists in Hands, race from /who, and the new swap-time key', () => {
+    const me = stripJs(readSource(path.join(MIMIC, 'me.html')));
+    expect(me).toContain("race: g.race ? (/iksar/i.test(g.race) ? 'iksar' : 'human') : p.weaveRace, epic: g.hands_id === 10652,");
+    expect(me).toContain('marginMs: p.weaveSwapMs,');
+    expect(me).toContain("weaveSwapMs: 400,");
+    expect(me).not.toMatch(/weaveEpic|weaveMargin/);
+  });
+  it('the engine: 400 ms by default; Dark Hand Wraps leave a level 65 human at bare fists (2.0 s), the epic gives 1.6 s', () => {
+    expect(W.DEFAULT_CFG.marginMs).toBe(400);
+    expect(W.cleanCfg({ marginMs: 900 }).marginMs).toBe(900);
+    expect(W.handToHandDelay({ cls: 'monk', level: 65, race: 'human', epic: false })).toBe(20);
+    expect(W.handToHandDelay({ cls: 'monk', level: 65, race: 'iksar', epic: false })).toBe(21);
+    expect(W.handToHandDelay({ cls: 'monk', level: 65, race: 'human', epic: true })).toBe(16);
   });
 });

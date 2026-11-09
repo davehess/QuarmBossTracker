@@ -234,7 +234,13 @@ next touch one rather than assuming a missing row means a missing doc.
   (5 MB rotation). Zeal's `/pipe weave` (custom pipe object, type 4) marks a press and joins the loads within 1.2 s. A bandolier
   FAILURE (colour 1012, or the words: "canceling set load", "You cannot swap items when", "You are too busy to …") within
   2.5 s of the press voids it: out of presses / ✓ / ✕ / ·, counted as ⊘. "Already swapping" and "already equipped" are not
-  failures (ordinary channel; an overlapping second load prints them).
+  failures (ordinary channel; an overlapping second load prints them). **Reconciled with Basketweaver (2026-11-09):** the
+  epic checkbox is gone: agent 4.0.82 `/api/me` carries `gear` (`_meGear`: Hands item, weapons, /who race, from the parsed
+  inventory export) and the HUD sends `epic` only for Celestial Fists (10652) in Hands, the server's own test (EQMacEmu
+  `Client::GetHandToHandDelay`); Dark Hand Wraps (28949) are armour, so a monk in them is on bare fists (2.0 s at 65 human).
+  The swap time (press to 2H back) defaults to 400 ms under a new key `weaveSwapMs` (was `weaveMargin` 150): Basketweaver's
+  measured "Weave Off Delay", and the 150 left the last quarter second of green clipping (0 ✓ / 10 ✕ in the guild lead's
+  screenshot). Basketweaver's own "Offhand: Epic Fists 1.6 s" did not match the guild lead's gear.
   **First live report (2026-11-09, agent 4.0.78 beta):** *"WEAVING IS WAITING FOR A FIGHT BUT I'M IN ONE"*. The hub only fed
   the engine lines on colours 265 / 267 (the unverified guess above), so a client whose melee lines arrive on any other colour
   never started a swing. Now it takes any line that starts `You ` on any colour (other people's hits and non-melee are still
