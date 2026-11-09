@@ -225,7 +225,10 @@ next touch one rather than assuming a missing row means a missing doc.
   can we turn off the weaving timer?":** idle with nothing to report, `weaveDraw.js` paints nothing and sets `data-wp-idle` on the
   canvas; `me.html` reads it in `layoutWeave` (`_weaveIdle`) and gives the monk's endurance arc back until the next swing; the
   Timers canvas treats a `.wvidle` piece like an empty panel (no plate, no label, ✥ kept). A reason (needs Zeal, an unknown
-  swing word) still shows.
+  swing word) still shows. Dual one-handers log only `punch` (fist), so with no 2H swing there is nothing to weave and the piece
+  stays off. **More formats ("arc, thin vertical line, etc."):** the Canvas piece adds `warc` Arc (a horseshoe, `data-wp-arc`
+  "165 -125 125 22", the 4th number the band width) and `wbar` Thin bar (`drawBar`: the windows, a white "now" mark, orange swing
+  ticks, a red edge on a fresh clip, no text) beside the Timing highway and Upright lane.
   **First live report (2026-11-09, agent 4.0.78 beta):** *"WEAVING IS WAITING FOR A FIGHT BUT I'M IN ONE"*. The hub only fed
   the engine lines on colours 265 / 267 (the unverified guess above), so a client whose melee lines arrive on any other colour
   never started a swing. Now it takes any line that starts `You ` on any colour (other people's hits and non-melee are still

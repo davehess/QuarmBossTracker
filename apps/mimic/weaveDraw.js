@@ -131,7 +131,8 @@
   // tick near the bottom end, and the last outcome sits just past that end.
   function drawArc(c, f, st, live, now, cv) {
     var ctx = f.ctx, s = Math.min(f.w, f.h) / 400, g = String(cv.getAttribute('data-wp-arc') || '172 56 124').split(/\s+/).map(Number);
-    var R = g[0] * s, a0 = g[1], a1 = g[2], band = 9 * s, cx = f.w / 2, cy = f.h / 2;
+    // An optional 4th number is the band's width in the same 400 units (the Arc piece is drawn small, so it asks for a wider one).
+    var R = g[0] * s, a0 = g[1], a1 = g[2], band = (g[3] > 0 ? g[3] : 9) * s, cx = f.w / 2, cy = f.h / 2;
     var rad = function (deg) { return (deg - 90) * Math.PI / 180; };
     var hitA = a1 - 5;
     var arc = function (from, to, color, alpha, width) {
@@ -173,6 +174,35 @@
     tick(hitA, c.text, 1.5, band / 2 + 2 * s);
     ctx.restore();
     glyph(c, ctx, st, now, gp[0], gp[1], gpx);
+  }
+
+  // ── The thin bar (a Canvas piece, 2026-11-09: "other formats ... arc, thin vertical line, etc.") ────────────────────
+  // The highway with nothing but the windows: they scroll right to left into the gold "now" mark, orange ticks are the
+  // next 2H swings, and a fresh clip flashes the bar's edge red. No text (an idle reason, if any, is the one exception).
+  function drawBar(c, f, st, live, now) {
+    var ctx = f.ctx, w = f.w, h = f.h, hz = Math.round(w * 0.2);
+    if (!live) {
+      var why = idleReason(st);
+      if (why) { font(ctx, Math.max(8, Math.min(10, h * 0.8))); ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = c.dim; ctx.fillText(why, 2, h / 2); }
+      return;
+    }
+    var z = WV.zones(st.core, now, 3);
+    if (!z) return;
+    var ppm = (w - hz - 3) / (2 * st.core.interval2H), xOf = function (t) { return hz + (t - now) * ppm; };
+    ctx.globalAlpha = 0.3; ctx.fillStyle = c.dim; ctx.fillRect(0, 0, w, h);
+    z.zones.forEach(function (zn) {
+      var x0 = xOf(zn.start), x1 = xOf(zn.end), cur = zn.start <= now && now < zn.end;
+      ctx.globalAlpha = cur ? 0.95 : 0.42; ctx.fillStyle = c[KIND_COLOR[zn.kind]];
+      ctx.fillRect(x0, 0, Math.max(1, x1 - x0), h);
+    });
+    ctx.globalAlpha = 1; ctx.fillStyle = c.orange;
+    z.swings.forEach(function (s) { ctx.fillRect(xOf(s.at) - 0.75, 0, 1.5, h); });
+    ctx.fillStyle = c.text; ctx.fillRect(hz - 1.5, 0, 3, h);   // "now": white, so it never reads as one of the orange swing ticks
+    var o = st.outcome;
+    if (o && o.kind === 'clip' && now - o.at < 1500) {
+      ctx.globalAlpha = 0.55 + 0.45 * Math.abs(Math.sin(now / 120)); ctx.strokeStyle = c.red; ctx.lineWidth = 2;
+      ctx.strokeRect(1, 1, w - 2, h - 2); ctx.globalAlpha = 1;
+    }
   }
 
   // ── The timing highway (the Canvas piece) ──────────────────────────────────────────────────────────────────
@@ -266,7 +296,7 @@
     }
     if (idle) return false;
     var kind = cv.getAttribute('data-wp-weave');
-    (kind === 'highway' ? drawHighway : kind === 'arc' ? drawArc : drawLane)(c, f, st, live, now, cv);
+    (kind === 'highway' ? drawHighway : kind === 'arc' ? drawArc : kind === 'bar' ? drawBar : drawLane)(c, f, st, live, now, cv);
     return live;
   }
   // Painted on animation frames, with a timer as the backstop: Chromium stops animation frames for a window it counts as

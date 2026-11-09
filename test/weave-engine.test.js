@@ -434,8 +434,9 @@ describe('wiring', () => {
   });
   it('parts.js registers me.weave as its own kind, drawn as a highway or a lane, and the Canvas loads the painter', () => {
     expect(parts).toContain("P('me.weave', 'me', 'Weaving timer', 'me', 'weave',");
-    expect(parts).toContain("weave:     [['highway', 'Timing highway'], ['lane', 'Upright lane']]");
-    expect(parts).toContain("highway: rWeave('highway'), lane: rWeave('lane')");
+    expect(parts).toContain("weave:     [['highway', 'Timing highway'], ['lane', 'Upright lane'], ['warc', 'Arc'], ['wbar', 'Thin bar']]");
+    expect(parts).toContain("highway: rWeave('highway'), lane: rWeave('lane'),");
+    expect(parts).toContain("warc: rWeave('arc', '165 -125 125 22'), wbar: rWeave('bar') };");
     expect(canvasHtml).toMatch(/<script src="weave.js"><\/script>\s*<script src="weaveDraw.js"><\/script>/);
     expect(canvasHtml).toContain('WpWeaveDraw.start()');
   });
@@ -448,6 +449,30 @@ describe('wiring', () => {
     expect(a).toBe(b);
     expect(a).toContain('<canvas data-wp-weave="highway" data-wp-char="Aldenmar"');
     expect(g.render(d, 'lane', { char: 'Aldenmar', cls: 'Monk', level: 60 }, 1)).toContain('data-wp-weave="lane"');
+    // 2026-11-09: "other formats available for the weaving, arc, thin vertical line, etc."
+    expect(g.render(d, 'warc', { char: 'Aldenmar', cls: 'Monk', level: 60 }, 1)).toContain('<canvas data-wp-weave="arc" data-wp-arc="165 -125 125 22" data-wp-char="Aldenmar"');
+    expect(g.render(d, 'wbar', { char: 'Aldenmar', cls: 'Monk', level: 60 }, 1)).toContain('<canvas data-wp-weave="bar" data-wp-char="Aldenmar"');
+    expect(g.DEFAULT_SIZE.warc).toEqual([150, 150]);
+    expect(g.DEFAULT_SIZE.wbar).toEqual([260, 12]);
+  });
+  it('the Thin bar paints the windows, a white "now" and the swing ticks, and no text', async () => {
+    const rects = [], texts = [];
+    const ctx = new Proxy({ fillRect: (x, y, w, h) => rects.push({ x, w, fill: ctx._fill }), fillText: (t) => texts.push(t) },
+      { get: (t, k) => (k in t ? t[k] : () => {}), set: (t, k, v) => { if (k === 'fillStyle') t._fill = v; return true; } });
+    const attrs = { 'data-wp-weave': 'bar', 'data-wp-char': 'Aldenmar' };
+    const cv = { clientWidth: 260, clientHeight: 12, width: 0, height: 0, getContext: () => ctx, closest: () => null,
+      getAttribute: (k) => (k in attrs ? attrs[k] : null), setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; } };
+    const win = { WpWeave: W, devicePixelRatio: 1, getComputedStyle: () => ({ getPropertyValue: () => '', fontFamily: 'monospace' }),
+      document: { querySelectorAll: () => [cv], documentElement: {}, body: {} } };
+    // eslint-disable-next-line no-new-func
+    new Function('window', readSource(path.join(MIMIC, 'weaveDraw.js')))(win);
+    const now = Date.now();
+    win.WpWeaveDraw._onState({ character: 'Aldenmar', active: true, source: 'zeal',
+      core: { last2H: now - 300, lastFist: null, interval2H: IV, haste: 1.7, fistInterval: 2600 / 1.7, marginMs: 150 } });
+    await new Promise(r => setTimeout(r, 80));
+    expect(rects.length).toBeGreaterThan(3);
+    expect(rects.some(r => Math.abs(r.x - (Math.round(260 * 0.2) - 1.5)) < 0.01 && r.w === 3)).toBe(true);   // the "now" mark
+    expect(texts).toEqual([]);
   });
   it('me.html: the lane is a canvas, off for other classes, on for a Monk and a Beastlord, placed by layoutWeave, and the settings ride to main', () => {
     expect(meHtml).toContain('<canvas id="weavecv" data-wp-weave="lane"');
