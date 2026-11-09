@@ -87,6 +87,7 @@ const STATIC_META: Record<string, PageMeta> = {
   '/raidmimic/refunds': { ...LEGAL_META.refunds },
   '/terms':        { ...LEGAL_META.terms },
   '/guilds':       { title: '[beta] Your guilds', description: 'The guilds you are in on Raid Mimic, with a way to join one by invite code, find the ones you already belong to, or start your own.' },
+  '/characters':   { title: '[beta] My characters', description: 'Load your characters on Raid Mimic from the PoPFlags file Zeal saves when you camp, and see each one’s Planes of Power flag progress and what it needs next.' },
   '/guilds/new':   { title: '[beta] Start a guild', description: 'Start a guild on Raid Mimic: name it, pick its address and optionally link its Discord server, then invite your raiders with codes.' },
   '/feedback':     { title: 'Feedback', description: 'Bugs, ideas, kudos — straight to the officer inbox.' },
   '/roadmap':      { title: 'Roadmap', description: 'What’s shipped and what’s next for the Wolf Pack platform.' },

@@ -51,8 +51,12 @@ export const RAIDMIMIC_GUILDS_PATH = '/guilds';
 // /api/hubs is the guild directory Mimic's picker reads from https://raidmimic.com/api/hubs (public, exactly this path).
 export const RAIDMIMIC_HUBS_PATH = '/api/hubs';
 
+// "My characters" (2026-11-09, DECISIONS §545): where a player loads their characters from Zeal's PoPFlags file.
+export const RAIDMIMIC_CHARACTERS_PATH = '/characters';
+
 export function isRaidmimicOpenPath(pathname: string): boolean {
   return pathname.startsWith('/auth/') || pathname.startsWith('/api/auth/') || pathname === RAIDMIMIC_HUBS_PATH
+    || pathname === RAIDMIMIC_CHARACTERS_PATH
     || pathname === RAIDMIMIC_GUILDS_PATH || pathname.startsWith(`${RAIDMIMIC_GUILDS_PATH}/`);
 }
 
