@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-119-2026-11-09',
+    title: 'Web 2.1.119',
+    version: 'Web 2.1.119',
+    date: '2026-11-09',
+    headline: 'Registering a guild on raidmimic.com works.',
+    features: [],
+    fixes: [
+      'The Register your guild form on raidmimic.com saves again instead of saying registration is not set up. The anonymous feedback form on eqmimic.quest was broken the same way and works too.',
+      'Find my guilds says it plainly when none of your other guilds use Raid Mimic yet.',
+    ],
+  },
+  {
     key: 'web-2-1-118-2026-11-09',
     title: 'Web 2.1.118',
     version: 'Web 2.1.118',

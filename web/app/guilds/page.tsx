@@ -49,7 +49,7 @@ function findNote(find: string | undefined, found: string | undefined, closedCou
     if (n > 0) return { text: `Found ${n} guild${n === 1 ? '' : 's'} you are in. They are listed above.`, good: true };
     return closedCount > 0
       ? { text: 'None of your Discord servers is open to join without a code. The ones that are guilds here are listed above.', good: false }
-      : { text: `${listed ? 'No other' : 'None'} of your Discord servers is a guild on Raid Mimic yet. An invite code works without this.`, good: false };
+      : { text: listed ? 'No other guilds of yours have opted into Raid Mimic yet.' : 'None of your guilds have opted into Raid Mimic yet.', good: false };
   }
   if (!find) return null;
   const why: Record<string, string> = {
