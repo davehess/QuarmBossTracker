@@ -232,6 +232,13 @@ next touch one rather than assuming a missing row means a missing doc.
   counts only once the burn has started (each wave brings an early mini of the same type, `Coirnav.lua:222`, depopped at the
   75th fiend, 236-239); the final-phase emote ("We shall not yield!", 248) marks all three down if the deaths were out of range.
   The standing "15:00 clock from the Guardian" sub is gone; the "wave N nearly down" note stays. Tests `test/coirnav-counter.test.js`.
+  **Coirnav cleared, 2026-11-08 — the gold split (web, on beta only, 2026-11-09).** The guild lead: *"we killed coirnav tonight. put
+  that success on and move the timelines up to the very top, and highlight the background of it in gold. This will be the emphasis
+  of a gold-split replay."* `web/public/pop/elementals.html`: the 15-minute clock section is now the first thing on the Water tab,
+  on a gold panel, with "✓ Cleared" and an "Our run" track above the planned one (from the night's encounter rows, counted from the
+  Guardian's death 02:52:34 UTC: Pwelon 10:09, Vamuil 11:09, Nrinda 12:33, Coirnav 13:55, 1:05 spare; 266,613 damage on Coirnav
+  matches the script's 250,000 after the minis). "Our time here so far" no longer says Water was never raided. No web bump or
+  roadmap entry on beta (main's pending 2.1.111 would collide in the sync); both come with the graduation to main.
 
 - **🧪 Mob Info tags a partially slowable mob, "Slow −N%" (bot 4.0.53 on main `969605f7`; agent 4.0.61 on beta `c3c4ee8b`;
   2026-11-04).** The guild lead: *"Obsidian Tree Spider Queen is only partially slowable apparently. look for those tags"*. Quarm's
