@@ -92,3 +92,12 @@ describe('rewatch survives a raidmimic host', () => {
     expect(H.SKIP_KEY).toBe('rm-skipped-video');
   });
 });
+
+describe('the stage never draws over the site menu (the guild lead, 2026-11-09: "also not overlap")', () => {
+  it('both stage sections isolate their layers, so the z-50 Skip stays inside the stage', () => {
+    const src = code('web/app/raidmimic/_landing/StoryStage.tsx');
+    const sections = src.match(/<section id="top"[^>]*>/g) ?? [];
+    expect(sections.length).toBe(2);
+    for (const s of sections) expect(s).toMatch(/\bisolate\b/);
+  });
+});
