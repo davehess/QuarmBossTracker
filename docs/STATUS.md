@@ -7896,3 +7896,15 @@ Mithaniel's notes (:37) and the second reading needs zeks **7** (:57), not 6. Th
 - Parity tests: `test/hub-characters-import.test.js` (file reader vs the agent's `parsePopFlagsFile`, claim rule vs `utils/hubSync.js`, cap, non-export rejected).
 - ⏳ Not run against a live database or a browser; no migration needed (existing columns). Names are 3-24 letters (the table's check), the agent accepts 2+.
 - ⏳ Next in §545: guild raid posts with open slots (step 2).
+
+### 🧾 2026-11-09 — Event spawns from the quest scripts: Map points + replay timelines (bot 4.0.61 · web 2.1.115, first draft, not yet routed)
+- PoP event mobs (Water, Fire, Air, Earth) are script-spawned and had no spawn2 row. `scripts/gen-event-spawns.js` reads the
+  scripts at a pinned commit into `data/event-spawns.json` (+ `web/lib/eventSpawns.json`); `utils/zoneSpawns.js` adds event points
+  (aggro rings and pinning candidates); the three timeline loaders keep scripted-event kills. See `HOW-ITS-BUILT.md` "Event spawns from the quest scripts".
+- Not done: Mimic map styling for event points (they draw like normal spawn points until a Mimic change reads `event: true`);
+  relative / random spawns (Essences at the killer, Mud mudlings, Vine mangled, Wind storm trap, Air spirits) are listed with no coordinates and not placed;
+  Fishlords' anglerfish spawn at the first waypoint of the script's `GRIDS` and are not placed; the Fire event's other mob types have no
+  `encounters` rows (deaths not recorded; separate investigation).
+- ⏳ Unverified: Fennin's table is "Y, X" in its own comment and the script's spawn call swaps it; the swap is applied as the script does it,
+  but only Coirnav's frame was checked against spawn2 (row 365647 sits inside its spots in the same x, y order). Pairing a plain table with
+  its type is a reading of the code near each use, so spot-check a new zone against the script.

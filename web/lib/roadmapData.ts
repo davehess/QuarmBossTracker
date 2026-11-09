@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'bot-4-0-61-2026-11-09',
+    title: 'Bot 4.0.61',
+    version: 'Bot 4.0.61 · Web 2.1.115',
+    date: '2026-11-09',
+    headline: 'Event mobs in the elemental planes show up on the map and in the replay timelines.',
+    features: [
+      { name: 'Range and spawn spots on the map', blurb: 'Coirnav’s fiends and minis, Fennin Ro’s army and the Air and Earth event mobs now have spawn spots and range rings on the Mimic map, read from the server’s own event scripts.' },
+      { name: 'Event kills in the timelines', blurb: 'Kills of these event mobs now appear in the replay, spectator and share timelines instead of being left out.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-2-1-114-2026-11-09',
     title: 'Web 2.1.114',
     version: 'Web 2.1.114',

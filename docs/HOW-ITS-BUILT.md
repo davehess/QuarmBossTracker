@@ -3190,6 +3190,18 @@ overlay at `/api/raid-fights` and a fight's board at `/api/raid-fights/board` (t
 is set from the agent's `_selfCast` at ingest, and `insert_buff_casts` promotes a stored row when the caster's copy lost the
 dedup race; `/api/agent/target-buffs` returns `by_caster` and `target_id` and prefers the caster's row of the same cast.
 
+### Event spawns from the quest scripts — 2026-11-09
+PoP event mobs are spawned by quest scripts (`eq.spawn2` / `eq.unique_spawn`), so they have no `eqemu_spawn2` row.
+`scripts/gen-event-spawns.js` fetches the scripts of powater / pofire / poair / poeartha / poearthb from
+`SecretsOTheP/quests` at a pinned commit (`quests_sha`) and `utils/eventSpawnParse.js` reads them: type constants, coordinate
+tables paired with the type they spawn, literal calls (`fixed`), and spawns at `GetX()` or a random offset (`relative`, no
+coordinates, never invented). Output `data/event-spawns.json`, copied byte-identical to `web/lib/eventSpawns.json` (the web
+imports nothing outside `web/`). Consumers: bot `utils/zoneSpawns.js` adds a `point` per spot (`event: true`, `event_name`,
+id from 9,000,000) with `npcs[]` built by the same NPC_SELECT / helper rule, so the Map ring and the agent's spawn-point pinning
+get a candidate; web `web/lib/eventNpcIds.ts` lets `raidTimelineLoad.ts`, `replayBossesLoad.ts` and
+`api/spectator/replay/bosses/route.ts` keep an encounter whose npc is curated OR a scripted-event npc. Tests:
+`test/event-spawns.test.js`, `test/zone-spawns.test.js` (last describe).
+
 ### Mobs that split, and slow mode, on the Map (zone-spawns) — 2026-11-01 (§511)
 Bot `utils/splitSpawns.js` (called from `zoneSpawns.build` beside the traps, never throws): reads the zone's death scripts from
 `eqemu_quest_scripts` (`event_death` / `event_death_complete`), counts `eq.spawn2` / `eq.unique_spawn` calls placed at the dead
