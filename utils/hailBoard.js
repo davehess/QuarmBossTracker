@@ -176,6 +176,31 @@ const HAIL_BOSSES = [
     npc: 'A Planar Projection', npcKeys: PROJECTION, flagCap: 72,
     // No step before it, and 72 keys per spawn (54 before the server's patch notes of 2026-10-17).
     done: ['earthb_key_1', 'arbitor_dead'], checklist: null, prior: [] },
+  // The four elemental Essences (the guild lead, 2026-11-09: "hails on Essence of Water will give you but not say
+  // anything it seems. we should include those hails on the command center for each of the elemental planes").
+  // Each Avatar's death spawns its Essence through lua_modules/projection_eligibility.lua (20 minutes, the killing
+  // raid or group), and a hail puts the element's item on the cursor with NO line at all: powater/Essence_of_Water.lua
+  // (Sphere of Coalesced Water 29163), pofire (Globe of Dancing Flame 29147), poair (Amorphous Cloud of Air 29164),
+  // poearthb (Mound of Living Stone 29146); nothing if you already hold the item or the Quintessence. FLAG_LIMIT 72,
+  // `<`. So only a witnessed hail or a tap marks a raider. `done` is the guide's own hail step for each (the
+  // flag_<boss> tick, popSelfProof) and the Plane of Time, which needs all four. Fire, Air and Earth pause their
+  // depop while in combat; Water does not; all four are the default 20 minutes here.
+  { id: 'coirnav', name: 'Coirnav the Avatar of Water', names: ['coirnav the avatar of water', 'coirnav'],
+    zone: 'Plane of Water', zoneShort: 'powater',
+    npc: 'Essence of Water', npcKeys: ['essence of water'], flagCap: 72,
+    done: ['coirnav_dead', 'time_1'], checklist: null, prior: [] },
+  { id: 'fennin_ro', name: 'Fennin Ro', names: ['fennin ro the tyrant of fire', 'fennin ro, the tyrant of fire', 'fennin ro'],
+    zone: 'Plane of Fire', zoneShort: 'pofire',
+    npc: 'Essence of Fire', npcKeys: ['essence of fire'], flagCap: 72,
+    done: ['fennin_dead', 'time_1'], checklist: null, prior: [] },
+  { id: 'xegony', name: 'Xegony the Queen of Air', names: ['xegony the queen of air', 'xegony, the queen of air', 'xegony'],
+    zone: 'Plane of Air', zoneShort: 'poair',
+    npc: 'Essence of Air', npcKeys: ['essence of air'], flagCap: 72,
+    done: ['xegony_dead', 'time_1'], checklist: null, prior: [] },
+  { id: 'rathe_council', name: 'The Avatar of Earth', names: ['avatar of earth', 'the avatar of earth'],
+    zone: 'Plane of Earth', zoneShort: 'poearthb',
+    npc: 'Essence of Earth', npcKeys: ['essence of earth'], flagCap: 72,
+    done: ['rathe_dead', 'time_1'], checklist: null, prior: [] },
 ];
 
 // Flag NPCs that stand with no boss kill to open them (the guild lead, 2026-10-13: the hedge maze's end,

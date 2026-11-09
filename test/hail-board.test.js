@@ -787,7 +787,22 @@ describe('the flag cap and the NPC\'s departure', () => {
     keeper_of_sorrows: [72, 30], lord_mithaniel_marr: [72, 20], manaetic_behemoth: [72, 10],
     tallon_zek: [72, 20], vallon_zek: [72, 20], rallos_zek_warlord: [72, 20], solusek_ro: [72, 20],
     arbitor_of_earth: [72, 20],
+    coirnav: [72, 20], fennin_ro: [72, 20], xegony: [72, 20], rathe_council: [72, 20],   // the elemental Essences
   };
+
+  // The guild lead, 2026-11-09: "hails on Essence of Water will give you but not say anything it seems. we should
+  // include those hails on the command center for each of the elemental planes".
+  it('each elemental Avatar opens its Essence, by board id or by the death line, and a witnessed hail marks the raider', async () => {
+    for (const [by, npc] of [[{ bossId: 'coirnav' }, 'Essence of Water'], [{ bossName: 'Fennin Ro, the Tyrant of Fire' }, 'Essence of Fire'],
+      [{ bossName: 'Xegony the Queen of Air' }, 'Essence of Air'], [{ bossName: '#Avatar_of_Earth' }, 'Essence of Earth']]) {
+      const e = env({ raid_roster: rosterRows(RAID, 'u1') });
+      await e.hb.openWindow({ ...by, killedAtMs: KILL });
+      e.flag('Corvale', 'hail', 'hail_witnessed', at(2), { npc });
+      const [view] = (await e.hb.getBoard()).windows;
+      expect(view.npc_name, npc).toBe(npc);
+      expect(view.hailed.map(r => r.name), npc).toContain('Corvale');
+    }
+  });
 
   it('every hail boss carries the cap and the stay its script gives, and no boss is missing from this list', async () => {
     expect(hailBoard.HAIL_BOSSES.map(b => b.id).sort()).toEqual(Object.keys(SCRIPTS).sort());
