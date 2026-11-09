@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.62': [
+    'Officers: a guild that registers on raidmimic.com now shows up as a card in the officers\' feedback thread, with its size, nights and loot system.',
+  ],
   '4.0.61': [
     'Event mobs in the elemental planes (Coirnav\'s fiends and minis, Fennin Ro\'s army, the Air and Earth encounters) now show their range and spawn spots on the Mimic map, and their kills reach the replay and share timelines.',
   ],
