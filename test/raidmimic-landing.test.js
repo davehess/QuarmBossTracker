@@ -225,11 +225,11 @@ describe('the page', () => {
     expect(page).not.toMatch(/robots:/);                                          // no pinned noindex any more …
     expect(page).toMatch(/\.\.\.raidmimicSeo\(headers\(\)\.get\('host'\), '\/'\)/);   // … the Host header decides (tests above)
     expect(page).toMatch(/export function generateMetadata\(\): Metadata/);
-    expect(page).not.toMatch(/getSessionUser|supabase/i);
+    expect(page).not.toMatch(/getSessionUser/i);   // the previews read the session via supabaseServer, behind `v` only (raidmimic-skip-video.test.js)
   });
   it('renders ONE page, the story stage (the guild lead’s pick C, 2026-11-01), and reads no query: no `?v=` branches, no beta tag, no old layouts', () => {
     expect(page).toMatch(/<StoryStage downloadUrl=\{DOWNLOAD_URL\} onHost=\{onHost\} \/>/);
-    expect(page).not.toMatch(/searchParams|\bv === |\?v=[a-z]/);
+    // 2026-11-09: the skip-video previews read `v` (b, c) on this page; test/raidmimic-skip-video.test.js pins them and the default.
     expect(page).not.toMatch(/PathsLayout|ChaptersStage|BetaTag|MotionStage|SignInTop|variantOf|PreviewBar/);
     for (const gone of ['PathsLayout', 'ChaptersStage', 'MotionStage', 'SignInTop', 'ClipTabs', 'SceneClip', 'MascotHero', 'MascotVideo', 'HowItWorks',
       'LadderLayout', 'SceneLayout', 'VariantParts', 'Figures']) {
@@ -241,7 +241,7 @@ describe('the page', () => {
     for (const gone of ['VARIANTS', 'VARIANT_LABEL', 'variantOf', 'PREVIEW_NOTE', 'PLAYER', 'JUMP', 'GUILD', 'RUN', 'LINUX_URL']) expect(PL, gone).not.toHaveProperty(gone);
   });
   it('the stage is outside the width cap, and the reading column under it carries the features, raid management, pricing, the ask and the footer in that order', () => {
-    const at = [...page.matchAll(/<(StoryStage|FeatureBlocks|RaidManagement|Pricing|CtaBand|Footer)\b/g)].map(m => m[1]);
+    const at = [...page.matchAll(/<(StoryStage|FeatureBlocks|RaidManagement|Pricing|CtaBand|Footer)\b/g)].map(m => m[1]).filter((n, i, a) => n !== a[i - 1]);   // the previews add StoryStage variants in a row
     expect(at).toEqual(['StoryStage', 'FeatureBlocks', 'RaidManagement', 'Pricing', 'CtaBand', 'Footer']);
     expect(page.indexOf('<StoryStage')).toBeLessThan(page.indexOf('max-w-5xl'));
   });
@@ -289,8 +289,8 @@ describe('the shared pieces (Parts.tsx)', () => {
     expect(read('web/app/raidmimic/page.tsx')).not.toMatch(/['"]use client['"]/);
     for (const f of ['StoryStage.tsx', 'StoryVideo.tsx']) expect(read(L + f), f).toMatch(/^(?:\/\/[^\n]*\n)*'use client';|^'use client';/);
     expect(fs.readdirSync(path.join(ROOT, L)).sort()).toEqual([
-      'FeatureIcons.tsx', 'Parts.tsx', 'StoryBits.tsx', 'StoryParts.tsx', 'StoryStage.tsx', 'StoryVideo.tsx',
-    ]);
+      'FeatureIcons.tsx', 'HomePanel.tsx', 'HomePanelGate.tsx', 'Parts.tsx', 'StoryBits.tsx', 'StoryParts.tsx', 'StoryStage.tsx', 'StoryVideo.tsx',
+    ]);   // HomePanel(Gate): the ?v=c skip-video preview, 2026-11-09
   });
   it('fetches and embeds nothing external; every outbound link is one we name', () => {
     const urls = new Set();
