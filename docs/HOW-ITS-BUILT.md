@@ -1508,7 +1508,8 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   `test/raidmimic-landing.test.js`, `test/raidmimic-landing-variants.test.js`.
 - **Register your guild:** `web/app/raidmimic/register/` (page, `RegisterForm.tsx`, `actions.ts`), rules in `web/lib/guildInterest.ts` + `guildInterestFields.ts`, table
   `guild_interest`; officers read `web/app/admin/interest/page.tsx`. `b.raidmimic.com` handling is in `web/lib/raidmimicHost.ts`. Tests: `test/guild-interest.test.js`,
-  `test/raidmimic-beta-host.test.js`.
+  `test/raidmimic-beta-host.test.js`. Each new registration also posts as an embed card in the officers' `FEEDBACK_THREAD_ID` thread (bot job `_guildInterestNotice` in
+  `index.js`, every 10 min, watermark `guild_interest_notified_at` in `bot_kv`; sanitizer + card in `utils/guildInterestNotice.js`, test `test/guild-interest-notice.test.js`).
 - **Legal pages:** `web/app/raidmimic/{privacy,terms,refunds}/page.tsx` + `_legal/LegalParts.tsx`, words and version in `web/lib/legal.ts`, `AgreeLine.tsx`,
   `LegalLinks.tsx`, `recordTermsAcceptance` (`web/lib/termsAcceptance.ts`, called from both sign-in callbacks). Test: `test/legal-pages.test.js`.
 - **Your data:** `web/app/me/data/` (`YourData.tsx`, `DeleteAccount.tsx`, `actions.ts`, `export/route.ts`), `web/app/guilds/data/export/route.ts`, `web/lib/selfData.ts` +
