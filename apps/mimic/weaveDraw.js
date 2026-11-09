@@ -254,6 +254,17 @@
     if (!f) return false;
     subscribe(); announce(cv);
     var st = pick(cv), live = liveOf(st, now), c = theme();
+    // Off when you are not fighting (the guild lead, 2026-11-09: "when i'm not attacking can we turn off the weaving timer?"):
+    // idle with nothing to report paints nothing and marks the canvas, so the HUD ring puts its endurance arc back and the
+    // Timers canvas lets the piece's plate and label step aside like any empty panel (its ✥ stays). A reason ("needs Zeal",
+    // a swing word it does not know) still shows: that is the one way to learn something is wrong.
+    var idle = !live && !idleReason(st);
+    if ((cv.getAttribute('data-wp-idle') === '1') !== idle) {
+      if (idle) cv.setAttribute('data-wp-idle', '1'); else cv.removeAttribute('data-wp-idle');
+      var panel = cv.closest ? cv.closest('.panel') : null;
+      if (panel) panel.classList.toggle('wvidle', idle);
+    }
+    if (idle) return false;
     var kind = cv.getAttribute('data-wp-weave');
     (kind === 'highway' ? drawHighway : kind === 'arc' ? drawArc : drawLane)(c, f, st, live, now, cv);
     return live;

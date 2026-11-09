@@ -970,6 +970,8 @@
     var w = hudParts.weave;
     return w === 'on' || (w !== 'off' && /^(monk|beastlord)$/i.test(String((s && s['class']) || '')));
   }
+  // The lane canvas's idle mark (weaveDraw.js sets data-wp-idle when you are not fighting), read by layoutWeave.
+  var _weaveIdle = false;
   // Text size per part, from the small slider beside it in the builder (the
   // guild lead, round six: "small sliders next to each of the hud's elements for
   // font size"). 1 = as designed; kept to 0.7–1.6 so a label cannot swallow
@@ -1610,7 +1612,8 @@
     // switches only its own drawing (FB-12). Endurance on a class WITH mana is the thin arc under health.
     if (p[d.right.part] && d.right.pct != null) {
       // With the Weave timer lane on, the lane (a canvas over the ring, layoutWeave) takes the arc's place; the label stays.
-      var lane = weaveOn(s);
+      // ...but only while it shows: not fighting, weaveDraw.js marks the canvas idle and the arc comes back (2026-11-09).
+      var lane = weaveOn(s) && !_weaveIdle;
       if (!lane) h += gauge(R, 56, 124, d.right.pct / 100, d.right.color, 6 * W, true);
       // Fitted to the arc (68°): a bard's three counts with the damage out beside them is longer than
       // "MANA 45%" ever was, and a label the arc cuts off reads as a different number.
@@ -2000,6 +2003,7 @@
   function layoutWeave(s){
     var cv = document.getElementById('weavecv');
     if (!cv) return;
+    _weaveIdle = cv.getAttribute('data-wp-idle') === '1';   // the ring's next paint (100 ms) gives the arc back or takes it
     var on = !!(s && s.character) && weaveOn(s);
     document.body.classList.toggle('wv-on', on);
     if (!on) return;

@@ -327,7 +327,8 @@ describe('playing: a label shows only under the pointer (the guild lead\'s clutt
   });
   it('placement does not depend on whether the label is showing (same rule, hidden or not), and an empty panel is not placed while playing', () => {
     const body = stripJs(sliceBlock(canvas, '  function placeMins() {', '\n  }\n'));
-    expect(body).toMatch(/\(editing \|\| _one === p\.id \|\| minOn\(p\) \|\| !c\.contains\('fitempty'\)\)/);
+    // An idle Weaving timer piece (.wvidle, 2026-11-09) counts as empty too.
+    expect(body).toMatch(/\(editing \|\| _one === p\.id \|\| minOn\(p\) \|\| !\(c\.contains\('fitempty'\) \|\| c\.contains\('wvidle'\)\)\)/);
     expect(body).not.toMatch(/_hoverId/);
     expect(body).toMatch(/_minZones\.push\(/);
   });

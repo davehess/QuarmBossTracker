@@ -65,6 +65,9 @@
   :is(body.edit .panel, .panel.one).back.fitempty:not(.part){background:rgb(8 10 14 / 0.35)}
   .panel.part.back.fitempty > .pbody{background:transparent;box-shadow:none}
   :is(body.edit .panel, .panel.one).part.back.fitempty > .pbody{background:rgba(var(--wp-bg-rgb),0.35)}
+  /* The Weaving timer piece while you are not fighting (weaveDraw.js sets .wvidle): no plate, same as an empty panel. */
+  .panel.part.back.wvidle > .pbody{background:transparent;box-shadow:none}
+  :is(body.edit .panel, .panel.one).part.back.wvidle > .pbody{background:rgba(var(--wp-bg-rgb),0.35)}
   /* A page with its own builder open (the HUD ring's ⚙) takes the mouse even while arranging. */
   :is(body.edit .panel, .panel.one).building > iframe{pointer-events:auto}
   /* ...and so does one whose own options (⚙ → Page options) are showing. */
@@ -1289,7 +1292,7 @@
       var e = _els[p.id]; if (!e) return;
       // Playing, a panel with nothing showing (an empty trigger box, a Timers panel with no rows) gets no label at all.
       var c = e.root.classList, txt = minLabel(p), show = !p.gone && !p.off && !c.contains('wh') && !c.contains('mvtail') && !(p.kind === 'sect' && c.contains('nodata'))
-        && (editing || _one === p.id || minOn(p) || !c.contains('fitempty'));
+        && (editing || _one === p.id || minOn(p) || !(c.contains('fitempty') || c.contains('wvidle')));
       if (e.chip.textContent !== txt) {
         e.chip.textContent = txt;
         e.tab.querySelector('.minb').textContent = txt;
@@ -1352,7 +1355,7 @@
     var editing = document.body.classList.contains('edit');
     _layout.panels.forEach(function (p) {
       var e = _els[p.id]; if (!e) return;
-      var on = minVisible({ edit: editing || _one === p.id, collapsed: minOn(p), empty: e.root.classList.contains('fitempty'), hovered: _hoverId === p.id });
+      var on = minVisible({ edit: editing || _one === p.id, collapsed: minOn(p), empty: e.root.classList.contains('fitempty') || e.root.classList.contains('wvidle'), hovered: _hoverId === p.id });
       e.chip.classList.toggle('hot', on); e.line.classList.toggle('hot', on);
     });
   }
