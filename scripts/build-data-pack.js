@@ -55,7 +55,7 @@ const MAX_FAILED_READS = 25;
 // ── What may be read ─────────────────────────────────────────────────────────
 // Every `eqemu_*` mirror, plus the views and the quest table the catalogs are built from. Anything else is a
 // guild table, and a read of one is recorded and fails the build.
-const EXTRA_GAME_TABLES = new Set(['item_catalog_droppable', 'item_worn_damage_shield', 'scripted_npc_turnins']);
+const EXTRA_GAME_TABLES = new Set(['item_catalog_droppable', 'item_worn_damage_shield', 'item_worn_haste', 'scripted_npc_turnins']);
 const isGameTable = (t) => /^eqemu_/.test(t) || EXTRA_GAME_TABLES.has(t);
 
 const WRITE_METHODS = ['insert', 'insertIgnoreDuplicates', 'update', 'upsert', 'del', 'rpc'];
