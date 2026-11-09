@@ -594,3 +594,43 @@ describe('the HUD ring: the lane takes the mana / endurance arc', () => {
 //  CLIP_MS 250 -> 400, FIST_AFTER_MS 700 -> 2000, PRESS_GROUP_MS removed, colour 265 -> 266 in the hub, 'You ' guard removed,
 //  FIGHT_GAP_MS 12000 -> 30000, the margin dropped from close, lastFist + fistInterval dropped from open, the throttle removed,
 //  _weaveHub.note(obj) removed from onEvent, weaveOn's class test removed, the lane gauge not skipped.
+
+// 2026-11-09, the guild lead's own chat window: "[11:53:53] crush a potameid wildling for 256" — Zeal's timestamp in front and the
+// SHORT form of a melee line (no "You", no "points of damage"), and the lane stayed "waiting for a fight". Both forms, stamped or
+// not, must drive the lane.
+describe('timestamped and short-form melee lines', () => {
+  const pipeObj = (text) => ({ type: 0, character: 'Aldenmar', data: JSON.stringify({ type: 265, text }) });
+  function fight(lines) {
+    let t = 1_000_000; const sent = [];
+    const hub = W.createWeaveHub({ send: (s) => sent.push(s), now: () => t });
+    hub.setEnabled(true);
+    hub.setConfig('Aldenmar', { character: 'Aldenmar', cls: 'monk', level: 60, twoHDelay: 30 });
+    for (const [dt, text] of lines) { t += dt; hub.note(pipeObj(text)); hub.tick(); }
+    return sent[sent.length - 1];
+  }
+  it('parses each form', () => {
+    for (const line of ['[11:53:53] crush a potameid wildling for 256', 'crush a potameid wildling for 256',
+      '[11:53:53] You crush a potameid wildling for 256 points of damage.', '[11:53 AM] You crush a potameid wildling for 256 points of damage.']) {
+      expect(W.maybeSwing(line), line).toBe(true);
+      expect(W.parseSwing(line), line).toMatchObject({ verb: 'crush', target: 'a potameid wildling' });
+    }
+    expect(W.parseSwing('[11:53:56] miss')).toBeNull();                       // names no weapon
+    expect(W.maybeSwing('Brackwyn crushes a potameid wildling for 99 points of damage.')).toBe(false);   // another player's line
+  });
+  it('a stamped short-form fight lights the lane and counts a weave', () => {
+    const last = fight([
+      [0, '[11:53:52] crush a potameid wildling for 256'],
+      [2600, '[11:53:55] crush a potameid wildling for 186'],
+      [900, '[11:53:56] Loading bandolier set [fists]'],
+      [150, '[11:53:56] punch a potameid wildling for 40'],
+      [250, '[11:53:56] Loading bandolier set [2h]'],
+    ]);
+    expect(last.active).toBe(true);
+    expect(last.diag.matched).toBeGreaterThanOrEqual(3);
+    expect(last.tally.presses).toBe(1);
+  });
+  it('a short-form line with a word the lists do not know is not a swing and is not offered as one', () => {
+    const last = fight([[0, '[11:53:52] heal a potameid wildling for 256'], [100, 'crush a potameid wildling for 10']]);
+    expect(last.diag.lastVerb).toBeNull();
+  });
+});

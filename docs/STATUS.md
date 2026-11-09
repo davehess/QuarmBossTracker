@@ -217,7 +217,11 @@ next touch one rather than assuming a missing row means a missing doc.
   animation frames for a window it counts as hidden or occluded, and the lane painted only on frames); `weaveDraw.js` paints on a
   50 ms timer when a frame does not come; a lane whose own character is not live draws the character off the pipe that IS (the HUD
   names the character from the log file, Zeal from the game). The ring now also says why it is idle ("weave: needs Zeal", or the
-  swing word it did not know). If it still sits grey, the next screenshot names the cause.
+  swing word it did not know). If it still sits grey, the next screenshot names the cause. **It did (same day):** the guild lead's
+  chat shows Zeal timestamps and the SHORT melee form, `[11:53:53] crush a potameid wildling for 256`, and the hub's gate only took a
+  line starting "You ". `weave.js` now drops a leading `[HH:MM(:SS)( AM|PM)]` and reads the short form (lowercase first word,
+  ends at the number, only a 2H / fist word counts, `miss` alone is skipped); `zealPipe.js` `enrageLineOf` drops the stamp too,
+  so the instant enrage call fires for anyone with chat timestamps on.
   **First live report (2026-11-09, agent 4.0.78 beta):** *"WEAVING IS WAITING FOR A FIGHT BUT I'M IN ONE"*. The hub only fed
   the engine lines on colours 265 / 267 (the unverified guess above), so a client whose melee lines arrive on any other colour
   never started a swing. Now it takes any line that starts `You ` on any colour (other people's hits and non-melee are still
