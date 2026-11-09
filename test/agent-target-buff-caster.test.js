@@ -135,11 +135,11 @@ describe('the casts cache keeps last_casters', () => {
     };
     const fetchTargetCasts = new Function(
       '_uploadOpts', '_relayCacheKey', '_targetCastsInflight', '_targetCastsByName', 'TARGET_CASTS_TTL_MS',
-      'https', 'http', 'AGENT_VERSION', 'URL',
+      'https', 'http', 'AGENT_VERSION', 'URL', '_isGuestChar',
       fetchSrc + '\nreturn fetchTargetCasts;',
     )(
       { botUrl: 'http://bot.invalid/api/agent/encounter', token: 't' },
-      (n) => String(n).toLowerCase(), new Set(), cache, 2000, http, http, '0.0.0', URL,
+      (n) => String(n).toLowerCase(), new Set(), cache, 2000, http, http, '0.0.0', URL, () => false,
     );
     fetchTargetCasts('a gnoll pup', 'Rethlan', null);
     return cache.get('a gnoll pup');

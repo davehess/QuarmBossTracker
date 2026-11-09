@@ -1366,7 +1366,7 @@ describe('procs and stuns/aggro put into the target', () => {
   });
 
   it('the tail hands every landing of yours to the counter, after its spawn id is known', () => {
-    const tailBody = stripJs(sliceBlock(agent, 'const bcEvt = (!_sourceExcluded ? resolveSelfCastLanding', 'if (!_shouldSuppressBuffLanding(bcEvt)'));
+    const tailBody = stripJs(sliceBlock(agent, 'const bcEvt = (!_sourceExcluded ? resolveSelfCastLanding', 'if (!_sourceGuest && !_shouldSuppressBuffLanding(bcEvt)'));
     expect(tailBody).toMatch(/bcEvt\.target_id = _landingTargetId\(b\.character, bcEvt\);\s*try \{ _meNoteMyLanding\(b\.character, bcEvt\); \}/);
   });
 });
