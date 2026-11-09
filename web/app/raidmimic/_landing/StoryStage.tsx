@@ -24,11 +24,10 @@ const SLOW = 'transition-[opacity,visibility] duration-[1200ms] ease-out motion-
 const on = (show: boolean) => (show ? 'visible opacity-100' : 'invisible opacity-0');
 const GHOST = 'inline-flex min-h-11 items-center rounded-md px-2 text-sm text-[#f2ede1] no-underline hover:bg-white/10 hover:no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-gold sm:px-3';
 
-// `bigSkip` is the ?v=b / ?v=c preview (the guild lead, 2026-11-09): a big "Skip video" at the top that collapses the stage
-// (the same Hide as the bottom row) and remembers the choice per viewer, so a returning visitor lands past the video with a
-// "Rewatch the video" link at the top. `#video` in the address (the rewatch link) overrides the remembered skip. Without
-// `bigSkip` nothing below changes.
-export default function StoryStage({ downloadUrl, onHost = false, bigSkip = false }: { downloadUrl: string; onHost?: boolean; bigSkip?: boolean }) {
+// The big "Skip video" at the top (the guild lead, 2026-11-09) collapses the stage (the same Hide as the bottom row) and
+// remembers the choice per viewer, so a returning visitor lands past the video with a "Rewatch the video" link at the top.
+// `#video` in the address (the rewatch link) overrides the remembered skip.
+export default function StoryStage({ downloadUrl, onHost = false }: { downloadUrl: string; onHost?: boolean }) {
   const handle = useRef<StoryVideoHandle>(null);
   const reduced = useReducedMotion();
   const [timed, setTimed] = useState<Reveal>(() => revealAt(0));
@@ -39,12 +38,11 @@ export default function StoryStage({ downloadUrl, onHost = false, bigSkip = fals
   const show: Reveal = all ? revealAt(0, true) : timed;
 
   useEffect(() => {
-    if (!bigSkip) return;
     try {
       if (window.location.hash === REWATCH_HASH) return;
       if (window.localStorage.getItem(SKIP_KEY) === '1') setHidden(true);
     } catch { /* storage blocked: the video plays */ }
-  }, [bigSkip]);
+  }, []);
   const bigSkipNow = () => {
     try { window.localStorage.setItem(SKIP_KEY, '1'); } catch { /* not remembered */ }
     setHidden(true);
@@ -67,7 +65,7 @@ export default function StoryStage({ downloadUrl, onHost = false, bigSkip = fals
 
   // The lockup (icon + name) and the menu: the header, on the timeline.
   const header = (
-    <header className={`pointer-events-none absolute inset-x-0 ${bigSkip && hidden ? 'top-9' : 'top-0'} z-30 flex items-center gap-2 p-2 sm:gap-3 sm:p-3`}>
+    <header className={`pointer-events-none absolute inset-x-0 ${hidden ? 'top-9' : 'top-0'} z-30 flex items-center gap-2 p-2 sm:gap-3 sm:p-3`}>
       <a href="#top" data-reveal="icon" aria-label={W.brand} tabIndex={show.icon ? 0 : -1}
         className={`pointer-events-auto flex items-center gap-2 rounded-lg text-[#f2ede1] no-underline hover:no-underline ${SLOW} ${on(show.icon)}`}>
         <img src="/mimic-logo.png" alt="" width={44} height={44} className="block h-10 w-10 rounded-lg sm:h-11 sm:w-11" />
@@ -84,20 +82,14 @@ export default function StoryStage({ downloadUrl, onHost = false, bigSkip = fals
 
   // Hidden: the stage is a slim bar (lockup, menu, a way back) and the page reads on straight under it.
   if (hidden) {
-    // bigSkip: the way back is a "Rewatch the video" link along the top; otherwise the quiet button at the bottom.
+    // The way back is a "Rewatch the video" link along the top.
     return (
-      <section id="top" aria-label="Raid Mimic" data-story-stage="hidden" className={`relative ${place} ${bigSkip ? 'min-h-[7rem]' : 'min-h-[4.5rem]'} border-b border-border`}>
+      <section id="top" aria-label="Raid Mimic" data-story-stage="hidden" className={`relative ${place} min-h-[7rem] border-b border-border`}>
         {header}
-        {bigSkip ? (
-          <div className="absolute inset-x-0 top-0 z-40 flex justify-center">
-            <button type="button" data-rewatch onClick={again} className={`${QUIET_BTN} underline`}>{HOME_WORDS.rewatch}</button>
-          </div>
-        ) : (
-          <div className="absolute inset-x-0 bottom-0 flex justify-center p-1">
-            <button type="button" onClick={again} className={QUIET_BTN}>{W.show}</button>
-          </div>
-        )}
-        <div aria-hidden className={bigSkip ? 'h-[7rem]' : 'h-[4.5rem]'} />
+        <div className="absolute inset-x-0 top-0 z-40 flex justify-center">
+          <button type="button" data-rewatch onClick={again} className={`${QUIET_BTN} underline`}>{HOME_WORDS.rewatch}</button>
+        </div>
+        <div aria-hidden className="h-[7rem]" />
       </section>
     );
   }
@@ -115,7 +107,7 @@ export default function StoryStage({ downloadUrl, onHost = false, bigSkip = fals
 
       {header}
 
-      {bigSkip && !show.end && (
+      {!show.end && (
         <button type="button" data-big-skip onClick={bigSkipNow}
           className="absolute left-1/2 top-2 z-50 inline-flex min-h-12 -translate-x-1/2 items-center rounded-lg border border-gold bg-black/70 px-5 text-base font-semibold text-[#f2ede1] hover:bg-black/85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold">
           {HOME_WORDS.skipBig}

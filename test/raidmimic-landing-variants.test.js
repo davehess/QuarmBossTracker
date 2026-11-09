@@ -254,9 +254,9 @@ describe('the wiring: the default page IS the story stage', () => {
   });
   it('Hide collapses the stage to a slim bar so the page reads on, and the bar brings the story back', () => {
     expect(stage).toMatch(/if \(hidden\) \{/);
-    const hidden = stage.slice(stage.indexOf('if (hidden) {'), stage.indexOf('return (', stage.indexOf('if (hidden) {') + 20));
+    const hidden = stage.slice(stage.indexOf('if (hidden) {'), stage.indexOf('</section>', stage.indexOf('if (hidden) {')));
     expect(hidden).not.toMatch(/<StoryVideo/);                 // the video is gone (it stops downloading and playing)
-    expect(hidden).toMatch(/\{W\.show\}/);
+    expect(hidden).toMatch(/onClick=\{again\}[^>]*>\{HOME_WORDS\.rewatch\}/);   // 2026-11-09: the way back is "Rewatch the video" (raidmimic-skip-video.test.js)
     expect(stage).toMatch(/const all = skipped \|\| ended \|\| reduced \|\| hidden;/);   // the bar shows the lockup and the menu
   });
   it('skip, the end and reduced motion show everything at once; no script shows it too', () => {

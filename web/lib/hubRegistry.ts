@@ -23,8 +23,15 @@ export function signInScopes(host: string | null | undefined, flow?: string | nu
 
 /** Where the open path sends a player when the caller asked for no page in particular: their guilds, not the landing page. */
 export const RAIDMIMIC_HOME = '/guilds';
+/**
+ * Signing in keeps the player on Raid Mimic (the guild lead, 2026-11-09: "signing into raidmimic.com with discord … popped
+ * me onto the wolfpack.quest page … it should keep me on raidmimic.com"). /guilds sends a one-guild member to that guild's
+ * own site by default (§529), so the landing straight after sign-in carries `stay=1` (web/lib/guildSites.ts STAY_PARAM);
+ * the card's "Open <guild>'s site" link is still there.
+ */
 export function openNext(next: string): string {
-  return next === '/' ? RAIDMIMIC_HOME : next;
+  const to = next === '/' ? RAIDMIMIC_HOME : next;
+  return to === RAIDMIMIC_HOME ? `${RAIDMIMIC_HOME}?stay=1` : to;
 }
 
 // ── Find my guilds ──────────────────────────────────────────────────────────────────────────────────────────

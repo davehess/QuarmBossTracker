@@ -55,14 +55,15 @@ export type GuildSite = { url: string | null; redirect: boolean };
 // ── The built-in guild ─────────────────────────────────────────────────────────────────────────────────────
 // GUILD_SITE_URL is server-only on purpose (only the /guilds page reads it). Unset, empty or unusable falls back to the
 // production site, so a deployment that sets nothing behaves as the page did when the address was typed into it.
-// GUILD_SITE_REDIRECT=0 (or false/off/no) turns the redirect off for the built-in guild.
-const OFF = /^(0|false|off|no)$/i;
+// The built-in guild's redirect is OFF unless GUILD_SITE_REDIRECT=1 (or true/on/yes) turns it on (the guild lead, 2026-11-09:
+// "raidmimic.com/guilds redirects to wolfpack.quest", reported as a bug; §556 reverses §529's default for the built-in guild).
+const ON = /^(1|true|on|yes)$/i;
 
 /** The built-in guild's site and redirect setting, from configuration. */
 export function builtinGuildSite(): GuildSite {
   return {
     url: cleanSiteUrl(process.env.GUILD_SITE_URL) ?? cleanSiteUrl(PROD_SITE_URL),
-    redirect: !OFF.test((process.env.GUILD_SITE_REDIRECT ?? '').trim()),
+    redirect: ON.test((process.env.GUILD_SITE_REDIRECT ?? '').trim()),
   };
 }
 

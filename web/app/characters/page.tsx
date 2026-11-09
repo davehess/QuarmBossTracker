@@ -14,7 +14,6 @@ import { isRaidmimicHost } from '@/lib/raidmimicHost';
 import { EQMIMIC_ORIGIN } from '@/lib/raidmimicLanding';
 import { loadMine } from '@/lib/hubMine';
 import { MAX_CHARACTERS_PER_PLAYER } from '@/lib/hubImport';
-import { rewatchHref } from '@/lib/raidmimicHome';
 import NewPageTag from '@/components/NewPageTag';
 import SignInButton from '@/components/SignInButton';
 import HostFrame from '@/components/RaidmimicFrame';
@@ -30,10 +29,7 @@ export const dynamic = 'force-dynamic';
 
 const CARD = 'rounded-lg border border-border bg-panel p-4';
 
-export default async function CharactersPage({ searchParams }: { searchParams?: { v?: string } }) {
-  // ?v=b is the raidmimic landing's "Doorway" preview, which redirects a signed-in visitor here; only then is the
-  // "Rewatch the video" link shown. Without it this page is unchanged.
-  const doorway = searchParams?.v === 'b';
+export default async function CharactersPage() {
   const onHost = isRaidmimicHost(headers().get('host'));
   const { data: { user } } = await supabaseServer().auth.getUser();
   const discordId = discordIdOf(user);
@@ -56,9 +52,6 @@ export default async function CharactersPage({ searchParams }: { searchParams?: 
   return (
     <HostFrame onHost={onHost}>
       <div className="mx-auto max-w-3xl px-1 py-2 pb-12">
-        {doorway && (
-          <p className="mb-2 text-right text-sm"><a href={rewatchHref(onHost)} className="inline-flex min-h-11 items-center">Rewatch the video</a></p>
-        )}
         {note}
         <h1 className="text-2xl text-gold">My characters</h1>
         <p className="mt-1 text-sm text-dim">Signed in with Discord. Only you can see this page.</p>

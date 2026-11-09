@@ -120,6 +120,22 @@ next touch one rather than assuming a missing row means a missing doc.
   the release list, alpha included, since /releases/latest skips prereleases); the `test` source (the fork's test-all, rebased
   on v1.5.0-alpha0) is labelled "Ours on 1.5". The Wolf Pack 1.4.x build is no longer offered; a Mimic already set to it keeps
   it and Settings says so. Test: `test/zeal-source.test.js`.
+- **🧪 Gold splits for every scripted PoP event (web 2.1.116 on main, [beta], 2026-11-09, §555).** The guild lead: *"yes make gold
+  splits a site feature for every event, linked for replays and parses"*. https://wolfpack.quest/pop/events/splits (index) and
+  https://wolfpack.quest/pop/events/<slug>/splits (one event): attempts found in `encounters` (`web/lib/eventAttemptsLoad.ts`,
+  grouped by a start match, raid night or a 30-minute gap), stacked timelines first and largest with click-to-align on a key
+  moment and time-to-next, the splits table with gold for each segment's best ever, sum of best and each attempt's possible
+  save; every split links its parse, every attempt its replay window. Hand-written moments for the five elemental events
+  (`web/lib/eventSplitsDefs.ts`), a generic default for the other 98. "Play these attempts together" links to the replay
+  overlay, labelled "coming" until it ships. Tests `test/gold-splits.test.js` (gold comparison mutation-checked).
+
+- **🧾 raidmimic.com front door: C "Home panel" graduated, b deleted (web 2.1.114 on main, 2026-11-09).** Picked on the Decision
+  Desk 2026-11-09 (DECISIONS §546). Signed out: the story stage with a big "Skip video" at the top, remembered per viewer, and
+  "Rewatch the video" (`#video`) on the collapsed bar. Signed in: "Your Raid Mimic" (their characters, what each needs next, the
+  coordination tools marked coming) instead of the video, with "Rewatch the video" revealing the stage in place. The Doorway
+  redirect, the `?v=` reading and `/characters`' rewatch link are gone; the page reads no query. `loadMine` now lives in
+  `web/lib/hubMine.ts`, shared by the page and `/characters`. `test/raidmimic-skip-video.test.js`.
+
 - **🧾 Hail board: the four elemental Essences (bot 4.0.60 · web 2.1.111 on main, 2026-11-09).** The guild lead: *"hails on
   Essence of Water will give you but not say anything it seems. we should include those hails on the command center for each of
   the elemental planes"*. Coirnav, Fennin Ro, Xegony and the Avatar of Earth open `Essence of Water / Fire / Air / Earth` on the
@@ -557,7 +573,7 @@ next touch one rather than assuming a missing row means a missing doc.
   be created. Test: `test/legal-pages.test.js`.
 - **🟡 raidmimic.com references no Wolf Pack address; a guild's own site and redirect by default (first draft 2026-11-02, not yet shipped; the guild lead).**
   `hub_guilds.website_url` / `redirect_members` (migration `20261102230000_hub_guild_site.sql`, not yet applied: apply BEFORE the web change ships), Wolf Pack's site from
-  `GUILD_SITE_URL` / `GUILD_SITE_REDIRECT` (`web/lib/guildSites.ts`), `/guilds` redirects a one-guild player to it unless `?stay=1`, the privacy page is self-contained.
+  `GUILD_SITE_URL` / `GUILD_SITE_REDIRECT` (`web/lib/guildSites.ts`), `/guilds` redirects a one-guild player to it unless `?stay=1`, the privacy page is self-contained. Web 2.1.117–2.1.118 (§556): sign-in lands on `/guilds?stay=1`, and Wolf Pack's own redirect is off unless `GUILD_SITE_REDIRECT=1`.
   Open: the root layout's title template / `metadataBase` / site name and the `/auth/signin` card still say WolfPack.quest on a raidmimic host; `/api/hubs` still names the
   Wolf Pack site. Tests: `test/raidmimic-no-wolfpack.test.js`.
 - **✅ Self-serve "Download my data" and "Delete my account" (web 2.1.87, `main`; migration `20261101140000_member_self_delete.sql` applied).** A "Your data" section on
@@ -7992,3 +8008,14 @@ Mithaniel's notes (:37) and the second reading needs zeks **7** (:57), not 6. Th
 - ⏳ **Open:** not run in Electron (Chromium via Playwright only: the render and the dot clicks). ⚙ leaves mini mode and opens the full settings
   (the panel does not fit a circle). Right-click on the map itself is unchanged (centre on you); the mini menu is on the dots. Dots are fixed on the rim, the
   compass dot included; only the N marker moves. Test: `test/map-mini.test.js`.
+### 🧾 2026-11-09 — Event spawns from the quest scripts: Map points + replay timelines (bot 4.0.61 · web 2.1.115, first draft, not yet routed)
+- PoP event mobs (Water, Fire, Air, Earth) are script-spawned and had no spawn2 row. `scripts/gen-event-spawns.js` reads the
+  scripts at a pinned commit into `data/event-spawns.json` (+ `web/lib/eventSpawns.json`); `utils/zoneSpawns.js` adds event points
+  (aggro rings and pinning candidates); the three timeline loaders keep scripted-event kills. See `HOW-ITS-BUILT.md` "Event spawns from the quest scripts".
+- Not done: Mimic map styling for event points (they draw like normal spawn points until a Mimic change reads `event: true`);
+  relative / random spawns (Essences at the killer, Mud mudlings, Vine mangled, Wind storm trap, Air spirits) are listed with no coordinates and not placed;
+  Fishlords' anglerfish spawn at the first waypoint of the script's `GRIDS` and are not placed; the Fire event's other mob types have no
+  `encounters` rows (deaths not recorded; separate investigation).
+- ⏳ Unverified: Fennin's table is "Y, X" in its own comment and the script's spawn call swaps it; the swap is applied as the script does it,
+  but only Coirnav's frame was checked against spawn2 (row 365647 sits inside its spots in the same x, y order). Pairing a plain table with
+  its type is a reading of the code near each use, so spot-check a new zone against the script.

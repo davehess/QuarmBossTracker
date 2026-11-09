@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.61': [
+    'Event mobs in the elemental planes (Coirnav\'s fiends and minis, Fennin Ro\'s army, the Air and Earth encounters) now show their range and spawn spots on the Mimic map, and their kills reach the replay and share timelines.',
+  ],
   '4.0.60': [
     'The Command Center hail board now opens for the four elemental Essences (Water, Fire, Air, Earth) when their Avatar dies. The Essence hands you its item without a word, so the board marks you from your own hail, or from a tap on your name.',
   ],

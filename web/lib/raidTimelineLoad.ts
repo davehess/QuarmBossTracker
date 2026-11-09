@@ -18,6 +18,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { selectAll } from './selectAll';
 import { GUILD_TAG } from './guild';
+import { isEventNpcId } from './eventNpcIds';
 import { chunk, displayMobName } from './replayBosses';
 
 const CHUNK = 100;
@@ -60,7 +61,7 @@ export async function loadTimelineKills(
     for (const r of (data ?? []) as { npc_id: number }[]) curated.add(r.npc_id);
   }
 
-  return raw.filter(r => curated.has(r.npc_id)).map(r => {
+  return raw.filter(r => curated.has(r.npc_id) || isEventNpcId(r.npc_id)).map(r => {
     const t = Array.isArray(r.eqemu_npc_types) ? r.eqemu_npc_types[0] : r.eqemu_npc_types;
     const kill: TimelineKill = { npc_id: r.npc_id, name: displayMobName(t?.name) || 'Unknown boss', at: Date.parse(r.ended_at) };
     if (r.classification != null) kill.other = true;
