@@ -299,6 +299,10 @@ next touch one rather than assuming a missing row means a missing doc.
   short word, type 4) marks the press, tags its attempt record (`tag`) and the per-set tally (`tally.bySet`), and times the NEXT
   window for that set (`offDelayFor`: `1hb` = `offDelay1hb`, default 25, Ribcracker; `2hb` = the empty slot, bare fists by the
   table; plain = `offDelay`, the fist wraps). The weave macro's set names in the guild lead's log are `1` and `2`.
+  **STABLE in Mimic 3.0.9 / agent 4.0.83 (2026-11-09, the guild lead: *"update main mimic with the fistweaving stuff and the new
+  pipe commands. We should start recommending those"*):** everything in this entry, plus a note at the top of the HUD's Weave
+  timer settings recommending the `/pipe weave` macro ending (and `weave1hb` / `weave2hb` for comparing offhands); a `'note'`
+  row in `HUD_PARTS` is text with no setting. Release notes and https://wolfpack.quest/roadmap say the same.
   **First comparison, and false clips (same day, beta):** three minutes alternating the sets: fist wraps 27 of 30 landed,
   ~51 weave damage a press; Ribcracker 46 of 59, ~38 a press (half its offhand rounds missed, and its swap takes ~880 ms
   against ~440 for the wraps, so its 2 real clips were late swaps); empty slot 22 of 29, ~28 a press. 8 Ribcracker "clips"
