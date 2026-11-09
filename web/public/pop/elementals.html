@@ -99,6 +99,14 @@
   .clock .ev { position: absolute; top: 0; font-size: 11px; color: var(--text); white-space: nowrap; transform: translateX(-50%); }
   .clock .ev::after { content: ""; position: absolute; left: 50%; top: 18px; height: 22px; border-left: 2px solid currentColor; }
   .clock .ev.red { color: var(--red); } .clock .ev.blue { color: var(--blue); } .clock .ev.green { color: var(--green); } .clock .ev.gold { color: var(--gold); }
+  .goldsplit { background: color-mix(in srgb, var(--gold) 13%, var(--panel)); border: 1px solid var(--gold); border-radius: 10px; padding: 14px 16px; }
+  .goldsplit h2 { color: var(--gold); }
+  .goldsplit .won { font-size: 15px; color: #e6edf3; }
+  .goldsplit .won b:first-child { color: var(--gold); }
+  .goldsplit .splits { margin: 0 0 4px; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .goldsplit .splits b { color: var(--gold); }
+  @media (max-width: 600px) { #runClock .ev { font-size: 0; } }   /* the splits line carries the times on a phone */
+  .goldsplit .runlabel { margin-top: 10px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--gold); }
   .dpsrow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin: 8px 0 4px; }
   .dpsrow input[type=range] { width: min(360px, 100%); accent-color: var(--blue); }
   .dpsrow output { font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; }
@@ -154,6 +162,31 @@
   </header>
 
   <div class="planepanel" id="plane-water" role="tabpanel">
+  <!-- The gold split (the guild lead, 2026-11-09: "we killed coirnav tonight. put that success on and move the timelines
+       up to the very top, and highlight the background of it in gold. This will be the emphasis of a gold-split replay").
+       Our run's times are the encounter rows of 2026-11-08, counted from the Guardian's death (02:52:34 UTC). -->
+  <section class="goldsplit">
+    <h2>Coirnav: the 15-minute clock</h2>
+    <p class="won"><b>✓ Cleared, Sunday 8 November 2026.</b> Coirnav died <b>13:55</b> into the clock, with <b>1:05</b> to spare. The raid killed all three minibosses (Pwelon at 10:09, Vamuil 11:09, Nrinda 12:33), then Coirnav, who took 266,613 damage: the 250,000 hit points the script gives him once the minibosses are dead, plus overkill. Times are from our parses, counted from the Guardian's death.</p>
+    <div class="runlabel">Our run</div>
+    <div class="clock" id="runClock" aria-label="Our run, 8 November 2026"></div>
+    <p class="splits">Guardian <b>0:00</b> · Pwelon <b>10:09</b> · Vamuil <b>11:09</b> · Nrinda <b>12:33</b> · Coirnav <b>13:55</b> · spare <b>1:05</b></p>
+    <div class="runlabel">The plan, at a chosen damage rate</div>
+    <p>Coirnav can't be hit at first. <b>Killing his Guardian starts a 15-minute clock.</b> Three waves of 25 fiends arrive at 0:00, 3:00 and 5:00 whether or not the last wave is dead. When all 75 are dead, Coirnav can be attacked and three stronger minibosses appear beside him. <b>The raid's plan: skip the minibosses and kill Coirnav.</b> The script counts that as a win, the minibosses vanish with him, and you avoid what killing them sets off (his debuffs wiped and 25 lings every 49 seconds). Miss 15:00 and Coirnav banishes everyone from the zone. You can try again 20 minutes later, and a failed attempt does not use up his 138-hour lockout.</p>
+    <div class="dpsrow">
+      <label for="dps">Our raid damage per second</label>
+      <input type="range" id="dps" min="2000" max="10000" step="100" value="5900">
+      <output id="dpsOut" for="dps">5,900</output>
+      <button type="button" class="tbtn" data-dps="4000">bad night 4,000</button>
+      <button type="button" class="tbtn" data-dps="5900">median 5,900</button>
+      <button type="button" class="tbtn" data-dps="7400">good night 7,400</button>
+    </div>
+    <div class="clock" id="clock" aria-label="Event timeline"></div>
+    <p class="dim" id="clockNote"></p>
+    <div class="phases" id="phases"></div>
+    <div class="warnbox" style="margin-top:12px"><b>What actually fails this event is not damage.</b> At our median we finish with about eight minutes spare. It fails on these instead: <b>(1)</b> a tracked fiend or miniboss that disappears without a confirmed kill for 10 seconds ends the event, so no evacuating, no zoning a mob out, and no pulling them out of the reef; <b>(2)</b> the three early minibosses (2 million hit points, rampage) have to be held by off-tanks for five to six minutes while the fiends die; <b>(3)</b> if the raid does kill the minibosses, 25 lings rise every 49 seconds until Coirnav is dead: don't stop to clean them up.</div>
+  </section>
+
   <section>
     <h2>Plane of Water</h2>
     <p class="lede">The Reef of Coirnav: the route down, the 15-minute Coirnav event, the four big named and how to slip past the trash. Entry: Maelin's translated notes (Bastion of Thunder).</p>
@@ -198,23 +231,6 @@
   </section>
 
   <section>
-    <h2>Coirnav: the 15-minute clock</h2>
-    <p>Coirnav can't be hit at first. <b>Killing his Guardian starts a 15-minute clock.</b> Three waves of 25 fiends arrive at 0:00, 3:00 and 5:00 whether or not the last wave is dead. When all 75 are dead, Coirnav can be attacked and three stronger minibosses appear beside him. <b>The raid's plan: skip the minibosses and kill Coirnav.</b> The script counts that as a win, the minibosses vanish with him, and you avoid what killing them sets off (his debuffs wiped and 25 lings every 49 seconds). Miss 15:00 and Coirnav banishes everyone from the zone. You can try again 20 minutes later, and a failed attempt does not use up his 138-hour lockout.</p>
-    <div class="dpsrow">
-      <label for="dps">Our raid damage per second</label>
-      <input type="range" id="dps" min="2000" max="10000" step="100" value="5900">
-      <output id="dpsOut" for="dps">5,900</output>
-      <button type="button" class="tbtn" data-dps="4000">bad night 4,000</button>
-      <button type="button" class="tbtn" data-dps="5900">median 5,900</button>
-      <button type="button" class="tbtn" data-dps="7400">good night 7,400</button>
-    </div>
-    <div class="clock" id="clock" aria-label="Event timeline"></div>
-    <p class="dim" id="clockNote"></p>
-    <div class="phases" id="phases"></div>
-    <div class="warnbox" style="margin-top:12px"><b>What actually fails this event is not damage.</b> At our median we finish with about eight minutes spare. It fails on these instead: <b>(1)</b> a tracked fiend or miniboss that disappears without a confirmed kill for 10 seconds ends the event, so no evacuating, no zoning a mob out, and no pulling them out of the reef; <b>(2)</b> the three early minibosses (2 million hit points, rampage) have to be held by off-tanks for five to six minutes while the fiends die; <b>(3)</b> if the raid does kill the minibosses, 25 lings rise every 49 seconds until Coirnav is dead: don't stop to clean them up.</div>
-  </section>
-
-  <section>
     <h2>The four named of the reef</h2>
     <p class="dim">Not needed for the flag. <b>Pull each one to the entrance</b> (the zone-in) and fight it there: short swim, the exit right there, nothing else close. Each respawns 18 hours after it dies, sees invisible and summons. All of them, and Coirnav, are <b>immune to cold</b> (cold resist 1,000): wizards and druids bring fire and magic, not ice. Times are at our median damage rate.</p>
     <div class="named" id="named"></div>
@@ -246,7 +262,7 @@
         <li><b>Optional:</b> the Fishlords (Lezom and Craiyk, middle reef) summon anglerfish for 100 platinum: a farming event with no flag, not worth raid time.</li>
       </ul>
       <h2 style="margin-top:16px">Our time here so far</h2>
-      <p>We have <b>never raided Water as a raid</b>: 99 pulls since Oct 21, all small groups of 1 to 10. The useful part is speed: swimming invisible we covered about <b>5 units a second</b>, zone-in to the first real pull took 1 to 14 minutes, and to a named kill about 11.</p>
+      <p><b>Coirnav cleared on 8 November 2026</b> (the gold split at the top of this tab). Before that night: 99 pulls since Oct 21, all small groups of 1 to 10. The useful part is speed: swimming invisible we covered about <b>5 units a second</b>, zone-in to the first real pull took 1 to 14 minutes, and to a named kill about 11.</p>
     </div>
   </section>
 
@@ -594,15 +610,23 @@ function plan(d) {
   const boss = w3 + COIRNAV_SKIP / d, worst = w3 + COIRNAV_DB / d, fallback = w3 + (MINIS + COIRNAV) / d;
   return { w1, w2, w3, boss, worst, fallback };
 }
+// Our clear of 2026-11-08 (the gold split): seconds from the Guardian's death (02:52:34 UTC) to each death in our encounter
+// rows. The 75th fiend is not a row of its own; it fell before Pwelon's death at 10:09.
+const RUN_SEGS = [[0, 609, 'var(--blue)'], [609, 753, 'var(--orange)'], [753, 835, 'var(--red)'], [835, 900, 'color-mix(in srgb, var(--green) 35%, transparent)']];
+const RUN_EVS = [[0, 'Guardian dies', 'blue'], [609, 'Pwelon 10:09', 'gold'], [669, 'Vamuil 11:09', 'gold'], [753, 'Nrinda 12:33', 'gold'], [835, 'Coirnav dies 13:55', 'green'], [900, '15:00', 'red']];
 function renderClock() {
   const d = dpsNow(); const p = plan(d);
   document.getElementById('dpsOut').textContent = d.toLocaleString();
   document.getElementById('statFinish').textContent = fmtT(p.boss);
-  const pct = s => `${Math.min(100, (s / 900) * 100)}%`;
   const segs = [[0, p.w3, 'var(--blue)'], [p.w3, p.boss, 'var(--red)'], [p.boss, 900, 'color-mix(in srgb, var(--green) 35%, transparent)']];
-  const ticks = [0, 180, 300, 600, 720, 840, 900];
   const evs = [[0, 'wave 1 + Pwelon', 'blue'], [180, 'wave 2 + Nrinda', 'blue'], [300, 'wave 3 + Vamuil', 'blue'], [p.w3, '75 fiends dead: burn Coirnav', 'gold'], [p.boss, 'Coirnav dies', 'green'], [900, 'banished', 'red']];
-  const el = document.getElementById('clock');
+  drawClock(document.getElementById('runClock'), RUN_SEGS, RUN_EVS);
+  drawClock(document.getElementById('clock'), segs, evs);
+  renderClockText(d, p);
+}
+function drawClock(el, segs, evs) {
+  const pct = s => `${Math.min(100, (s / 900) * 100)}%`;
+  const ticks = [0, 180, 300, 600, 720, 840, 900];
   el.innerHTML = `<div class="track15">${segs.map(([a, b, c]) => b > a ? `<div class="seg" style="left:${pct(a)};width:calc(${pct(b)} - ${pct(a)});background:${c}"></div>` : '').join('')}</div>` +
     ticks.map(t => `<div class="tick" style="left:${pct(t)}"><span${t === 0 ? ' style="left:0;text-align:left"' : t === 900 ? ' style="left:-36px;text-align:right"' : ''}>${fmtT(t)}</span></div>`).join('');
   // stagger labels that would collide
@@ -615,6 +639,8 @@ function renderClock() {
     else if (t <= 20) e.style.transform = 'none';
     e.textContent = label; el.append(e);
   }
+}
+function renderClockText(d, p) {
   document.getElementById('clockNote').textContent = `At ${d.toLocaleString()} damage a second: wave 3 is dead at ${fmtT(p.w3)} and Coirnav at ${fmtT(p.boss)}, with ${fmtT(Math.max(0, 900 - p.boss))} to spare. If he really has the database's 3,000,000 while the minibosses stand, ${p.worst <= 900 ? 'he dies at ' + fmtT(p.worst) : 'he would not die before 15:00'}; killing the minibosses first (he drops to 250,000) finishes at ${fmtT(p.fallback)}.`;
   const ph = document.getElementById('phases');
   ph.innerHTML = [
