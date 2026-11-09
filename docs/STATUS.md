@@ -255,7 +255,10 @@ next touch one rather than assuming a missing row means a missing doc.
   that line (your class only: a targeted pet prints its own), and `mystats()` / `_calibrate()` turn N and the measured interval
   into the 2H's real delay (`statsDelay`), which then sets the haste at any later interval, so the fist window no longer leans
   on the "2H weapon delay" setting. The guild lead's numbers fit: 3000 / 1.82 = 1648 ms hasted, 3000 / 0.82 = 3659 ms
-  slowed (Basketweaver's 3.65 s).
+  slowed (Basketweaver's 3.65 s). **Re-syncs are said out loud (same day: "it jumps and doesn't say anything"):** the engine
+  keeps `notice` { kind, text, at }: `SYNC ±N ms` when a 2H swing lands ≥ 150 ms off the prediction, `SPEED a → b s` on a
+  re-lock, `/mystats: 2H delay D, haste H%` on a calibration; the highway's header and the ring (beside the arc's end) show it
+  for 2 s, fading.
   **First live report (2026-11-09, agent 4.0.78 beta):** *"WEAVING IS WAITING FOR A FIGHT BUT I'M IN ONE"*. The hub only fed
   the engine lines on colours 265 / 267 (the unverified guess above), so a client whose melee lines arrive on any other colour
   never started a swing. Now it takes any line that starts `You ` on any colour (other people's hits and non-melee are still
