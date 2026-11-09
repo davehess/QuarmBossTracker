@@ -466,7 +466,7 @@ describe('wiring', () => {
     const calls = [];
     const ctx = new Proxy({ arc: (x, y, r, a, b) => calls.push({ x, y, r, a, b }) }, { get: (t, k) => (k in t ? t[k] : () => {}), set: () => true });
     const attrs = { 'data-wp-weave': 'arc', 'data-wp-arc': '172 56 124', 'data-wp-char': 'Aldenmar' };
-    const cv = { clientWidth: 400, clientHeight: 400, width: 0, height: 0, getAttribute: (k) => attrs[k] || null, getContext: () => ctx };
+    const cv = { clientWidth: 400, clientHeight: 400, width: 0, height: 0, getAttribute: (k) => attrs[k] || null, setAttribute: (k, v) => { attrs[k] = String(v); }, removeAttribute: (k) => { delete attrs[k]; }, getContext: () => ctx };
     let queued = null;
     const win = { WpWeave: W, devicePixelRatio: 1, requestAnimationFrame: (fn) => { queued = fn; return 1; },
       getComputedStyle: () => ({ getPropertyValue: () => '', fontFamily: 'monospace' }),
@@ -502,7 +502,7 @@ describe('the lane paints when frames stop, follows the fighting character, and 
     const ctx = new Proxy({ arc: (x, y, r, a, b) => calls.push({ r, a, b }), fillText: (t) => texts.push(String(t)) },
       { get: (t, k) => (k in t ? t[k] : () => {}), set: () => true });
     const attrs = { 'data-wp-weave': 'arc', 'data-wp-arc': '172 56 124', 'data-wp-char': char };
-    const cv = { clientWidth: 400, clientHeight: 400, width: 0, height: 0, getAttribute: (k) => attrs[k] || null, getContext: () => ctx };
+    const cv = { clientWidth: 400, clientHeight: 400, width: 0, height: 0, getAttribute: (k) => attrs[k] || null, setAttribute: (k, v) => { attrs[k] = String(v); }, removeAttribute: (k) => { delete attrs[k]; }, getContext: () => ctx };
     const win = { WpWeave: W, devicePixelRatio: 1, getComputedStyle: () => ({ getPropertyValue: () => '', fontFamily: 'monospace' }),
       document: { querySelectorAll: () => [cv], documentElement: {}, body: {} } };
     if (raf) win.requestAnimationFrame = () => 1;   // frames that never come: a hidden / occluded window
@@ -553,7 +553,10 @@ describe('the lane paints when frames stop, follows the fighting character, and 
 describe('the HUD ring: the lane takes the mana / endurance arc', () => {
   const block = meScriptRaw.slice(meScriptRaw.indexOf('  // ── helpers'), meScriptRaw.indexOf('  var bodyEl'));
   // eslint-disable-next-line no-new-func
-  const R = new Function('var window = { innerWidth: 1114, innerHeight: 713 };\n' + block + '\nreturn { renderHud, hudParts, HUD_DEFAULTS, weaveOn };')();
+  // setIdle stands in for layoutWeave reading the lane canvas's data-wp-idle (2026-11-09: off while not fighting).
+  const R = new Function('var window = { innerWidth: 1114, innerHeight: 713 };\n' + block
+    + '\nreturn { renderHud, hudParts, HUD_DEFAULTS, weaveOn, setIdle: function (v) { _weaveIdle = v; } };')();
+  const lane = { set idle(v) { R.setIdle(v); } };
   const base = { ok: true, character: 'Aldenmar', level: 60, class: 'Cleric', no_mana: false,
     hp: { cur: 5311, max: 6417, pct: 82.8 }, mana: { cur: 1686, max: 3015, pct: 55.9 }, end: { pct: 41 }, cooldowns: [], target: null,
     combat: { live: true, secs: 30, out: { dps: 126, by: {} }, in: { dps: 60, by: {} }, feed: [] } };
@@ -578,6 +581,14 @@ describe('the HUD ring: the lane takes the mana / endurance arc', () => {
     expect(on.replace(/<[^>]+>/g, '')).toContain('END 41%');
     R.hudParts.weave = 'off';
     expect(arc(R.renderHud(monk), 'orange')).toBe(true);
+    reset();
+  });
+  it('not fighting (the lane canvas marked idle), the monk gets the endurance arc back; fighting, the lane has it', () => {
+    reset();
+    lane.idle = true;
+    expect(arc(R.renderHud(monk), 'orange')).toBe(true);
+    lane.idle = false;
+    expect(arc(R.renderHud(monk), 'orange')).toBe(false);
     reset();
   });
   it('a cleric keeps the mana arc by default', () => {
@@ -632,5 +643,57 @@ describe('timestamped and short-form melee lines', () => {
   it('a short-form line with a word the lists do not know is not a swing and is not offered as one', () => {
     const last = fight([[0, '[11:53:52] heal a potameid wildling for 256'], [100, 'crush a potameid wildling for 10']]);
     expect(last.diag.lastVerb).toBeNull();
+  });
+});
+
+// 2026-11-09, the guild lead: "when i'm not attacking can we turn off the weaving timer?" Idle with nothing to report paints
+// nothing; the canvas is marked so the ring gets its endurance arc back and the Timers canvas drops the piece's plate.
+describe('the weave timer is off when you are not fighting', () => {
+  function harness() {
+    const calls = [];
+    const ctx = new Proxy({ arc: () => calls.push('arc'), fillRect: () => calls.push('rect'), fillText: (t) => calls.push('text:' + t) },
+      { get: (t, k) => (k in t ? t[k] : () => {}), set: () => true });
+    const attrs = { 'data-wp-weave': 'highway', 'data-wp-char': 'Aldenmar' };
+    const panelClasses = new Set();
+    const panel = { classList: { toggle: (k, on) => (on ? panelClasses.add(k) : panelClasses.delete(k)) } };
+    const cv = { clientWidth: 300, clientHeight: 60, width: 0, height: 0, getContext: () => ctx, closest: () => panel,
+      getAttribute: (k) => (k in attrs ? attrs[k] : null), setAttribute: (k, v) => { attrs[k] = String(v); }, removeAttribute: (k) => { delete attrs[k]; } };
+    const win = { WpWeave: W, devicePixelRatio: 1, getComputedStyle: () => ({ getPropertyValue: () => '', fontFamily: 'monospace' }),
+      document: { querySelectorAll: () => [cv], documentElement: {}, body: {} } };
+    // eslint-disable-next-line no-new-func
+    new Function('window', readSource(path.join(MIMIC, 'weaveDraw.js')))(win);
+    return { win, calls, attrs, panelClasses };
+  }
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  it('idle at rest: nothing painted, the canvas marked idle, the panel marked wvidle; a fight clears both', async () => {
+    const h = harness();
+    h.win.WpWeaveDraw._onState({ character: 'Aldenmar', active: false, source: 'zeal', core: {}, diag: { seen: 3, matched: 3 } });
+    await wait(80);
+    expect(h.calls).toEqual([]);
+    expect(h.attrs['data-wp-idle']).toBe('1');
+    expect(h.panelClasses.has('wvidle')).toBe(true);
+    const now = Date.now();
+    h.win.WpWeaveDraw._onState({ character: 'Aldenmar', active: true, source: 'zeal',
+      core: { last2H: now - 300, lastFist: null, interval2H: IV, haste: 1.7, fistInterval: 2600 / 1.7, marginMs: 150 } });
+    await wait(80);
+    expect(h.calls.length).toBeGreaterThan(0);
+    expect(h.attrs['data-wp-idle']).toBeUndefined();
+    expect(h.panelClasses.has('wvidle')).toBe(false);
+  });
+  it('idle WITH a reason still shows it', async () => {
+    const h = harness();
+    h.win.WpWeaveDraw._onState({ character: 'Aldenmar', active: false, source: 'needs-zeal', core: {} });
+    await wait(80);
+    expect(h.calls.some(c => /needs Zeal/.test(c))).toBe(true);
+    expect(h.attrs['data-wp-idle']).toBeUndefined();
+  });
+  it('the ring hands the arc back while idle, and the Timers canvas treats an idle piece like an empty one', () => {
+    const me = stripJs(readSource(path.join(MIMIC, 'me.html')));
+    expect(me).toContain('var lane = weaveOn(s) && !_weaveIdle;');
+    expect(me).toContain("_weaveIdle = cv.getAttribute('data-wp-idle') === '1';");
+    const cvs = readSource(path.join(MIMIC, 'canvas.html'));
+    expect(cvs).toContain('.panel.part.back.wvidle > .pbody{background:transparent;box-shadow:none}');
+    expect(cvs).toContain("!(c.contains('fitempty') || c.contains('wvidle'))");
+    expect(cvs).toContain("empty: e.root.classList.contains('fitempty') || e.root.classList.contains('wvidle')");
   });
 });
