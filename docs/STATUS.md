@@ -571,12 +571,16 @@ next touch one rather than assuming a missing row means a missing doc.
   applied).** `https://raidmimic.com/privacy`, `/terms`, `/refunds` (also under `wolfpack.quest/raidmimic/...`, and `https://wolfpack.quest/terms`). Both sign-in callbacks
   record the accepted terms version, fail-open. "Animated with AI tools" on the story video. Words in `web/lib/legal.ts`. ⏳ `CONTACT_EMAIL` hello@raidmimic.com must still
   be created. Test: `test/legal-pages.test.js`.
-- **🧪 Two previews on beta, awaiting picks on the Decision Desk (2026-11-09; the guild lead).** (1) raidmimic.com signed-in home ("site looks
-  barebones here"): `?v=b` Dashboard and `?v=c` Get started at https://b.wolfpack.quest/raidmimic?v=b / ?v=c (signed in; no `?v=` = production),
-  `web/app/raidmimic/_landing/HomeDashboard.tsx`, `HomeChecklist.tsx`, `HomeParts.tsx`, guild reads moved to `web/lib/hubGuildsLoad.ts`, test
-  `test/raidmimic-home-variants.test.js`; Desk card `rm-signed-in-home`. (2) wolfpack.quest five-item nav ("/me, Flagging, Guild, Raids, Spectator"):
-  https://b.wolfpack.quest/raid?nav=a (flat + section row) and ?nav=b (five menus), a `wp-nav` cookie, beta builds only (`web/lib/navVariant.ts`,
-  `web/components/useNavVariant.ts`), test `test/simple-nav.test.js`; Desk card `wp-simple-nav`. On a pick: graduate the chosen one, delete the other.
+- **✅ raidmimic.com signed-in Dashboard (web 2.1.122, §559; the guild lead picked B, 2026-11-09).** `web/app/raidmimic/_landing/HomeDashboard.tsx`,
+  `HomeParts.tsx`, guild reads shared via `web/lib/hubGuildsLoad.ts`; the bar is drawn once, above it. Tests `test/raidmimic-skip-video.test.js`.
+- **✅ New raidmimic.com registrations post to the officers' feedback thread (bot 4.0.62, §559, option B).** `utils/guildInterestNotice.js`
+  (sanitizer, card, watermark plan), `_guildInterestNotice` in `index.js`, watermark `bot_kv.guild_interest_notified_at`; test
+  `test/guild-interest-notice.test.js`. The first card (the guild lead's own registration) posted 2026-11-09 16:29 UTC.
+- **🧪 raidmimic.com five-link bar on beta (web 2.1.123, §559, option A "centered underneath").** /me · Flagging · Guild · Raids · Spectator, the
+  section's pages centred under them, current section and page in gold: https://b.raidmimic.com/characters. `web/lib/raidmimicNav.ts`,
+  `web/components/RaidmimicSubnav.tsx`, `HostBar` in `web/components/RaidmimicFrame.tsx`; test `test/raidmimic-nav.test.js`. Spectator points at
+  the landing's Replay & spectator block (`/#replay`) until raidmimic.com has a spectator page. wolfpack.quest's nav is unchanged (the preview
+  was removed). Graduate on the guild lead's word.
 - **🟡 raidmimic.com references no Wolf Pack address; a guild's own site and redirect by default (first draft 2026-11-02, not yet shipped; the guild lead).**
   `hub_guilds.website_url` / `redirect_members` (migration `20261102230000_hub_guild_site.sql`, not yet applied: apply BEFORE the web change ships), Wolf Pack's site from
   `GUILD_SITE_URL` / `GUILD_SITE_REDIRECT` (`web/lib/guildSites.ts`), `/guilds` redirects a one-guild player to it unless `?stay=1`, the privacy page is self-contained. Web 2.1.117–2.1.118 (§556): sign-in lands on `/guilds?stay=1`, and Wolf Pack's own redirect is off unless `GUILD_SITE_REDIRECT=1`.
