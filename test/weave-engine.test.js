@@ -1072,3 +1072,13 @@ describe('weave sounds and a crushing offhand', () => {
     expect(trig).toContain('if (!PART && window.mimic && window.mimic.onWeaveSound) window.mimic.onWeaveSound(function (s) { if (s && s.name) playSound(s.name, s.volume); });');
   });
 });
+
+// 2026-11-09, the guild lead: "our config talks about hits vs crushes though" — the words are named for the hand.
+describe('the HUD names the words by hand, not fists', () => {
+  it('main hand (2H) words and offhand words, with the shared-word rule spelled out', () => {
+    const me = stripJs(readSource(path.join(MIMIC, 'me.html')));
+    expect(me).toContain("['weave2hVerbs', 'Main hand (2H) words, e.g. crush', 'text'],");
+    expect(me).toContain("['weaveFistVerbs', 'Offhand words (fists or the weave set weapon); a 2H word right after a press counts as offhand', 'text']");
+    expect(me).not.toContain("'Fist verbs'");
+  });
+});

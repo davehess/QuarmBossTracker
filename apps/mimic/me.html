@@ -952,13 +952,17 @@
       ['weaveDelay', 'Your 2H weapon delay', WEAVE_DELAYS], ['weaveSwapMs', 'Swap time, press to 2H back (ms)', [200, 300, 400, 500, 600, 700]],
       ['weaveRace', 'Monk race if /who has not seen you', ['human', 'iksar']],
       // 2026-11-09 (Ribcracker, secondary only, delay 25; Primal Velium Fist Wraps, delay 20): the weave set's offhand.
-      ['weaveOffDelay', 'Offhand in the weave set: fists, or its weapon delay', ['fists', 16, 18, 19, 20, 21, 22, 23, 24, 25, 26, 28, 30]],
+      ['weaveOffDelay', 'Offhand in the weave set: fists, or its weapon delay (Ribcracker 25, fist wraps 20)', ['fists', 16, 18, 19, 20, 21, 22, 23, 24, 25, 26, 28, 30]],
       // Sounds (2026-11-09: "lets add some sounds into ours"): Mimic's sound library by name; sounds/CREDITS.md.
       ['weaveSndLanded', 'Sound: weave landed', WEAVE_SOUNDS], ['weaveSndBig', 'Sound: big fist hit', WEAVE_SOUNDS],
       ['weaveBigHit', 'Big fist hit from', [100, 150, 200, 300, 400]], ['weaveSndClip', 'Sound: clipped', WEAVE_SOUNDS],
       ['weaveSndVol', 'Weave sound volume', ['0.4', '0.6', '0.8', '1']],
       ['weaveTally', 'Fight tally (on the wide Canvas piece)'],
-      ['weave2hVerbs', '2H swing verbs', 'text'], ['weaveFistVerbs', 'Fist verbs', 'text']]],
+      // The guild lead, 2026-11-09: "our config talks about hits vs crushes though": the offhand can be a weapon (Ribcracker
+      // crushes like the staff), so the words are named for the hand, not for fists. A word in both is the offhand when it
+      // lands right after a press (weave.js), so it only needs listing under the 2H.
+      ['weave2hVerbs', 'Main hand (2H) words, e.g. crush', 'text'],
+      ['weaveFistVerbs', 'Offhand words (fists or the weave set weapon); a 2H word right after a press counts as offhand', 'text']]],
     ['Hits', [['hitsIn', 'Hits on you (left)'], ['hitsOut', 'Your hits (right)'], ['ds', 'Damage shield'],
       ['procs', 'Procs and stuns/aggro on target'],
       ['rounds', 'Rounds listed', [3, 4, 5, 6, 8]], ['split', 'Newest rounds hit by hit', [1, 2, 3]],
