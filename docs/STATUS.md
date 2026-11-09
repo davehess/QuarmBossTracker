@@ -7911,3 +7911,12 @@ Mithaniel's notes (:37) and the second reading needs zeks **7** (:57), not 6. Th
   report the count. If Check says "No broken dates found" for someone the community script helps, the bounds need widening.
 - ⏳ Only the first EQ folder Mimic resolves is checked; a second install needs its own pass.
 - `test/tray-menu-layout.test.js` is quarantined in `vitest.config.js`; its expectations were updated by hand for the new tray item.
+
+### 🧾 2026-11-09 — raidmimic.com "My characters": load a character from Zeal's PoPFlags file (web 2.1.112, first draft, DECISIONS §545 step 1)
+- New page `https://raidmimic.com/characters` ([beta]): a signed-in player uploads one or more `<Name>-PoPFlags.txt` files and sees
+  each character's flag count, what it needs next (`popNextSteps` fed plain flag keys) and the flags it has. Up to 8 characters per
+  player (`MAX_CHARACTERS_PER_PLAYER` in `web/lib/hubImport.ts`). Writes `hub_characters` / `hub_flags` only (service role, server action);
+  one READ of Wolf Pack's `characters` for the claim rule (`web/lib/hubClaim.ts`, a copy of `decideClaim`). Shown only to the signed-in player.
+- Parity tests: `test/hub-characters-import.test.js` (file reader vs the agent's `parsePopFlagsFile`, claim rule vs `utils/hubSync.js`, cap, non-export rejected).
+- ⏳ Not run against a live database or a browser; no migration needed (existing columns). Names are 3-24 letters (the table's check), the agent accepts 2+.
+- ⏳ Next in §545: guild raid posts with open slots (step 2).
