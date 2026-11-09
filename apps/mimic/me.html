@@ -955,7 +955,9 @@
       // /pipe weave1hb in a macro switches to this delay; /pipe weave2hb to the empty slot (bare fists); /pipe weave to the one above.
       ['weaveOffDelay1hb', 'After /pipe weave1hb: the one-hand-blunt offhand delay', [16, 18, 19, 20, 21, 22, 23, 24, 25, 26, 28, 30]],
       ['weaveOffDelay', 'Offhand in the weave set: fists, or its weapon delay (Ribcracker 25, fist wraps 20)', ['fists', 16, 18, 19, 20, 21, 22, 23, 24, 25, 26, 28, 30]],
-      // Sounds (2026-11-09: "lets add some sounds into ours"): Mimic's sound library by name; sounds/CREDITS.md.
+      // Sounds (2026-11-09: "lets add some sounds into ours"): Mimic's sound library by name; sounds/CREDITS.md. Off until
+      // ticked (same day: "need to be able to turn on the sounds (off by default)").
+      ['weaveSnd', 'Weave sounds'],
       ['weaveSndLanded', 'Sound: weave landed', WEAVE_SOUNDS], ['weaveSndBig', 'Sound: big fist hit', WEAVE_SOUNDS],
       ['weaveBigHit', 'Big fist hit from', [100, 150, 200, 300, 400]], ['weaveSndClip', 'Sound: clipped', WEAVE_SOUNDS],
       ['weaveSndVol', 'Weave sound volume', ['0.4', '0.6', '0.8', '1']],
@@ -983,7 +985,7 @@
     hitsIn: 1, hitsOut: 1, ds: 1, procs: 1, rounds: 5, split: 2, hitsSide: 'inside', resists: 1, tres: 1, weight: 'thin',
     track: 1, trackShow: 'all', ramp: 1, lowhp: 1, clickies: 1, clickyRows: 1, clickyPick: [], sizes: {},
     weave: 'auto', weaveDir: 'down', weaveOffDelay: 'fists', weaveOffDelay1hb: 25, weaveSndLanded: 'weave-punch', weaveSndBig: 'weave-smash',
-    weaveBigHit: 200, weaveSndClip: 'weave-thud', weaveSndVol: '0.8', weaveDelay: 30, weaveSwapMs: 400, weaveRace: 'human', weaveTally: 1,
+    weaveBigHit: 200, weaveSndClip: 'weave-thud', weaveSndVol: '0.8', weaveDelay: 30, weaveSwapMs: 400, weaveRace: 'human', weaveTally: 1, weaveSnd: 0,
     weave2hVerbs: 'crush, crushes', weaveFistVerbs: 'punch, punches, hit, hits, strike, strikes' };
   // The Weave timer lane is on when picked, or by default for the two classes that hand-to-hand weave. It takes the right
   // arc's place (the mana or endurance BAR; the label beside it stays).
@@ -2025,7 +2027,7 @@
       // The haste the buffs and gear add up to (agent gear.haste, the server's own sum): the engine knows the new swing time the moment a buff lands or fades.
       hasteN: g.haste && g.haste.value > 0 ? g.haste.value : null,
       twoHDelay: p.weaveDelay, marginMs: p.weaveSwapMs, offDelay: p.weaveOffDelay === 'fists' ? 0 : p.weaveOffDelay, offDelay1hb: p.weaveOffDelay1hb,
-      sndLanded: p.weaveSndLanded, sndBig: p.weaveSndBig, sndClip: p.weaveSndClip, sndVol: Number(p.weaveSndVol), bigHit: p.weaveBigHit, showTally: !!p.weaveTally, twoVerbs: p.weave2hVerbs, fistVerbs: p.weaveFistVerbs };
+      sndLanded: p.weaveSndLanded, sndBig: p.weaveSndBig, sndClip: p.weaveSndClip, sndVol: Number(p.weaveSndVol), bigHit: p.weaveBigHit, sound: !!p.weaveSnd, showTally: !!p.weaveTally, twoVerbs: p.weave2hVerbs, fistVerbs: p.weaveFistVerbs };
   }
   function layoutWeave(s){
     var cv = document.getElementById('weavecv');

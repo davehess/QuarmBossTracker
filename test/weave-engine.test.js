@@ -1029,7 +1029,7 @@ describe('weave sounds and a crushing offhand', () => {
     let t = T; const sounds = [];
     const hub = W.createWeaveHub({ send: () => {}, now: () => t, onSound: (s) => sounds.push(s) });
     hub.setEnabled(true);
-    hub.setConfig('Aldenmar', Object.assign({ character: 'Aldenmar', cls: 'monk', level: 65, twoHDelay: 30 }, cfg || {}));
+    hub.setConfig('Aldenmar', Object.assign({ character: 'Aldenmar', cls: 'monk', level: 65, twoHDelay: 30, sound: true }, cfg || {}));
     const chat = (text, colour = 265) => hub.note({ type: 0, character: 'Aldenmar', data: JSON.stringify({ type: colour, text }) });
     return { chat, step: (ms) => { t += ms; hub.tick(); }, sounds, eng: () => hub.engines.get('aldenmar').eng };
   }
@@ -1045,6 +1045,17 @@ describe('weave sounds and a crushing offhand', () => {
     c.step(1250); c.chat('Loading bandolier set [fists]', 1011); c.step(50); c.chat('strike a blood raven for 49'); c.step(100);
     c.chat('Loading bandolier set [2h]', 1011); c.step(IVB - 1470 + 700); c.chat('crush a blood raven for 120'); c.step(50);
     expect(c.sounds.map(s => s.name)).toEqual(['weave-thud']);
+  });
+  // 2026-11-09, the guild lead: "need to be able to turn on the sounds (off by default)".
+  it('sounds are off until the HUD switch turns them on', () => {
+    const r = rig({ sound: undefined }); warm(r); weave(r, 'strike a blood raven for 260');
+    expect(r.sounds).toEqual([]);
+    expect(W.cleanCfg({}).sound).toBe(false);
+    expect(W.cleanCfg({ sound: 'yes' }).sound).toBe(false);
+    const me = stripJs(readSource(path.join(MIMIC, 'me.html')));
+    expect(me).toContain("['weaveSnd', 'Weave sounds']");
+    expect(me).toContain('weaveSnd: 0,');
+    expect(me).toContain('sound: !!p.weaveSnd,');
   });
   it('a sound set to off plays nothing, and an unknown name falls back to the default', () => {
     const r = rig({ sndLanded: 'off' }); warm(r); weave(r, 'strike a blood raven for 49');

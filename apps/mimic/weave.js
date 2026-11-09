@@ -80,6 +80,7 @@
     offDelay1hb: 25,
     // Sounds for a press's outcome (2026-11-09: "lets add some sounds into ours"): names from Mimic's sound library, '' = none.
     sndLanded: 'weave-punch', sndBig: 'weave-smash', sndClip: 'weave-thud', sndVol: 0.8, bigHit: 200,
+    sound: false,   // the master switch, off until the player turns it on (the guild lead, 2026-11-09: "off by default")
   };
   function verbList(v, dflt) {
     var a = Array.isArray(v) ? v : (typeof v === 'string' ? v.split(/[\s,]+/) : null);
@@ -110,6 +111,7 @@
       sndClip: sndName(c.sndClip, DEFAULT_CFG.sndClip),
       sndVol: (function (v) { v = Number(v); return isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_CFG.sndVol; })(c.sndVol),
       bigHit: intIn(c.bigHit, 1, 5000, DEFAULT_CFG.bigHit),
+      sound: c.sound === true,
       hasteN: intIn(c.hasteN, 30, 400, null),   // the haste the character's buffs and gear add up to (agent /api/me gear.haste), N as /mystats prints it
     };
     out.fistVerbs = out.fistVerbs.filter(function (v) { return out.twoVerbs.indexOf(v) < 0; });   // a verb is one or the other
@@ -538,7 +540,7 @@
       if (typeof o.onSound === 'function' && oc && oc.at && oc.at !== e.soundAt) {
         e.soundAt = oc.at;
         var cf = e.eng.cfg;
-        var name = oc.kind === 'landed' ? ((oc.dmg || 0) >= cf.bigHit && cf.sndBig ? cf.sndBig : cf.sndLanded) : oc.kind === 'clip' ? cf.sndClip : '';
+        var name = !cf.sound ? '' : oc.kind === 'landed' ? ((oc.dmg || 0) >= cf.bigHit && cf.sndBig ? cf.sndBig : cf.sndLanded) : oc.kind === 'clip' ? cf.sndClip : '';
         if (name) { try { o.onSound({ name: name, volume: cf.sndVol, character: e.character, kind: oc.kind }); } catch (err) { /* never into the pipe */ } }
       }
     }

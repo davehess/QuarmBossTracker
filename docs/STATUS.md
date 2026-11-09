@@ -291,7 +291,8 @@ next touch one rather than assuming a missing row means a missing doc.
   (`weave-punch` / `weave-thud` / `weave-smash` CC0, `weave-slash` CC BY 4.0, credited in `sounds/CREDITS.md`; trimmed, mono,
   levelled to the set's −10 dB peaks); the hub's `onSound` fires once per new outcome (landed, a big fist hit ≥ `bigHit`, clip)
   and main hands it to the trigger window (`weave-sound`), which plays it by library name and honours mute; the HUD ⚙ picks each
-  sound and the volume. Ribcracker (item 28808, secondary only, 1H blunt, delay 25) prints "crush", the staff's word: a 2H word
+  sound and the volume. **Off by default** (same day: *"need to be able to turn on the sounds (off by default)"*): the HUD ⚙
+  "Weave sounds" tick (`weaveSnd` → `cfg.sound`) is the master switch. Ribcracker (item 28808, secondary only, 1H blunt, delay 25) prints "crush", the staff's word: a 2H word
   straight after a press, more than CLIP_MS before the 2H is due, is the offhand round; `offDelay` (HUD "Offhand in the weave
   set") sets the window from the offhand weapon's delay, 0 = fists. **Three sets compared (same day:** *"/pipe weave, /pipe
   weave1hb, /pipe weave2hb"*, *"the 2hb hit should just be an empty offhand slot"*, *"for comparison"***):** `/pipe weave<set>` (a
