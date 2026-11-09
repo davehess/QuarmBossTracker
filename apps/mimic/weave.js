@@ -130,6 +130,12 @@
     return t.slice(0, 4) === 'You ' || /^[a-z]+ .+ for \d+/.test(t);
   }
   function parseLoad(text) { var m = BAND_RE.exec(bare(text)); return m ? m[1] : null; }
+  // Zeal's bandolier failures (Zeal/bandolier.cpp at CoastalRedwood/Zeal 094afa55): printed on CHANNEL_BANDOLIER_FAILURE (1012),
+  // and matched on the words too for a Zeal that prints them on another colour. "Already swapping" and "already equipped" are
+  // NOT failures of a weave (they print on the ordinary bandolier channel and a macro's overlapping second load says them).
+  var BAND_FAIL_COLOUR = 1012;
+  var BAND_FAIL_RE = /canceling set load|You cannot swap items when|You are too busy to (?:swap items|equip bandolier set)|^The bandolier set \[.*\] does not exist|^Invalid bandolier name/i;
+  function isBandolierFailure(colour, text) { return colour === BAND_FAIL_COLOUR || BAND_FAIL_RE.test(bare(text)); }
   // '2h', 'fist', or null for a kick, a flying kick or any other special — those are not swings.
   function classify(verb, cfg) {
     if (cfg.twoVerbs.indexOf(verb) >= 0) return '2h';
@@ -175,6 +181,7 @@
   var CLIP_MS = 250;         // the next 2H round later than expected by more than this = clipped
   var FIGHT_GAP_MS = 12000;  // no swing this long: the fight is over, the tally and the samples reset
   var MAX_SAMPLES = 6;
+  var VOID_AFTER_MS = 2500;  // a bandolier failure this soon after the press's last load voids it (a set swaps over a few ticks)
 
   function median(a) {
     var s = a.slice().sort(function (x, y) { return x - y; }), n = s.length;
@@ -187,6 +194,8 @@
     // ONE"): your melee lines seen, how many matched a 2H or fist word, and the last word that did not. Kept across
     // fights; never reset by fresh().
     this.diag = { seen: 0, matched: 0, lastVerb: null };
+    this.attempts = [];      // the last 50 attempt records (_record), kept across fights
+    this.onAttempt = null;   // set by the hub: each record goes to Mimic's capture file
     this.fresh();
   }
   // Words that are not swings at all, so never offered as "your swings say …".
@@ -195,7 +204,7 @@
   WeaveEngine.prototype.fresh = function () {
     this.last2H = null; this.last2HLine = null; this.lastFist = null; this.lastFistLine = null;
     this.samples = []; this.lastSwingAt = null; this.pending = null;
-    this.lastPress = null; this.outcome = null; this.tally = { presses: 0, landed: 0, clips: 0, misses: 0 };
+    this.lastPress = null; this.outcome = null; this.tally = { presses: 0, landed: 0, clips: 0, misses: 0, voided: 0 };
   };
   WeaveEngine.prototype.setConfig = function (cfg) { this.cfg = cleanCfg(cfg); };
   WeaveEngine.prototype.interval2H = function () {
@@ -213,6 +222,20 @@
     this.pending = null;
     this.outcome = { kind: kind, at: at, pressAt: p.firstT };
     if (kind === 'landed') this.tally.landed++; else if (kind === 'clip') this.tally.clips++; else this.tally.misses++;
+    this._record(p, kind, at, null);
+  };
+  // Every attempt, the good ones too (the guild lead, 2026-11-09: "capture the successful weave attempts as well"): when it
+  // was pressed, the window it was pressed in, when the fist and the 2H came, and how it ended. Kept in memory (the last 50)
+  // and handed to onAttempt, which Mimic's main process appends to a file.
+  WeaveEngine.prototype._record = function (p, kind, at, reason) {
+    var c = this.core();
+    var rec = { at: at, outcome: kind, reason: reason || null, press: p.firstT, lastLoad: p.lastLoad, loads: p.loads || 0,
+      marked: !!p.marked, phase: p.phase || null, open: p.open, close: p.close, last2H: p.last2H, lastFist: p.lastFist,
+      fist: p.fist, expected2H: p.expected, actual2H: (kind === 'landed' || kind === 'clip') ? at : null,
+      interval2H: Math.round(c.interval2H), fistInterval: Math.round(c.fistInterval), measured: this.measured() };
+    this.attempts.push(rec);
+    if (this.attempts.length > 50) this.attempts.shift();
+    if (typeof this.onAttempt === 'function') { try { this.onAttempt(rec); } catch (e) { /* a writer must never break timing */ } }
   };
   // One melee line, `t` = arrival (ms). Returns true when it was a swing.
   WeaveEngine.prototype.swing = function (text, t) {
@@ -254,14 +277,40 @@
   // A "Loading bandolier set [name]" line: the press.
   WeaveEngine.prototype.load = function (text, t) {
     if (parseLoad(text) == null) return false;
+    this._press(t, 'load');
+    return true;
+  };
+  // `/pipe weave` in the macro (the guild lead, 2026-11-09: "i can add a /pipe weave into the mix as well after the attempts
+  // happen"): Zeal sends it as a custom pipe object; it marks the press for certain. Close to the loads it joins their press.
+  WeaveEngine.prototype.marker = function (t) { this._press(t, 'marker'); return true; };
+  WeaveEngine.prototype._press = function (t, how) {
     var p = this.pending;
-    if (p && t - p.lastLoad <= PRESS_GROUP_MS) { p.lastLoad = t; this.lastPress = t; return true; }   // the macro's second load
+    if (p && t - p.lastLoad <= PRESS_GROUP_MS) {   // the macro's second load, or its /pipe weave
+      p.lastLoad = t; this.lastPress = t;
+      if (how === 'marker') p.marked = true; else p.loads++;
+      return;
+    }
     if (p) this._resolve(p.fist != null ? 'clip' : 'miss', t);   // an earlier press that never saw its 2H round
     var exp = null;
     if (this.last2H != null) { var iv = this.interval2H(), b = this.last2H; while (b + iv + CLIP_MS < t) b += iv; exp = b + iv; }
-    this.pending = { firstT: t, lastLoad: t, fist: null, expected: exp };
+    var d = this.active(t) ? derive(this.core(), t) : null;      // the window this press landed in, for the record
+    this.pending = { firstT: t, lastLoad: t, fist: null, expected: exp, marked: how === 'marker', loads: how === 'load' ? 1 : 0,
+      phase: d ? d.phase : null, open: d ? d.open : null, close: d ? d.close : null, last2H: this.last2H, lastFist: this.lastFist };
     this.tally.presses++;
     this.lastPress = t;
+  };
+  // A bandolier FAILURE line (Zeal's CHANNEL_BANDOLIER_FAILURE: "No empty inventory slot to unequip [..], canceling set load.",
+  // "You cannot swap items when holding something in the cursor!", too busy, casting, a missing item): the swap never
+  // happened, so the press is not a weave and does not count (the guild lead, 2026-11-09: "Don't count ones when inventory is
+  // full of the user has something in their hand where the weave doesn't happen"). Recorded as `void` with the reason.
+  WeaveEngine.prototype.fail = function (text, t) {
+    var p = this.pending;
+    if (!p || t - p.lastLoad > VOID_AFTER_MS) return false;
+    this.pending = null;
+    this.tally.presses--;
+    this.tally.voided++;
+    this.outcome = { kind: 'void', at: t, pressAt: p.firstT };
+    this._record(p, 'void', t, bare(text).slice(0, 120));
     return true;
   };
   WeaveEngine.prototype.active = function (now) { return this.lastSwingAt != null && now - this.lastSwingAt <= FIGHT_GAP_MS; };
@@ -291,7 +340,11 @@
       var k = String(character || '').toLowerCase();
       if (!k) return null;
       var e = engines.get(k);
-      if (!e && make) { e = { character: character, eng: new WeaveEngine(Object.assign({}, dflt)), lastPipe: 0, sentAt: 0, wasActive: false, wantNeeds: false, needsAt: 0, configured: false }; engines.set(k, e); }
+      if (!e && make) {
+        e = { character: character, eng: new WeaveEngine(Object.assign({}, dflt)), lastPipe: 0, sentAt: 0, wasActive: false, wantNeeds: false, needsAt: 0, configured: false };
+        if (typeof o.onAttempt === 'function') { var who = character; e.eng.onAttempt = function (rec) { rec.character = who; o.onAttempt(rec); }; }
+        engines.set(k, e);
+      }
       return e || null;
     }
     function emit(e, st, now) { e.sentAt = now; st.character = e.character; st.source = (now - e.lastPipe <= PIPE_QUIET_MS) ? 'zeal' : 'needs-zeal'; send(st); }
@@ -314,10 +367,25 @@
         if (!obj || typeof obj.character !== 'string') return false;
         var e = entry(obj.character, false), now = clock();
         if (e) e.lastPipe = now;
-        if (obj.type !== 0 || (!e && !enabled)) return false;
+        if ((obj.type !== 0 && obj.type !== 4) || (!e && !enabled)) return false;
         var d = obj.data;
         if (typeof d === 'string') { try { d = JSON.parse(d); } catch (err) { return false; } }
         if (!d || typeof d.text !== 'string') return false;
+        // Type 4 is Zeal's custom pipe object, written by `/pipe <text>`: `/pipe weave` in the macro marks the press.
+        if (obj.type === 4) {
+          if (!/^weave\b/i.test(d.text.trim())) return false;
+          if (!e) { e = entry(obj.character, true); e.lastPipe = now; }
+          e.eng.marker(now);
+          if (now - e.sentAt >= SEND_MS) { e.wasActive = true; emit(e, e.eng.snapshot(now), now); }
+          return true;
+        }
+        // A bandolier failure voids the press it follows (inventory full, something on the cursor, too busy, casting).
+        if (isBandolierFailure(Number(d.type), d.text)) {
+          if (!e) return false;
+          var voided = e.eng.fail(d.text, now);
+          if (voided) emit(e, e.eng.snapshot(now), now);
+          return voided;
+        }
         // Your melee lines by their words, on any colour: 265 / 267 (you hit / you miss) are the usual ones, but a crit and
         // other client paths print yours on others, and a colour gate left the lane idle mid-fight (the guild lead,
         // 2026-11-08). parseSwing only takes "You <verb> <target> for N points of damage." and "You try to …", never
@@ -354,7 +422,7 @@
   }
 
   var api = { handToHandDelay: handToHandDelay, cleanCfg: cleanCfg, DEFAULT_CFG: DEFAULT_CFG, parseSwing: parseSwing, parseLoad: parseLoad,
-    maybeSwing: maybeSwing, unstamp: unstamp,
+    maybeSwing: maybeSwing, unstamp: unstamp, isBandolierFailure: isBandolierFailure,
     classify: classify, derive: derive, zones: zones, median: median, WeaveEngine: WeaveEngine, createWeaveHub: createWeaveHub,
     CLIP_MS: CLIP_MS, FIGHT_GAP_MS: FIGHT_GAP_MS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

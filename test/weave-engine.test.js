@@ -212,7 +212,7 @@ describe('what a press did', () => {
     e.swing(FIST(), T + 340);
     e.swing(TWO(), T + IV + 40);
     expect(e.outcome.kind).toBe('landed');
-    expect(e.tally).toEqual({ presses: 1, landed: 1, clips: 0, misses: 0 });
+    expect(e.tally).toEqual({ presses: 1, landed: 1, clips: 0, misses: 0, voided: 0 });
   });
   it('clip: the next 2H round more than 250 ms later than expected (the swap came too late), and that interval is not measured', () => {
     const e = ready();
@@ -237,7 +237,7 @@ describe('what a press did', () => {
     e.load(LOAD(), T + 300);
     e.swing(TWO(), T + IV);
     expect(e.outcome.kind).toBe('miss');
-    expect(e.tally).toEqual({ presses: 1, landed: 0, clips: 0, misses: 1 });
+    expect(e.tally).toEqual({ presses: 1, landed: 0, clips: 0, misses: 1, voided: 0 });
   });
   it('a fist round more than 700 ms after the load is not that press\'s', () => {
     const e = ready();
@@ -253,14 +253,14 @@ describe('what a press did', () => {
     expect(e.tally.presses).toBe(1);
     e.swing(FIST(), T + 740);
     e.swing(TWO(), T + IV);
-    expect(e.tally).toEqual({ presses: 1, landed: 1, clips: 0, misses: 0 });
+    expect(e.tally).toEqual({ presses: 1, landed: 1, clips: 0, misses: 0, voided: 0 });
     expect(e.lastPress).toBe(T + 700);
   });
   it('two presses in two cycles are two outcomes', () => {
     const e = ready();
     e.load(LOAD(), T + 200); e.swing(FIST(), T + 240); e.swing(TWO(), T + IV);
     e.load(LOAD(), T + IV + 200); e.swing(FIST(), T + IV + 240); e.swing(TWO(), T + 2 * IV);
-    expect(e.tally).toEqual({ presses: 2, landed: 2, clips: 0, misses: 0 });
+    expect(e.tally).toEqual({ presses: 2, landed: 2, clips: 0, misses: 0, voided: 0 });
   });
   it('a press nobody saw a 2H round after settles by time: a fist but no 2H is a clip', () => {
     const e = ready();
@@ -286,7 +286,7 @@ describe('fights', () => {
     expect(e.snapshot(last + 11900).active).toBe(true);
     expect(e.snapshot(last + 12100).active).toBe(false);
     expect(e.tick(last + 12100)).toBe(true);
-    expect(e.tally).toEqual({ presses: 0, landed: 0, clips: 0, misses: 0 });
+    expect(e.tally).toEqual({ presses: 0, landed: 0, clips: 0, misses: 0, voided: 0 });
     expect(e.samples).toEqual([]);
     expect(e.snapshot(last + 12200).phase).toBe('idle');
   });
@@ -720,5 +720,77 @@ describe('the weave timer is off when you are not fighting', () => {
     expect(cvs).toContain('.panel.part.back.wvidle > .pbody{background:transparent;box-shadow:none}');
     expect(cvs).toContain("!(c.contains('fitempty') || c.contains('wvidle'))");
     expect(cvs).toContain("empty: e.root.classList.contains('fitempty') || e.root.classList.contains('wvidle')");
+  });
+});
+
+// 2026-11-09, the guild lead: "capture the successful weave attempts as well. i can add a /pipe weave into the mix as well after
+// the attempts happen. Don't count ones when inventory is full of the user has something in their hand where the weave doesn't
+// happen". Zeal's own texts (Zeal/bandolier.cpp): failures print on CHANNEL_BANDOLIER_FAILURE (1012).
+describe('weave attempts: captured, marked by /pipe weave, voided by a failed swap', () => {
+  function rig() {
+    let t = 1_000_000; const recs = [], sent = [];
+    const hub = W.createWeaveHub({ send: (s) => sent.push(s), now: () => t, onAttempt: (r) => recs.push(r) });
+    hub.setEnabled(true);
+    hub.setConfig('Aldenmar', { character: 'Aldenmar', cls: 'monk', level: 60, twoHDelay: 30 });
+    const chat = (text, colour = 265) => hub.note({ type: 0, character: 'Aldenmar', data: JSON.stringify({ type: colour, text }) });
+    const pipe = (text) => hub.note({ type: 4, character: 'Aldenmar', data: JSON.stringify({ text }) });
+    const step = (ms) => { t += ms; hub.tick(); };
+    const last = () => sent[sent.length - 1];
+    return { chat, pipe, step, recs, last, now: () => t };
+  }
+  const TWO = 'You crush a gnoll for 200 points of damage.', FIST = 'You punch a gnoll for 40 points of damage.';
+  // Three 2H rounds to be in a fight, then one weave pressed early in the window.
+  function warm(r) { r.chat(TWO); r.step(1760); r.chat(TWO); r.step(1760); r.chat(TWO); r.step(100); }
+
+  it('a landed weave is captured with its timing: the press, the window it fell in, the fist and the 2H', () => {
+    const r = rig(); warm(r);
+    r.chat('Loading bandolier set [fists]', 1011); r.step(150);
+    r.chat(FIST); r.step(250);
+    r.chat('Loading bandolier set [2h]', 1011); r.pipe('weave'); r.step(1200);
+    r.chat(TWO); r.step(50);
+    expect(r.recs).toHaveLength(1);
+    const a = r.recs[0];
+    expect(a).toMatchObject({ outcome: 'landed', character: 'Aldenmar', loads: 2, marked: true, reason: null });
+    expect(a.phase).toBe('go');
+    expect(a.fist - a.press).toBe(150);
+    expect(a.actual2H).toBe(a.at);
+    expect(a.open).toBeLessThanOrEqual(a.press);
+    expect(a.close).toBeGreaterThan(a.press);
+    expect(r.last().tally).toMatchObject({ presses: 1, landed: 1, voided: 0 });
+  });
+  it('/pipe weave alone is a press (the macro\'s marker, even with bandolier lines filtered out)', () => {
+    const r = rig(); warm(r);
+    r.pipe('weave'); r.step(150); r.chat(FIST); r.step(1400); r.chat(TWO);
+    expect(r.recs.map(x => [x.outcome, x.marked, x.loads])).toEqual([['landed', true, 0]]);
+    expect(r.pipe('something else')).toBe(false);
+  });
+  it('a full inventory or a busy cursor voids the press: not in the tally, recorded as void with the reason', () => {
+    for (const [text, colour] of [
+      ['No empty inventory slot to unequip [Ton Po\'s Mystical Pouch], canceling set load.', 1012],
+      ['You cannot swap items when holding something in the cursor!', 1012],
+      ['[11:53:53] You cannot swap items when holding something in the cursor!', 0],   // the words alone, timestamped, another colour
+      ['You are too busy to equip bandolier set!', 1012],
+    ]) {
+      const r = rig(); warm(r);
+      r.chat('Loading bandolier set [fists]', 1011); r.step(60);
+      r.chat(text, colour); r.step(2000); r.chat(TWO); r.step(50);
+      expect(r.last().tally, text).toMatchObject({ presses: 0, landed: 0, clips: 0, misses: 0, voided: 1 });
+      expect(r.recs.map(x => x.outcome), text).toEqual(['void']);
+      expect(r.recs[0].reason, text).toMatch(/inventory|cursor|busy/);
+    }
+  });
+  it('"Already swapping" and "already equipped" are not failures of a weave', () => {
+    for (const text of ['Already swapping bandolier sets, please wait', 'Bandolier set [2h] is already equipped']) {
+      expect(W.isBandolierFailure(1011, text), text).toBe(false);
+      const r = rig(); warm(r);
+      r.chat('Loading bandolier set [fists]', 1011); r.step(100); r.chat(FIST); r.step(100);
+      r.chat(text, 1011); r.step(1300); r.chat(TWO);
+      expect(r.recs.map(x => x.outcome), text).toEqual(['landed']);
+    }
+  });
+  it('Mimic appends each attempt to weave-attempts.ndjson, rotated, never throwing into the pipe', () => {
+    const m = stripJs(readSource(path.join(MIMIC, 'main.js')));
+    expect(m).toContain("const WEAVE_ATTEMPTS_LOG = () => path.join(app.getPath('userData'), 'weave-attempts.ndjson');");
+    expect(m).toContain('const _weaveHub = createWeaveHub({ send: _weaveSend, onAttempt: _writeWeaveAttempt });');
   });
 });
