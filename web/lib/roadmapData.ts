@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-117-2026-11-09',
+    title: 'Web 2.1.117',
+    version: 'Web 2.1.117',
+    date: '2026-11-09',
+    headline: 'Signing in on raidmimic.com keeps you on raidmimic.com.',
+    features: [],
+    fixes: [
+      'Signing in with Discord on raidmimic.com no longer sends a member of one guild straight to that guild\'s own website. You land on Your guilds, and the card still has the link to the guild\'s site.',
+    ],
+  },
+  {
     key: 'web-2-1-116-2026-11-09',
     title: 'Web 2.1.116',
     version: 'Web 2.1.116',

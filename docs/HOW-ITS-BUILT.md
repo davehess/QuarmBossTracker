@@ -150,7 +150,8 @@ writes.
   `saveGuildSite` in `[slug]/actions.ts`, which re-checks the role). Wolf Pack is not a `hub_guilds` row, so its site is CONFIGURATION: `web/lib/guildSites.ts`
   `builtinGuildSite()` reads `GUILD_SITE_URL` (default `PROD_SITE_URL`) and `GUILD_SITE_REDIRECT` (`0` turns it off). On a raidmimic host `/guilds` redirects a player
   whose ONLY guild has a site and the redirect on straight to it (`redirectTarget`); `?stay=1` (the bar's "Your guilds", every "back" link, `YOUR_DATA_PATH`) and the
-  Find-my-guilds answer keep them on the page, and two or more guilds never redirect (each card says "Open <guild>'s site"). A site on a Raid Mimic host is refused
+  Find-my-guilds answer keep them on the page, and two or more guilds never redirect (each card says "Open <guild>'s site"). Signing in never redirects
+  (web 2.1.117, §556): the open callback lands on `/guilds?stay=1` (`openNext` in `web/lib/hubRegistry.ts`). A site on a Raid Mimic host is refused
   (it would loop). No raidmimic page spells the Wolf Pack address: the privacy page is self-contained, the set-up guide and the sign-up line link Raid Mimic's own
   privacy page, the Download button goes to the GitHub release, `/auth/claim` is a 404 on the host and `/auth/mimic-link` sends a Wolf Pack code to the configured site.
   Tests: `test/raidmimic-no-wolfpack.test.js` (the ratchet and the redirect choice), `test/guilds-new.test.js`.
