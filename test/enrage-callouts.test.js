@@ -59,11 +59,11 @@ afterEach(() => {
 
 // ───────────────────────────────────────────────────────────────────────────────────────────────
 describe('who is warned, and where', () => {
-  it('a boss: "Enrage soon" as it crosses 12%, once', () => {
+  it('a boss: "Enrage soon" as it crosses 13%, once', () => {
     catalog(GNOLL, { boss: true });
-    tick(GNOLL, 40); tick(GNOLL, 13);
+    tick(GNOLL, 40); tick(GNOLL, 14);
     expect(enrageFires()).toHaveLength(0);
-    tick(GNOLL, 12); tick(GNOLL, 9); tick(GNOLL, 4);
+    tick(GNOLL, 13); tick(GNOLL, 9); tick(GNOLL, 4);
     const f = enrageFires();
     expect(f).toHaveLength(1);
     expect(f[0]).toMatchObject({ tts: 'Enrage soon', trigger: 'Enrage soon', rule_key: 'builtin:enrage_soon', color: 'red' });
@@ -75,11 +75,11 @@ describe('who is warned, and where', () => {
     expect(enrageFires()).toHaveLength(1);
     expect(enrageFires()[0].tts).toBe('Enrage soon');
   });
-  it('any other mob: nothing at 12%, one short "<mob> enraging" at 11% (2 ahead of its 9% enrage), once', () => {
+  it('any other mob: nothing at 13%, one short "<mob> enraging" at 12% (2 ahead of its 10% enrage), once', () => {
     catalog(GNOLL, { boss: false });
-    tick(GNOLL, 12);
+    tick(GNOLL, 13);
     expect(enrageFires()).toHaveLength(0);
-    tick(GNOLL, 11); tick(GNOLL, 9); tick(GNOLL, 3);
+    tick(GNOLL, 12); tick(GNOLL, 9); tick(GNOLL, 3);
     const f = enrageFires();
     expect(f).toHaveLength(1);
     expect(f[0].tts).toBe('a gnoll warlord enraging');

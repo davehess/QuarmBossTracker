@@ -16992,7 +16992,10 @@ const _meEnraged = new Map();   // mobLower → until
 // now AHEAD of each mob's OWN enrage %: 3 points early for a boss, 2 for any other mob. That % is, best
 // first: what this PC has seen the mob enrage at (median of its last 5, once two are known), the catalog's
 // own value (mob-info `enrage_pct`, ability 2 param0), then the server default.
-const ENRAGE_DEFAULT_PCT = 9;
+// 10, not 9 (2026-11-08): EQMacEmu's own rule is RULE_INT(NPC, StartEnrageValue, 10) (common/ruletypes.h:496, c2cd265),
+// and Mob::CheckEnrage enrages at HP ratio <= that, checked each time the mob takes damage (attack.cpp:3599). The two
+// "earlier" votes of 2026-11-02/06 were mobs that enraged before 9%, which 10 fits.
+const ENRAGE_DEFAULT_PCT = 10;
 const ENRAGE_BOSS_LEAD = 3;
 const ENRAGE_OTHER_LEAD = 2;
 const ENRAGE_OBS_KEEP = 5;      // observations kept per mob

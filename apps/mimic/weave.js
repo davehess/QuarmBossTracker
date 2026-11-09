@@ -163,8 +163,15 @@
 
   function WeaveEngine(cfg) {
     this.cfg = cleanCfg(cfg);
+    // What the lane can say when it stays idle (the guild lead, 2026-11-08: "WEAVING IS WAITING FOR A FIGHT BUT I'M IN
+    // ONE"): your melee lines seen, how many matched a 2H or fist word, and the last word that did not. Kept across
+    // fights; never reset by fresh().
+    this.diag = { seen: 0, matched: 0, lastVerb: null };
     this.fresh();
   }
+  // Words that are not swings at all, so never offered as "your swings say …".
+  var SPECIAL_VERBS = { kick: 1, kicks: 1, bash: 1, bashes: 1, backstab: 1, backstabs: 1, flying: 1, round: 1, dragon: 1,
+    eagle: 1, tiger: 1, frenzy: 1, frenzies: 1, have: 1, are: 1, were: 1, gain: 1, feel: 1, begin: 1 };
   WeaveEngine.prototype.fresh = function () {
     this.last2H = null; this.last2HLine = null; this.lastFist = null; this.lastFistLine = null;
     this.samples = []; this.lastSwingAt = null; this.pending = null;
@@ -192,6 +199,7 @@
     var s = parseSwing(text);
     if (!s) return false;
     var kind = classify(s.verb, this.cfg);
+    if (!SPECIAL_VERBS[s.verb]) { this.diag.seen++; if (kind) this.diag.matched++; else this.diag.lastVerb = s.verb; }
     if (!kind) return false;
     if (this.lastSwingAt != null && t - this.lastSwingAt > FIGHT_GAP_MS) this.fresh();   // a new fight
     this.lastSwingAt = t;
@@ -250,6 +258,7 @@
       core: c, measured: this.measured(), open: d ? d.open : null, close: d ? d.close : null, next2H: d ? d.next2H : null,
       lastPress: this.lastPress, outcome: this.outcome, tally: Object.assign({}, this.tally),
       cfg: { showTally: this.cfg.showTally, marginMs: this.cfg.marginMs },
+      diag: { seen: this.diag.seen, matched: this.diag.matched, lastVerb: this.diag.lastVerb },
     };
   };
 
@@ -288,11 +297,19 @@
         var d = obj.data;
         if (typeof d === 'string') { try { d = JSON.parse(d); } catch (err) { return false; } }
         if (!d || typeof d.text !== 'string') return false;
-        var k = Number(d.type), swing = (k === 265 || k === 267), load = !swing && d.text.indexOf('oading bandolier set') > 0;
+        // Your melee lines by their words, on any colour: 265 / 267 (you hit / you miss) are the usual ones, but a crit and
+        // other client paths print yours on others, and a colour gate left the lane idle mid-fight (the guild lead,
+        // 2026-11-08). parseSwing only takes "You <verb> <target> for N points of damage." and "You try to …", never
+        // non-melee damage, and classify() only a 2H or fist word.
+        var swing = d.text.charCodeAt(0) === 89 && d.text.slice(0, 4) === 'You ';
+        var load = !swing && d.text.indexOf('oading bandolier set') > 0;
         if (!swing && !load) return false;
         if (!e) { e = entry(obj.character, true); e.lastPipe = now; }
+        var before = e.eng.diag.seen;
         var took = swing ? e.eng.swing(d.text, now) : e.eng.load(d.text, now);
         if (took && now - e.sentAt >= SEND_MS) { e.wasActive = true; emit(e, e.eng.snapshot(now), now); }
+        // Melee seen but none of it matched: say so now and then, so an idle lane can name the word it heard.
+        else if (!took && e.eng.diag.seen > before && !e.eng.active(now) && now - e.sentAt >= 2000) emit(e, e.eng.snapshot(now), now);
         return took;
       },
       // The 50 ms beat: settle time-driven outcomes, push the live state, push one final idle, and tell a
