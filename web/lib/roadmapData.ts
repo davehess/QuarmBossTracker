@@ -37,6 +37,29 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-3-0-9-2026-11-09',
+    title: 'Mimic 3.0.9',
+    version: 'Mimic 3.0.9 · Agent 4.0.83 · Bot 4.0.63 · Web 2.1.123',
+    date: '2026-11-09',
+    headline: 'The weave timer grows up: it marks every press, knows your haste, scores like Basketweaver and can play a sound.',
+    features: [
+      { name: 'Mark each weave press', blurb: 'End your weave macro with /pipe weave and the timer scores that press exactly. To compare offhands, make two more ending /pipe weave1hb (a one-hand blunt like Ribcracker) and /pipe weave2hb (empty offhand); the HUD settings say the same.' },
+      { name: 'Knows your swing speed', blurb: 'The timer works out your attack speed from your buffs and hasted gear the way the server does, catches haste landing or fading, and says when it re-syncs. Running /mystats syncs it too.' },
+      { name: 'Scores like Basketweaver', blurb: 'Weaves landed, clipped and missed, the damage your weaves add per second, and your reaction time. Failed swaps (full bags, an item on the cursor) are not counted. Every press is saved to a file you can send us.' },
+      { name: 'More ways to see it', blurb: 'The lane can run bottom to top, and the Timers canvas has an Arc and a Thin bar. It steps aside when you are not fighting.' },
+      { name: 'Weave sounds', blurb: 'Optional sounds for a landed weave, a big hit and a clip. Off until you tick Weave sounds in the HUD settings.' },
+      { name: 'Map', blurb: 'Plane of Knowledge books, zone exits and other travel points are drawn. A mini mode makes the map a small round window with its buttons as dots around the edge.' },
+      { name: 'Guest characters', blurb: 'Read a friend’s or a box’s log on this computer without sending anything from it.' },
+      { name: 'Command Center', blurb: 'Coirnav’s three minis are on the board.' },
+    ],
+    fixes: [
+      'The weave timer no longer goes blank in the middle of a fight.',
+      'A press whose swap was back in time is no longer called a clip when the timer had the wrong swing speed.',
+      'The weave timer reads melee lines with chat timestamps on, and the short "crush <mob> for N" form.',
+      '"Vision restored" waits for Zeal’s buff window instead of firing early.',
+    ],
+  },
+  {
     key: 'web-2-1-122-2026-11-09',
     title: 'Web 2.1.122',
     version: 'Web 2.1.122',
