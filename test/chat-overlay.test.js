@@ -232,7 +232,7 @@ describe('what the feed keeps and shows', () => {
 describe('exclude_from_stats: an excluded character\'s log is never read into the feed', () => {
   // The tail callback cannot be driven from a test, so this reads its shape: the call sits inside the same
   // `if (!_sourceExcluded)` the tell tap uses, and runs before the byte-level filter.
-  const watch = stripJs(AGENT_SRC.slice(AGENT_SRC.indexOf('const _sourceExcluded = !shouldUploadForCharacter(b.character);')));
+  const watch = stripJs(AGENT_SRC.slice(AGENT_SRC.indexOf('const _sourceExcluded = !_sourceGuest && !shouldUploadForCharacter(b.character);')));
   const callAt = watch.indexOf('noteLocalChatLine(line, b.character)');
   it('there is exactly one call site in the tail', () => {
     expect(callAt).toBeGreaterThan(0);

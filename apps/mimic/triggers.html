@@ -814,6 +814,8 @@
   }
   // Plays it at the trigger's own volume (0-1, default 0.9). Resolves true once it is playing, false when it could
   // not (no such sound, blocked) — a 'replace' callout speaks instead then, rather than saying nothing at all.
+  // The weave timer's outcome sounds (main.js _weaveSound): only the trigger window itself plays them, never a canvas panel.
+  if (!PART && window.mimic && window.mimic.onWeaveSound) window.mimic.onWeaveSound(function (s) { if (s && s.name) playSound(s.name, s.volume); });
   function playSound(url, volume){
     if(!url || _wpMutedNow()) return;
     if (PART) return;   // a canvas panel shows; the trigger window plays

@@ -56,27 +56,27 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('the default enrage point (9%)', () => {
-  it('a boss is warned at 12%, not at 13%', () => {
+describe('the default enrage point (10%, EQMacEmu StartEnrageValue)', () => {
+  it('a boss is warned at 13%, not at 14%', () => {
     catalog(MOB, { boss: true });
-    tick(MOB, 40); tick(MOB, 13);
+    tick(MOB, 40); tick(MOB, 14);
     expect(fires()).toHaveLength(0);
-    tick(MOB, 12);
+    tick(MOB, 13);
     expect(fires()).toHaveLength(1);
     expect(fires()[0].tts).toBe('Enrage soon');
   });
-  it('any other mob is warned at 11%, not at 12%', () => {
+  it('any other mob is warned at 12%, not at 13%', () => {
     catalog(MOB, { boss: false });
-    tick(MOB, 40); tick(MOB, 12);
+    tick(MOB, 40); tick(MOB, 13);
     expect(fires()).toHaveLength(0);
-    tick(MOB, 11);
+    tick(MOB, 12);
     expect(fires()).toHaveLength(1);
     expect(fires()[0].tts).toBe('a gnoll warlord enraging');
   });
   it('a catalog row from a bot that predates enrage_pct behaves as the default', () => {
     catalog(MOB, { boss: true });   // no enrage_pct key at all
-    expect(agent._enrageWarnPct(MOB, ZONE, true)).toBe(12);
-    expect(agent._enrageWarnPct(MOB, ZONE, false)).toBe(11);
+    expect(agent._enrageWarnPct(MOB, ZONE, true)).toBe(13);
+    expect(agent._enrageWarnPct(MOB, ZONE, false)).toBe(12);
   });
 });
 

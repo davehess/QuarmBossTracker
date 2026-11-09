@@ -27,8 +27,14 @@ const { httpsGet, unzip, backupAndWriteBinary } = require('./ghDownload');
 // build-test-all.yml, DECISIONS §117). 'wolfpack' is the guild's tested build: the latest official
 // release plus the few fixes the guild has run, one rolling prerelease (tag wolfpack-beta). Anything
 // else reads as 'official'.
+// 'zeal15' (the guild lead, 2026-11-08: "should be stable, then 1.5.0, then ours that are updated off of 1.5"):
+// CoastalRedwood's newest 1.5.x release, alpha included. /releases/latest skips prereleases, so this reads the list
+// (newest first) and takes the first v1.5 tag. Once 1.5.0 is final, Stable and this one land on the same build.
+// The test-all build is rebased on 1.5 (fork, 2026-11-06), so Settings offers it as "Ours on 1.5"; the Wolf Pack build
+// is still on the 1.4.x stable and is no longer offered, but a Mimic already set to it keeps getting it.
 const ZEAL_SOURCES = {
   official: { api: 'https://api.github.com/repos/CoastalRedwood/Zeal/releases/latest' },
+  zeal15:   { list: 'https://api.github.com/repos/CoastalRedwood/Zeal/releases?per_page=30', tag: /^v?1\.5\./i },
   test:     { api: 'https://api.github.com/repos/davehess/Zeal/releases/tags/test-all-build' },
   wolfpack: { api: 'https://api.github.com/repos/davehess/Zeal/releases/tags/wolfpack-beta' },
 };
@@ -76,17 +82,26 @@ function _destFor(eqDir, entryName) {
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
-// Fetch the latest release metadata from `source` ('official' | 'test' | 'wolfpack'). Picks the
+// Fetch the latest release metadata from `source` ('official' | 'zeal15' | 'test' | 'wolfpack'). Picks the
 // zeal_v*.zip asset (falls back to any .zip). Network-only, no disk writes.
 async function checkLatest(source) {
   const src = _zealSource(source);
-  const rel = await httpsGet(ZEAL_SOURCES[src].api, { json: true });
+  const def = ZEAL_SOURCES[src];
+  let rel;
+  if (def.list) {
+    const list = await httpsGet(def.list, { json: true });
+    rel = (Array.isArray(list) ? list : []).find(r => r && !r.draft && def.tag.test(String(r.tag_name || '')));
+    if (!rel) throw new Error('there is no Zeal 1.5 release yet');
+  } else {
+    rel = await httpsGet(def.api, { json: true });
+  }
   const assets = Array.isArray(rel.assets) ? rel.assets : [];
   const zip = assets.find(a => /^zeal_v.*\.zip$/i.test(a.name))
            || assets.find(a => /\.zip$/i.test(a.name));
   if (!zip || !zip.browser_download_url) {
     throw new Error(src === 'test' ? 'the Zeal test build has no .zip yet'
       : src === 'wolfpack' ? 'the Wolf Pack Zeal build has no .zip yet'
+      : src === 'zeal15' ? 'the Zeal 1.5 release has no .zip yet'
       : 'latest Zeal release has no .zip asset');
   }
   return {

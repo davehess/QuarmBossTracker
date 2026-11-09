@@ -16,7 +16,7 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { readSource, stripJs, ROOT } from './_source-slice.js';
+import { readSource, stripJs, sliceBlock, ROOT } from './_source-slice.js';
 
 const require = createRequire(import.meta.url);
 const MIMIC = path.join(ROOT, 'apps', 'mimic');
@@ -64,8 +64,8 @@ describe('the hand-to-hand delay table (attack.cpp:3160)', () => {
 describe('lines', () => {
   it('your hits and misses are swings; the verb sorts them into 2H and fist', () => {
     const cfg = W.cleanCfg({});
-    expect(W.parseSwing(TWO())).toEqual({ verb: 'crush', target: 'a gnoll', miss: false });
-    expect(W.parseSwing('You try to punch a gnoll, but miss!')).toEqual({ verb: 'punch', target: 'a gnoll', miss: true });
+    expect(W.parseSwing(TWO())).toMatchObject({ verb: 'crush', target: 'a gnoll', miss: false });
+    expect(W.parseSwing('You try to punch a gnoll, but miss!')).toMatchObject({ verb: 'punch', target: 'a gnoll', miss: true });
     expect(W.parseSwing('You try to crush a gnoll, but a gnoll dodges!').miss).toBe(true);
     expect(W.classify('crush', cfg)).toBe('2h');
     expect(W.classify('crushes', cfg)).toBe('2h');
@@ -212,12 +212,12 @@ describe('what a press did', () => {
     e.swing(FIST(), T + 340);
     e.swing(TWO(), T + IV + 40);
     expect(e.outcome.kind).toBe('landed');
-    expect(e.tally).toEqual({ presses: 1, landed: 1, clips: 0, misses: 0 });
+    expect(e.tally).toMatchObject({ presses: 1, landed: 1, clips: 0, misses: 0, voided: 0 });
   });
   it('clip: the next 2H round more than 250 ms later than expected (the swap came too late), and that interval is not measured', () => {
     const e = ready();
-    e.load(LOAD(), T + 1600);
-    e.swing(FIST(), T + 1650);
+    e.load(LOAD(), T + 1700);
+    e.swing(FIST(), T + 1750);
     const n = e.samples.length;
     e.swing(TWO(), T + IV + 400);
     expect(e.outcome.kind).toBe('clip');
@@ -227,9 +227,9 @@ describe('what a press did', () => {
   it('250 ms late exactly is still on time, 251 is not', () => {
     // whole-millisecond rounds, so the expected time is exact
     const whole = () => { const e = eng(); rounds(e, 6, 1700, T - 8500); return e; };
-    const a = whole(); a.load(LOAD(), T + 300); a.swing(FIST(), T + 340); a.swing(TWO(), T + 1700 + 250);
+    const a = whole(); a.load(LOAD(), T + 1600); a.swing(FIST(), T + 1640); a.swing(TWO(), T + 1700 + 250);
     expect(a.outcome.kind).toBe('landed');
-    const b = whole(); b.load(LOAD(), T + 300); b.swing(FIST(), T + 340); b.swing(TWO(), T + 1700 + 251);
+    const b = whole(); b.load(LOAD(), T + 1600); b.swing(FIST(), T + 1640); b.swing(TWO(), T + 1700 + 251);
     expect(b.outcome.kind).toBe('clip');
   });
   it('miss: no fist line after the press', () => {
@@ -237,7 +237,7 @@ describe('what a press did', () => {
     e.load(LOAD(), T + 300);
     e.swing(TWO(), T + IV);
     expect(e.outcome.kind).toBe('miss');
-    expect(e.tally).toEqual({ presses: 1, landed: 0, clips: 0, misses: 1 });
+    expect(e.tally).toMatchObject({ presses: 1, landed: 0, clips: 0, misses: 1, voided: 0 });
   });
   it('a fist round more than 700 ms after the load is not that press\'s', () => {
     const e = ready();
@@ -253,20 +253,23 @@ describe('what a press did', () => {
     expect(e.tally.presses).toBe(1);
     e.swing(FIST(), T + 740);
     e.swing(TWO(), T + IV);
-    expect(e.tally).toEqual({ presses: 1, landed: 1, clips: 0, misses: 0 });
+    expect(e.tally).toMatchObject({ presses: 1, landed: 1, clips: 0, misses: 0, voided: 0 });
     expect(e.lastPress).toBe(T + 700);
   });
   it('two presses in two cycles are two outcomes', () => {
     const e = ready();
     e.load(LOAD(), T + 200); e.swing(FIST(), T + 240); e.swing(TWO(), T + IV);
     e.load(LOAD(), T + IV + 200); e.swing(FIST(), T + IV + 240); e.swing(TWO(), T + 2 * IV);
-    expect(e.tally).toEqual({ presses: 2, landed: 2, clips: 0, misses: 0 });
+    expect(e.tally).toMatchObject({ presses: 2, landed: 2, clips: 0, misses: 0, voided: 0 });
   });
-  it('a press nobody saw a 2H round after settles by time: a fist but no 2H is a clip', () => {
+  // 2026-11-09: no 2H round to time means it cannot be judged: `open`, not a clip (a blood raven "clip" was a re-press).
+  it('a press nobody saw a 2H round after settles by time: a fist but no 2H is open (not judged)', () => {
     const e = ready();
     e.load(LOAD(), T + 1600); e.swing(FIST(), T + 1650);
     e.tick(T + 1600 + 4000);
-    expect(e.outcome.kind).toBe('clip');
+    expect(e.outcome.kind).toBe('open');
+    expect(e.tally.clips).toBe(0);
+    expect(e.tally.open).toBe(1);
   });
   it('a line that is not a load does nothing', () => {
     const e = ready();
@@ -286,7 +289,7 @@ describe('fights', () => {
     expect(e.snapshot(last + 11900).active).toBe(true);
     expect(e.snapshot(last + 12100).active).toBe(false);
     expect(e.tick(last + 12100)).toBe(true);
-    expect(e.tally).toEqual({ presses: 0, landed: 0, clips: 0, misses: 0 });
+    expect(e.tally).toMatchObject({ presses: 0, landed: 0, clips: 0, misses: 0, voided: 0 });
     expect(e.samples).toEqual([]);
     expect(e.snapshot(last + 12200).phase).toBe('idle');
   });
@@ -315,22 +318,39 @@ describe('the hub: pipe objects in, states out', () => {
     expect(h.engines.size).toBe(0);
     expect(sent.length).toBe(0);
   });
-  it('takes colour 265 and 267 lines that are yours, and bandolier loads on any colour; nothing else', () => {
+  // The guild lead, 2026-11-08: "WEAVING IS WAITING FOR A FIGHT BUT I'M IN ONE". Your lines count by their words on any
+  // colour (a crit prints on its own colour); other people's never do, whatever the colour.
+  it('takes your melee lines on any colour and bandolier loads; never other people\'s hits or non-melee', () => {
     const { h, sent, advance } = hub();
     h.setEnabled(true);
     expect(h.note(chat('Aldenmar', 265, TWO()))).toBe(true);
     advance(100);
     expect(h.note(chat('Aldenmar', 267, 'You try to crush a gnoll, but miss!'))).toBe(true);
-    advance(100);
-    expect(h.note(chat('Aldenmar', 266, TWO()))).toBe(false);                       // the other colours are other people's hits
-    expect(h.note(chat('Aldenmar', 256, TWO()))).toBe(false);
+    advance(400);
+    expect(h.note(chat('Aldenmar', 301, TWO()))).toBe(true);                        // a crit's colour
+    advance(400);
+    expect(h.note(chat('Aldenmar', 266, 'Brackwyn crushes a gnoll for 5 points of damage.'))).toBe(false);
     expect(h.note(chat('Aldenmar', 265, 'Brackwyn crushes a gnoll for 5 points of damage.'))).toBe(false);
+    expect(h.note(chat('Aldenmar', 264, 'You hit a gnoll for 900 points of non-melee damage.'))).toBe(false);
     expect(h.note(chat('Aldenmar', 1010, LOAD('caen')))).toBe(true);
     expect(h.note({ type: 2, character: 'Aldenmar', data: '[]' })).toBe(false);     // a gauge is not a chat line
     expect(h.note({ type: 0, character: 'Aldenmar', data: 'not json' })).toBe(false);
     expect(sent.length).toBeGreaterThan(0);
     expect(sent[sent.length - 1].character).toBe('Aldenmar');
     expect(sent[sent.length - 1].source).toBe('zeal');
+  });
+  it('melee seen but no word matched: the state names the word, and the idle canvas line says it', () => {
+    const { h, sent, advance } = hub();
+    h.setEnabled(true);
+    expect(h.note(chat('Aldenmar', 265, 'You bludgeon a gnoll for 40 points of damage.'))).toBe(false);
+    advance(2100);
+    expect(h.note(chat('Aldenmar', 265, 'You kick a gnoll for 30 points of damage.'))).toBe(false);   // a kick is never offered
+    expect(h.note(chat('Aldenmar', 265, 'You bludgeon a gnoll for 41 points of damage.'))).toBe(false);
+    const st = sent[sent.length - 1];
+    expect(st.active).toBe(false);
+    expect(st.diag).toEqual({ seen: 2, matched: 0, lastVerb: 'bludgeon' });
+    const draw = src('weaveDraw.js');
+    expect(draw).toContain('\'Weaving timer: your swings say "\' + String(dg.lastVerb).slice(0, 16)');
   });
   it('keeps a character\'s engine apart from another\'s', () => {
     const { h, advance } = hub();
@@ -417,8 +437,9 @@ describe('wiring', () => {
   });
   it('parts.js registers me.weave as its own kind, drawn as a highway or a lane, and the Canvas loads the painter', () => {
     expect(parts).toContain("P('me.weave', 'me', 'Weaving timer', 'me', 'weave',");
-    expect(parts).toContain("weave:     [['highway', 'Timing highway'], ['lane', 'Upright lane']]");
-    expect(parts).toContain("highway: rWeave('highway'), lane: rWeave('lane')");
+    expect(parts).toContain("weave:     [['highway', 'Timing highway'], ['lane', 'Upright lane'], ['warc', 'Arc'], ['wbar', 'Thin bar']]");
+    expect(parts).toContain("highway: rWeave('highway'), lane: rWeave('lane'),");
+    expect(parts).toContain("warc: rWeave('arc', '165 -125 125 22'), wbar: rWeave('bar') };");
     expect(canvasHtml).toMatch(/<script src="weave.js"><\/script>\s*<script src="weaveDraw.js"><\/script>/);
     expect(canvasHtml).toContain('WpWeaveDraw.start()');
   });
@@ -431,6 +452,30 @@ describe('wiring', () => {
     expect(a).toBe(b);
     expect(a).toContain('<canvas data-wp-weave="highway" data-wp-char="Aldenmar"');
     expect(g.render(d, 'lane', { char: 'Aldenmar', cls: 'Monk', level: 60 }, 1)).toContain('data-wp-weave="lane"');
+    // 2026-11-09: "other formats available for the weaving, arc, thin vertical line, etc."
+    expect(g.render(d, 'warc', { char: 'Aldenmar', cls: 'Monk', level: 60 }, 1)).toContain('<canvas data-wp-weave="arc" data-wp-arc="165 -125 125 22" data-wp-char="Aldenmar"');
+    expect(g.render(d, 'wbar', { char: 'Aldenmar', cls: 'Monk', level: 60 }, 1)).toContain('<canvas data-wp-weave="bar" data-wp-char="Aldenmar"');
+    expect(g.DEFAULT_SIZE.warc).toEqual([150, 150]);
+    expect(g.DEFAULT_SIZE.wbar).toEqual([260, 12]);
+  });
+  it('the Thin bar paints the windows, a white "now" and the swing ticks, and no text', async () => {
+    const rects = [], texts = [];
+    const ctx = new Proxy({ fillRect: (x, y, w, h) => rects.push({ x, w, fill: ctx._fill }), fillText: (t) => texts.push(t) },
+      { get: (t, k) => (k in t ? t[k] : () => {}), set: (t, k, v) => { if (k === 'fillStyle') t._fill = v; return true; } });
+    const attrs = { 'data-wp-weave': 'bar', 'data-wp-char': 'Aldenmar' };
+    const cv = { clientWidth: 260, clientHeight: 12, width: 0, height: 0, getContext: () => ctx, closest: () => null,
+      getAttribute: (k) => (k in attrs ? attrs[k] : null), setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; } };
+    const win = { WpWeave: W, devicePixelRatio: 1, getComputedStyle: () => ({ getPropertyValue: () => '', fontFamily: 'monospace' }),
+      document: { querySelectorAll: () => [cv], documentElement: {}, body: {} } };
+    // eslint-disable-next-line no-new-func
+    new Function('window', readSource(path.join(MIMIC, 'weaveDraw.js')))(win);
+    const now = Date.now();
+    win.WpWeaveDraw._onState({ character: 'Aldenmar', active: true, source: 'zeal',
+      core: { last2H: now - 300, lastFist: null, interval2H: IV, haste: 1.7, fistInterval: 2600 / 1.7, marginMs: 150 } });
+    await new Promise(r => setTimeout(r, 80));
+    expect(rects.length).toBeGreaterThan(3);
+    expect(rects.some(r => Math.abs(r.x - (Math.round(260 * 0.2) - 1.5)) < 0.01 && r.w === 3)).toBe(true);   // the "now" mark
+    expect(texts).toEqual([]);
   });
   it('me.html: the lane is a canvas, off for other classes, on for a Monk and a Beastlord, placed by layoutWeave, and the settings ride to main', () => {
     expect(meHtml).toContain('<canvas id="weavecv" data-wp-weave="lane"');
@@ -449,7 +494,7 @@ describe('wiring', () => {
     const calls = [];
     const ctx = new Proxy({ arc: (x, y, r, a, b) => calls.push({ x, y, r, a, b }) }, { get: (t, k) => (k in t ? t[k] : () => {}), set: () => true });
     const attrs = { 'data-wp-weave': 'arc', 'data-wp-arc': '172 56 124', 'data-wp-char': 'Aldenmar' };
-    const cv = { clientWidth: 400, clientHeight: 400, width: 0, height: 0, getAttribute: (k) => attrs[k] || null, getContext: () => ctx };
+    const cv = { clientWidth: 400, clientHeight: 400, width: 0, height: 0, getAttribute: (k) => attrs[k] || null, setAttribute: (k, v) => { attrs[k] = String(v); }, removeAttribute: (k) => { delete attrs[k]; }, getContext: () => ctx };
     let queued = null;
     const win = { WpWeave: W, devicePixelRatio: 1, requestAnimationFrame: (fn) => { queued = fn; return 1; },
       getComputedStyle: () => ({ getPropertyValue: () => '', fontFamily: 'monospace' }),
@@ -471,9 +516,64 @@ describe('wiring', () => {
   });
   it('the painter asks for frames only while a fight is live, and the lane never takes clicks', () => {
     const draw = src('weaveDraw.js');
-    expect(draw).toContain('if (any) raf = root.requestAnimationFrame(frame);');
-    expect(draw.match(/requestAnimationFrame/g).length).toBe(3);   // the guard, the loop, the schedule
+    expect(draw).toContain('if (any) schedule();');
+    expect(draw).toMatch(/if \(root\.requestAnimationFrame\) raf = root\.requestAnimationFrame\(frame\);\s*backup = setTimeout\(frame, 50\);/);
     expect(meHtml).toContain('#weavecv{display:none;position:absolute;pointer-events:none;');
+  });
+});
+
+// 2026-11-09, the guild lead: "need the weaving to work" — the ring's lane sat grey through a fight whose log shows 20 crush and
+// 6 punch rounds (the engine's own words), so the break was between the engine and the paint. Three fixes, each run here.
+describe('the lane paints when frames stop, follows the fighting character, and says why it is idle', () => {
+  function harness({ raf = true, char = 'Aldenmar' } = {}) {
+    const calls = [], texts = [];
+    const ctx = new Proxy({ arc: (x, y, r, a, b) => calls.push({ r, a, b }), fillText: (t) => texts.push(String(t)) },
+      { get: (t, k) => (k in t ? t[k] : () => {}), set: () => true });
+    const attrs = { 'data-wp-weave': 'arc', 'data-wp-arc': '172 56 124', 'data-wp-char': char };
+    const cv = { clientWidth: 400, clientHeight: 400, width: 0, height: 0, getAttribute: (k) => attrs[k] || null, setAttribute: (k, v) => { attrs[k] = String(v); }, removeAttribute: (k) => { delete attrs[k]; }, getContext: () => ctx };
+    const win = { WpWeave: W, devicePixelRatio: 1, getComputedStyle: () => ({ getPropertyValue: () => '', fontFamily: 'monospace' }),
+      document: { querySelectorAll: () => [cv], documentElement: {}, body: {} } };
+    if (raf) win.requestAnimationFrame = () => 1;   // frames that never come: a hidden / occluded window
+    // eslint-disable-next-line no-new-func
+    new Function('window', readSource(path.join(MIMIC, 'weaveDraw.js')))(win);
+    return { win, calls, texts };
+  }
+  const live = (character, now) => ({ character, active: true, source: 'zeal',
+    core: { last2H: now - 300, lastFist: null, interval2H: IV, haste: 1.7, fistInterval: 2600 / 1.7, marginMs: 150 } });
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+
+  it('a timer paints within 50 ms when animation frames never fire', async () => {
+    const h = harness({ raf: true });
+    h.win.WpWeaveDraw._onState(live('Aldenmar', Date.now()));
+    expect(h.calls.length).toBe(0);
+    await wait(80);
+    expect(h.calls.length).toBeGreaterThan(1);   // the track plus at least one coloured window
+  });
+  it('a lane named for one character draws another character that IS fighting when its own is not', async () => {
+    const h = harness({ char: 'Aldenmar' });
+    h.win.WpWeaveDraw._onState({ character: 'Aldenmar', active: false, source: 'zeal', core: {}, diag: { seen: 0, matched: 0 } });
+    h.win.WpWeaveDraw._onState(live('Brackwyn', Date.now()));
+    await wait(80);
+    expect(h.calls.length).toBeGreaterThan(1);
+  });
+  it('idle on the ring: "needs Zeal", or the swing word it did not know; nothing at plain rest', async () => {
+    let h = harness();
+    h.win.WpWeaveDraw._onState({ character: 'Aldenmar', active: false, source: 'needs-zeal', core: {} });
+    await wait(80);
+    expect(h.texts).toContain('weave: needs Zeal');
+    h = harness();
+    h.win.WpWeaveDraw._onState({ character: 'Aldenmar', active: false, source: 'zeal', core: {}, diag: { seen: 4, matched: 0, lastVerb: 'bludgeon' } });
+    await wait(80);
+    expect(h.texts.some(t => /swings say "bludgeon"/.test(t))).toBe(true);
+    h = harness();
+    h.win.WpWeaveDraw._onState({ character: 'Aldenmar', active: false, source: 'zeal', core: {}, diag: { seen: 0, matched: 0 } });
+    await wait(80);
+    expect(h.texts.filter(t => /^weave:/.test(t))).toEqual([]);
+  });
+  it('the HUD and the Timers canvas windows are not throttled in the background', () => {
+    const main = stripJs(readSource(path.join(MIMIC, 'main.js')));
+    expect(main).toContain("webPreferences: _wpPrefs('Me', { backgroundThrottling: false }),");
+    expect(main).toContain("_wpPrefs('Timers canvas', { nodeIntegrationInSubFrames: true, backgroundThrottling: false })");
   });
 });
 
@@ -481,7 +581,10 @@ describe('wiring', () => {
 describe('the HUD ring: the lane takes the mana / endurance arc', () => {
   const block = meScriptRaw.slice(meScriptRaw.indexOf('  // ── helpers'), meScriptRaw.indexOf('  var bodyEl'));
   // eslint-disable-next-line no-new-func
-  const R = new Function('var window = { innerWidth: 1114, innerHeight: 713 };\n' + block + '\nreturn { renderHud, hudParts, HUD_DEFAULTS, weaveOn };')();
+  // setIdle stands in for layoutWeave reading the lane canvas's data-wp-idle (2026-11-09: off while not fighting).
+  const R = new Function('var window = { innerWidth: 1114, innerHeight: 713 };\n' + block
+    + '\nreturn { renderHud, hudParts, HUD_DEFAULTS, weaveOn, setIdle: function (v) { _weaveIdle = v; } };')();
+  const lane = { set idle(v) { R.setIdle(v); } };
   const base = { ok: true, character: 'Aldenmar', level: 60, class: 'Cleric', no_mana: false,
     hp: { cur: 5311, max: 6417, pct: 82.8 }, mana: { cur: 1686, max: 3015, pct: 55.9 }, end: { pct: 41 }, cooldowns: [], target: null,
     combat: { live: true, secs: 30, out: { dps: 126, by: {} }, in: { dps: 60, by: {} }, feed: [] } };
@@ -508,6 +611,14 @@ describe('the HUD ring: the lane takes the mana / endurance arc', () => {
     expect(arc(R.renderHud(monk), 'orange')).toBe(true);
     reset();
   });
+  it('not fighting (the lane canvas marked idle), the monk gets the endurance arc back; fighting, the lane has it', () => {
+    reset();
+    lane.idle = true;
+    expect(arc(R.renderHud(monk), 'orange')).toBe(true);
+    lane.idle = false;
+    expect(arc(R.renderHud(monk), 'orange')).toBe(false);
+    reset();
+  });
   it('a cleric keeps the mana arc by default', () => {
     reset();
     expect(arc(R.renderHud(base), 'blue')).toBe(true);
@@ -522,3 +633,555 @@ describe('the HUD ring: the lane takes the mana / endurance arc', () => {
 //  CLIP_MS 250 -> 400, FIST_AFTER_MS 700 -> 2000, PRESS_GROUP_MS removed, colour 265 -> 266 in the hub, 'You ' guard removed,
 //  FIGHT_GAP_MS 12000 -> 30000, the margin dropped from close, lastFist + fistInterval dropped from open, the throttle removed,
 //  _weaveHub.note(obj) removed from onEvent, weaveOn's class test removed, the lane gauge not skipped.
+
+// 2026-11-09, the guild lead's own chat window: "[11:53:53] crush a potameid wildling for 256" — Zeal's timestamp in front and the
+// SHORT form of a melee line (no "You", no "points of damage"), and the lane stayed "waiting for a fight". Both forms, stamped or
+// not, must drive the lane.
+describe('timestamped and short-form melee lines', () => {
+  const pipeObj = (text) => ({ type: 0, character: 'Aldenmar', data: JSON.stringify({ type: 265, text }) });
+  function fight(lines) {
+    let t = 1_000_000; const sent = [];
+    const hub = W.createWeaveHub({ send: (s) => sent.push(s), now: () => t });
+    hub.setEnabled(true);
+    hub.setConfig('Aldenmar', { character: 'Aldenmar', cls: 'monk', level: 60, twoHDelay: 30 });
+    for (const [dt, text] of lines) { t += dt; hub.note(pipeObj(text)); hub.tick(); }
+    return sent[sent.length - 1];
+  }
+  it('parses each form', () => {
+    for (const line of ['[11:53:53] crush a potameid wildling for 256', 'crush a potameid wildling for 256',
+      '[11:53:53] You crush a potameid wildling for 256 points of damage.', '[11:53 AM] You crush a potameid wildling for 256 points of damage.']) {
+      expect(W.maybeSwing(line), line).toBe(true);
+      expect(W.parseSwing(line), line).toMatchObject({ verb: 'crush', target: 'a potameid wildling' });
+    }
+    expect(W.parseSwing('[11:53:56] miss')).toMatchObject({ verb: null, bareMiss: true });   // names no weapon: the engine places it by time
+    expect(W.maybeSwing('Brackwyn crushes a potameid wildling for 99 points of damage.')).toBe(false);   // another player's line
+  });
+  it('a stamped short-form fight lights the lane and counts a weave', () => {
+    const last = fight([
+      [0, '[11:53:52] crush a potameid wildling for 256'],
+      [2600, '[11:53:55] crush a potameid wildling for 186'],
+      [900, '[11:53:56] Loading bandolier set [fists]'],
+      [150, '[11:53:56] punch a potameid wildling for 40'],
+      [250, '[11:53:56] Loading bandolier set [2h]'],
+    ]);
+    expect(last.active).toBe(true);
+    expect(last.diag.matched).toBeGreaterThanOrEqual(3);
+    expect(last.tally.presses).toBe(1);
+  });
+  it('a short-form line with a word the lists do not know is not a swing and is not offered as one', () => {
+    const last = fight([[0, '[11:53:52] heal a potameid wildling for 256'], [100, 'crush a potameid wildling for 10']]);
+    expect(last.diag.lastVerb).toBeNull();
+  });
+});
+
+// 2026-11-09, the guild lead: "when i'm not attacking can we turn off the weaving timer?" Idle with nothing to report paints
+// nothing; the canvas is marked so the ring gets its endurance arc back and the Timers canvas drops the piece's plate.
+describe('the weave timer is off when you are not fighting', () => {
+  function harness() {
+    const calls = [];
+    const ctx = new Proxy({ arc: () => calls.push('arc'), fillRect: () => calls.push('rect'), fillText: (t) => calls.push('text:' + t) },
+      { get: (t, k) => (k in t ? t[k] : () => {}), set: () => true });
+    const attrs = { 'data-wp-weave': 'highway', 'data-wp-char': 'Aldenmar' };
+    const panelClasses = new Set();
+    const panel = { classList: { toggle: (k, on) => (on ? panelClasses.add(k) : panelClasses.delete(k)) } };
+    const cv = { clientWidth: 300, clientHeight: 60, width: 0, height: 0, getContext: () => ctx, closest: () => panel,
+      getAttribute: (k) => (k in attrs ? attrs[k] : null), setAttribute: (k, v) => { attrs[k] = String(v); }, removeAttribute: (k) => { delete attrs[k]; } };
+    const win = { WpWeave: W, devicePixelRatio: 1, getComputedStyle: () => ({ getPropertyValue: () => '', fontFamily: 'monospace' }),
+      document: { querySelectorAll: () => [cv], documentElement: {}, body: {} } };
+    // eslint-disable-next-line no-new-func
+    new Function('window', readSource(path.join(MIMIC, 'weaveDraw.js')))(win);
+    return { win, calls, attrs, panelClasses };
+  }
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  it('idle at rest: nothing painted, the canvas marked idle, the panel marked wvidle; a fight clears both', async () => {
+    const h = harness();
+    h.win.WpWeaveDraw._onState({ character: 'Aldenmar', active: false, source: 'zeal', core: {}, diag: { seen: 3, matched: 3 } });
+    await wait(80);
+    expect(h.calls).toEqual([]);
+    expect(h.attrs['data-wp-idle']).toBe('1');
+    expect(h.panelClasses.has('wvidle')).toBe(true);
+    const now = Date.now();
+    h.win.WpWeaveDraw._onState({ character: 'Aldenmar', active: true, source: 'zeal',
+      core: { last2H: now - 300, lastFist: null, interval2H: IV, haste: 1.7, fistInterval: 2600 / 1.7, marginMs: 150 } });
+    await wait(80);
+    expect(h.calls.length).toBeGreaterThan(0);
+    expect(h.attrs['data-wp-idle']).toBeUndefined();
+    expect(h.panelClasses.has('wvidle')).toBe(false);
+  });
+  it('idle WITH a reason still shows it', async () => {
+    const h = harness();
+    h.win.WpWeaveDraw._onState({ character: 'Aldenmar', active: false, source: 'needs-zeal', core: {} });
+    await wait(80);
+    expect(h.calls.some(c => /needs Zeal/.test(c))).toBe(true);
+    expect(h.attrs['data-wp-idle']).toBeUndefined();
+  });
+  it('the ring hands the arc back while idle, and the Timers canvas treats an idle piece like an empty one', () => {
+    const me = stripJs(readSource(path.join(MIMIC, 'me.html')));
+    expect(me).toContain('var lane = weaveOn(s) && !_weaveIdle;');
+    expect(me).toContain("_weaveIdle = cv.getAttribute('data-wp-idle') === '1';");
+    const cvs = readSource(path.join(MIMIC, 'canvas.html'));
+    expect(cvs).toContain('.panel.part.back.wvidle > .pbody{background:transparent;box-shadow:none}');
+    expect(cvs).toContain("!(c.contains('fitempty') || c.contains('wvidle'))");
+    expect(cvs).toContain("empty: e.root.classList.contains('fitempty') || e.root.classList.contains('wvidle')");
+  });
+});
+
+// 2026-11-09, the guild lead: "capture the successful weave attempts as well. i can add a /pipe weave into the mix as well after
+// the attempts happen. Don't count ones when inventory is full of the user has something in their hand where the weave doesn't
+// happen". Zeal's own texts (Zeal/bandolier.cpp): failures print on CHANNEL_BANDOLIER_FAILURE (1012).
+describe('weave attempts: captured, marked by /pipe weave, voided by a failed swap', () => {
+  function rig() {
+    let t = 1_000_000; const recs = [], sent = [];
+    const hub = W.createWeaveHub({ send: (s) => sent.push(s), now: () => t, onAttempt: (r) => recs.push(r) });
+    hub.setEnabled(true);
+    hub.setConfig('Aldenmar', { character: 'Aldenmar', cls: 'monk', level: 60, twoHDelay: 30 });
+    const chat = (text, colour = 265) => hub.note({ type: 0, character: 'Aldenmar', data: JSON.stringify({ type: colour, text }) });
+    const pipe = (text) => hub.note({ type: 4, character: 'Aldenmar', data: JSON.stringify({ text }) });
+    const step = (ms) => { t += ms; hub.tick(); };
+    const last = () => sent[sent.length - 1];
+    return { chat, pipe, step, recs, last, now: () => t };
+  }
+  const TWO = 'You crush a gnoll for 200 points of damage.', FIST = 'You punch a gnoll for 40 points of damage.';
+  // Three 2H rounds to be in a fight, then one weave pressed early in the window.
+  function warm(r) { r.chat(TWO); r.step(1760); r.chat(TWO); r.step(1760); r.chat(TWO); r.step(100); }
+
+  it('a landed weave is captured with its timing: the press, the window it fell in, the fist and the 2H', () => {
+    const r = rig(); warm(r);
+    r.chat('Loading bandolier set [fists]', 1011); r.step(150);
+    r.chat(FIST); r.step(250);
+    r.chat('Loading bandolier set [2h]', 1011); r.pipe('weave'); r.step(1200);
+    r.chat(TWO); r.step(50);
+    expect(r.recs).toHaveLength(1);
+    const a = r.recs[0];
+    expect(a).toMatchObject({ outcome: 'landed', character: 'Aldenmar', loads: 2, marked: true, reason: null });
+    expect(a.phase).toBe('go');
+    expect(a.fist - a.press).toBe(150);
+    expect(a.actual2H).toBe(a.at);
+    expect(a.open).toBeLessThanOrEqual(a.press);
+    expect(a.close).toBeGreaterThan(a.press);
+    expect(r.last().tally).toMatchObject({ presses: 1, landed: 1, voided: 0 });
+  });
+  it('/pipe weave alone is a press (the macro\'s marker, even with bandolier lines filtered out)', () => {
+    const r = rig(); warm(r);
+    r.pipe('weave'); r.step(150); r.chat(FIST); r.step(1400); r.chat(TWO);
+    expect(r.recs.map(x => [x.outcome, x.marked, x.loads])).toEqual([['landed', true, 0]]);
+    expect(r.pipe('something else')).toBe(false);
+  });
+  it('a full inventory or a busy cursor voids the press: not in the tally, recorded as void with the reason', () => {
+    for (const [text, colour] of [
+      ['No empty inventory slot to unequip [Ton Po\'s Mystical Pouch], canceling set load.', 1012],
+      ['You cannot swap items when holding something in the cursor!', 1012],
+      ['[11:53:53] You cannot swap items when holding something in the cursor!', 0],   // the words alone, timestamped, another colour
+      ['You are too busy to equip bandolier set!', 1012],
+    ]) {
+      const r = rig(); warm(r);
+      r.chat('Loading bandolier set [fists]', 1011); r.step(60);
+      r.chat(text, colour); r.step(2000); r.chat(TWO); r.step(50);
+      expect(r.last().tally, text).toMatchObject({ presses: 0, landed: 0, clips: 0, misses: 0, voided: 1 });
+      expect(r.recs.map(x => x.outcome), text).toEqual(['void']);
+      expect(r.recs[0].reason, text).toMatch(/inventory|cursor|busy/);
+    }
+  });
+  it('"Already swapping" and "already equipped" are not failures of a weave', () => {
+    for (const text of ['Already swapping bandolier sets, please wait', 'Bandolier set [2h] is already equipped']) {
+      expect(W.isBandolierFailure(1011, text), text).toBe(false);
+      const r = rig(); warm(r);
+      r.chat('Loading bandolier set [fists]', 1011); r.step(100); r.chat(FIST); r.step(100);
+      r.chat(text, 1011); r.step(1300); r.chat(TWO);
+      expect(r.recs.map(x => x.outcome), text).toEqual(['landed']);
+    }
+  });
+  it('Mimic appends each attempt to weave-attempts.ndjson, rotated, never throwing into the pipe', () => {
+    const m = stripJs(readSource(path.join(MIMIC, 'main.js')));
+    expect(m).toContain("const WEAVE_ATTEMPTS_LOG = () => path.join(app.getPath('userData'), 'weave-attempts.ndjson');");
+    expect(m).toContain('const _weaveHub = createWeaveHub({ send: _weaveSend, onAttempt: _writeWeaveAttempt, onSound: _weaveSound });');
+  });
+});
+
+// 2026-11-09, the guild lead: "auto-detect epic fists instead of the checkbox - and most of us don't wear them anymore since we have
+// access to Dark handwraps", then "Our weaving timer is being unreliable while the timer from the basketweaver is very reliable".
+// The server (EQMacEmu Client::GetHandToHandDelay) gives bare fists delay 16 only for Celestial Fists (10652) in the Hands slot;
+// Dark Hand Wraps (28949) are armour. The swap's round trip is 400 ms (Basketweaver's measured "Weave Off Delay"), not 150.
+describe('the weave reads the character: epic from the Hands slot, race from /who; the swap time is 400 ms', () => {
+  const agentSrc = readSource(path.join(ROOT, 'packages', 'wolfpack-logsync', 'index.js'));
+  const block = sliceBlock(agentSrc, 'function _meGear(character, who, level, st) {', '\n  };\n}');
+  const gearOf = (invs, who) => new Function('stats', '_meHaste', block + '\nreturn _meGear;')({ characterInventories: invs }, () => null)('aldenmar', who);
+  it('_meGear: the Hands item, the weapons and /who race, from the inventory the agent already parsed', () => {
+    const invs = { Aldenmar: { worn: { Hands: { id: 28949, name: 'Dark Hand Wraps' } },
+      weapons: { primary: { id: 26599, name: 'Caen\'s Bo Staff of Fury' } }, _updatedAt: '2026-11-09T17:48:11Z' } };
+    expect(gearOf(invs, { race: 'Iksar' })).toEqual({ hands_id: 28949, primary: { id: 26599, name: 'Caen\'s Bo Staff of Fury' },
+      secondary: null, race: 'Iksar', inventory_at: '2026-11-09T17:48:11Z', haste: null });
+    expect(gearOf({}, null)).toEqual({ hands_id: null, primary: null, secondary: null, race: null, inventory_at: null, haste: null });
+    expect(agentSrc).toContain('    gear: _meGear(active, who, level, st),');
+  });
+  it('the HUD sends epic only for Celestial Fists in Hands, race from /who, and the new swap-time key', () => {
+    const me = stripJs(readSource(path.join(MIMIC, 'me.html')));
+    expect(me).toContain("race: g.race ? (/iksar/i.test(g.race) ? 'iksar' : 'human') : p.weaveRace, epic: g.hands_id === 10652,");
+    expect(me).toContain('marginMs: p.weaveSwapMs,');
+    expect(me).toContain("weaveSwapMs: 400,");
+    expect(me).not.toMatch(/weaveEpic|weaveMargin/);
+  });
+  it('the engine: 400 ms by default; Dark Hand Wraps leave a level 65 human at bare fists (2.0 s), the epic gives 1.6 s', () => {
+    expect(W.DEFAULT_CFG.marginMs).toBe(400);
+    expect(W.cleanCfg({ marginMs: 900 }).marginMs).toBe(900);
+    expect(W.handToHandDelay({ cls: 'monk', level: 65, race: 'human', epic: false })).toBe(20);
+    expect(W.handToHandDelay({ cls: 'monk', level: 65, race: 'iksar', epic: false })).toBe(21);
+    expect(W.handToHandDelay({ cls: 'monk', level: 65, race: 'human', epic: true })).toBe(16);
+  });
+});
+
+// 2026-11-09, the guild lead's side-by-side with Basketweaver ("B 26/33 rounds weaved | Bonus attacks: 52 attempts 38 landed |
+// Added DPS: 33 | Avg reaction: 334ms"), our tally reading 3✓ 5✕ 6· at the moment Basketweaver had 12 weaves. The short form
+// prints every miss as a bare "miss": a missed 2H round vanished (the next weave read as a clip) and a missed fist read as no fist.
+describe('scoring like Basketweaver: bare misses placed, unseen rounds not clips, added DPS and reaction', () => {
+  const IVS = 1650;
+  function rig() {
+    let t = 1_000_000; const recs = [], sent = [];
+    const hub = W.createWeaveHub({ send: (s) => sent.push(s), now: () => t, onAttempt: (r) => recs.push(r) });
+    hub.setEnabled(true);
+    hub.setConfig('Aldenmar', { character: 'Aldenmar', cls: 'monk', level: 65, twoHDelay: 30 });
+    const chat = (text, colour = 265) => hub.note({ type: 0, character: 'Aldenmar', data: JSON.stringify({ type: colour, text }) });
+    const step = (ms) => { t += ms; hub.tick(); };
+    return { chat, step, recs, last: () => sent[sent.length - 1] };
+  }
+  const TWO = (n = 256) => '[11:53:53] crush a frost giant elite for ' + n;
+  function warm(r) { for (let i = 0; i < 4; i++) { r.chat(TWO()); r.step(IVS); } r.chat(TWO()); r.step(120); }
+  function weave(r, fistLine) {
+    r.chat('Loading bandolier set [fists]', 1011); r.step(150);
+    r.chat(fistLine); r.step(250);
+    r.chat('Loading bandolier set [2h]', 1011); r.step(IVS - 520);
+  }
+
+  it('a bare "miss" right after the press is the fist round missing: an attempt, not a hit, and the weave still lands', () => {
+    const r = rig(); warm(r); weave(r, '[11:53:54] miss'); r.chat(TWO()); r.step(50);
+    expect(r.recs.map(a => [a.outcome, a.fistMissed, a.fistDmg])).toEqual([['landed', true, 0]]);
+    expect(r.last().tally).toMatchObject({ landed: 1, clips: 0, misses: 0, fistTried: 1, fistHit: 0 });
+  });
+  it('a bare "miss" on the beat is the 2H round missing: the next weave is not read as a clip', () => {
+    const r = rig(); warm(r);
+    r.step(IVS - 120); r.chat('[11:53:55] miss');      // the 2H round, missed (no weapon named)
+    r.step(120); weave(r, '[11:53:56] punch a frost giant elite for 91'); r.chat(TWO()); r.step(50);
+    expect(r.recs.map(a => a.outcome)).toEqual(['landed']);
+    expect(r.last().tally.rounds).toBe(7);
+  });
+  it('a 2H round we never saw at all is "on the beat" late, not a clip; a real clip still is one', () => {
+    const r = rig(); warm(r); weave(r, '[11:53:56] punch a frost giant elite for 91');
+    r.step(IVS); r.chat(TWO()); r.step(50);              // one whole swing later than expected: the round between left no line
+    expect(r.recs.map(a => a.outcome)).toEqual(['landed']);
+    const c = rig(); warm(c);
+    c.step(1300); c.chat('Loading bandolier set [fists]', 1011); c.step(50); c.chat('[11:53:56] punch a frost giant elite for 91'); c.step(100);
+    c.chat('Loading bandolier set [2h]', 1011); c.step(IVS - 1570 + 700); c.chat(TWO()); c.step(50);   // pressed late, swapped back late, 700 ms late: a clip
+    expect(c.recs.map(a => a.outcome)).toEqual(['clip']);
+  });
+  it('added DPS is the weaved fists\' damage over the fight; reaction is the press after the window opened', () => {
+    const r = rig(); warm(r); weave(r, '[11:53:56] punch a frost giant elite for 91'); r.chat(TWO()); r.step(50);
+    const t = r.last().tally;
+    expect(t.weaveDmg).toBe(91);
+    expect(t.addedDps).toBe(Math.round(91 / ((5 * IVS + 50) / 1000)));   // first swing to now: five swings and the 50 ms tick
+    expect(t.reactAvg).toBe(120);                          // pressed 120 ms after the 2H swing that opened the window
+    expect(r.recs[0]).toMatchObject({ fistDmg: 91, reaction: 120 });
+  });
+  it('the painter: four swings ahead, WEAVE +damage and a green flash on a landed weave, and the up direction', () => {
+    const d = stripJs(readSource(path.join(MIMIC, 'weaveDraw.js')));
+    expect(d).toContain('var LOOK_SWINGS = 4;');
+    expect(d).toContain('var look = LOOK_SWINGS * st.core.interval2H');
+    expect(d).toContain("ctx.fillText('WEAVE' + (o.dmg ? ' +' + o.dmg : ''), w / 2, head / 2);");
+    expect(d).toContain("+ (t.addedDps ? '  +' + t.addedDps + ' dps' : '')");
+    expect(d.match(/weaveFlash\(c, ctx, st, now,/g).length).toBe(5);   // its definition, then the lane, arc, bar and highway
+    expect(d).toContain("var up = cv.getAttribute('data-wp-dir') === 'up';");
+    const me = stripJs(readSource(path.join(MIMIC, 'me.html')));
+    expect(me).toContain("['weaveDir', 'Lane moves: down to the hit line, or up to it', ['down', 'up']],");
+    expect(me).toContain("var dir = hudParts.weaveDir === 'up' ? 'up' : 'down';");
+  });
+});
+
+// 2026-11-09, the guild lead: "basketweaver is catching the delay appropriately by pulling in the right flow. I've had several
+// instances where they've called for me to swing where ours was on red" (its card: 3.65 s, the hasted swing being 1.65 s).
+describe('the swing speed re-locks when haste changes', () => {
+  function swings(gaps) {
+    const e = new W.WeaveEngine({ cls: 'monk', level: 65, twoHDelay: 30 });
+    let t = 1_000_000;
+    e.swing('You crush a gnoll for 200 points of damage.', t);
+    for (const g of gaps) { t += g; e.swing('You crush a gnoll for 200 points of damage.', t); }
+    return e;
+  }
+  it('haste falling off (1.65 s -> 3.65 s): the new speed is taken after two swings', () => {
+    const e = swings([1650, 1650, 1650, 1650, 3650, 3650]);
+    expect(Math.round(e.interval2H())).toBe(3650);
+  });
+  it('haste coming back (3.65 s -> 1.65 s): the same, the other way', () => {
+    const e = swings([3650, 3650, 3650, 1650, 1650]);
+    expect(Math.round(e.interval2H())).toBe(1650);
+  });
+  it('one odd gap is not a new speed', () => {
+    const e = swings([1650, 1650, 1650, 2600, 1650]);
+    expect(Math.round(e.interval2H())).toBe(1650);
+  });
+  it('exactly double three times running is a slower swing, not three unseen misses', () => {
+    expect(Math.round(swings([1650, 1650, 1650, 3300]).interval2H())).toBe(1650);              // once: an unseen round
+    expect(Math.round(swings([1650, 1650, 1650, 3300, 3300, 3300, 3300]).interval2H())).toBe(3300);
+  });
+});
+
+// 2026-11-09, the guild lead: "running /mystats will sync up the basketweaver apparently". EQMacEmu (c2cd265) Mob::ShowStats
+// prints "  Level: %i  AC: %i  Class: %i  Size: … Haste: %i (cap %i)" with Haste = 100 + haste (Mob::GetHaste), and
+// Client::SetAttackTimer times a swing as delay * 10000 / Haste: a delay-30 2H at Haste 182 swings every 1648 ms.
+describe('/mystats calibrates the 2H delay', () => {
+  const MYSTATS = (cls, haste) => '  Level: 65  AC: 1421  Class: ' + cls + '  Size: 6.0  ModelSize: 6.0  BaseSize: 6.0 Z-Offset 3.1 Haste: ' + haste + ' (cap 100)';
+  function rig(delaySetting) {
+    let t = 1_000_000; const sent = [];
+    const hub = W.createWeaveHub({ send: (s) => sent.push(s), now: () => t });
+    hub.setEnabled(true);
+    hub.setConfig('Aldenmar', { character: 'Aldenmar', cls: 'monk', level: 65, twoHDelay: delaySetting });
+    const chat = (text, colour = 265) => hub.note({ type: 0, character: 'Aldenmar', data: JSON.stringify({ type: colour, text }) });
+    return { chat, step: (ms) => { t += ms; hub.tick(); }, eng: () => hub.engines.get('aldenmar').eng, last: () => sent[sent.length - 1] };
+  }
+  const swing = (r, n) => { for (let i = 0; i < n; i++) { r.chat('You crush a gnoll for 200 points of damage.'); r.step(1648); } };
+
+  it('a wrong "2H weapon delay" setting (40) is corrected to the real one (30), and the fist window follows', () => {
+    const r = rig(40); swing(r, 5);
+    expect(Math.round(r.eng().core().fistInterval)).toBe(Math.round(2000 * 1648 / 4000));   // wrong before: haste read as 40/16.48
+    r.chat(MYSTATS(7, 182), 0);
+    expect(r.eng().statsDelay).toBe(30);
+    expect(Math.round(r.eng().core().fistInterval)).toBe(Math.round(2000 * 1648 / 3000));   // 1099 ms: bare fists at Haste 182
+    expect(r.last().stats).toMatchObject({ hasteN: 182, delay: 30 });
+  });
+  it('before any swing, /mystats gives the expected interval; it calibrates once the swings are measured', () => {
+    const r = rig(30); r.chat(MYSTATS(7, 182), 0);
+    expect(Math.round(r.eng().interval2H())).toBe(1648);
+    expect(r.eng().statsDelay).toBe(null);
+    swing(r, 5);
+    expect(r.eng().statsDelay).toBe(30);
+  });
+  it('a pet you target prints its own stats: another class is ignored; a slowed monk (Haste 82) still calibrates', () => {
+    const r = rig(30); swing(r, 5);
+    r.chat(MYSTATS(1, 140), 0);
+    expect(r.eng().hasteN).toBe(null);
+    const s = rig(30);
+    for (let i = 0; i < 5; i++) { s.chat('You crush a gnoll for 200 points of damage.'); s.step(3659); }
+    s.chat(MYSTATS(7, 82), 0);
+    expect(s.eng().statsDelay).toBe(30);
+  });
+});
+
+// 2026-11-09, the guild lead: Basketweaver "will also 'autocalibrate' when it detects a swing, and then it gets back to correct.
+// we do that too, but it jumps and doesn't say anything". Every re-sync now leaves a notice the painters show for two seconds.
+describe('the timer says when it re-syncs', () => {
+  function eng(gaps, cfg) {
+    const e = new W.WeaveEngine(Object.assign({ cls: 'monk', level: 65, twoHDelay: 30 }, cfg || {}));
+    let t = 1_000_000;
+    e.swing('You crush a gnoll for 200 points of damage.', t);
+    for (const g of gaps) { t += g; e.swing('You crush a gnoll for 200 points of damage.', t); }
+    return { e, t };
+  }
+  it('a 2H swing 180 ms off the prediction: SYNC +180 ms; a 40 ms wobble says nothing', () => {
+    expect(eng([1650, 1650, 1650, 1830]).e.notice).toMatchObject({ kind: 'sync', text: 'SYNC +180 ms' });
+    expect(eng([1650, 1650, 1650, 1690]).e.notice).toBe(null);
+  });
+  it('a new swing speed: SPEED 1.65 → 3.65 s', () => {
+    const n = eng([1650, 1650, 1650, 1650, 3650, 3650]).e.notice;
+    expect(n).toMatchObject({ kind: 'speed', text: 'SPEED 1.65 → 3.65 s' });
+  });
+  it('/mystats: says what it calibrated, or that it will on the next swings', () => {
+    const a = eng([1648, 1648, 1648, 1648]); a.e.mystats(182, a.t);
+    expect(a.e.notice).toMatchObject({ kind: 'stats', text: '/mystats: 2H delay 30, haste 82%' });
+    const b = new W.WeaveEngine({ cls: 'monk', level: 65 }); b.mystats(182, 5);
+    expect(b.notice).toMatchObject({ kind: 'stats', text: '/mystats: haste 82% (calibrates on the next swings)' });
+  });
+  it('the state carries it and the highway and the ring show it', () => {
+    const { e, t } = eng([1650, 1650, 1650, 1830]);
+    expect(e.snapshot(t).notice).toMatchObject({ kind: 'sync' });
+    const d = stripJs(readSource(path.join(MIMIC, 'weaveDraw.js')));
+    expect(d).toContain('function noticeOf(st, now) { var n = st && st.notice; return n && now - n.at < NOTE_MS ? n : null; }');
+    expect(d).toContain('ctx.fillText(nt.text, w / 2, head / 2);');
+    expect(d).toContain('ctx.fillText(an.text, np[0], np[1]);');
+  });
+});
+
+// 2026-11-09, the guild lead's weave-attempts.ndjson for a blood raven (Basketweaver: 43 of 48 rounds weaved): of our four
+// "clips", one was a re-press before the 2H line came (217 ms "late") and one two swings + 302 ms late.
+describe('the blood raven cases', () => {
+  const T = 1_000_000, IVB = 1530;
+  function e5() {
+    const e = new W.WeaveEngine({ cls: 'monk', level: 65, twoHDelay: 30 });
+    for (let i = 0; i < 5; i++) e.swing('crush a blood raven for 120', T + i * IVB);
+    return e;
+  }
+  it('a press again before the last one\'s 2H came is not judged: open, not a clip', () => {
+    const e = e5(), t0 = T + 4 * IVB;
+    e.load('Loading bandolier set [fists]', t0 + 250); e.swing('strike a blood raven for 49', t0 + 340);
+    e.load('Loading bandolier set [fists]', t0 + 250 + 1500);   // the next press, the 2H line not seen yet
+    expect(e.tally).toMatchObject({ clips: 0, open: 1 });
+  });
+  it('two swings and 300 ms late is on the beat (unseen rounds), not a clip', () => {
+    const e = e5(), t0 = T + 4 * IVB;
+    e.load('Loading bandolier set [fists]', t0 + 250); e.swing('strike a blood raven for 49', t0 + 340);
+    e.swing('crush a blood raven for 120', t0 + 3 * IVB + 300);
+    expect(e.outcome.kind).toBe('landed');
+  });
+});
+
+// 2026-11-09, the guild lead: "lets add some sounds into ours" (four Freesound files, sounds/CREDITS.md) and "I'm about to try a
+// ribcracker" (secondary only, 1H blunt, delay 25: its offhand round prints "crush", the 2H staff's own word).
+describe('weave sounds and a crushing offhand', () => {
+  const T = 1_000_000, IVB = 1530;
+  function rig(cfg) {
+    let t = T; const sounds = [];
+    const hub = W.createWeaveHub({ send: () => {}, now: () => t, onSound: (s) => sounds.push(s) });
+    hub.setEnabled(true);
+    hub.setConfig('Aldenmar', Object.assign({ character: 'Aldenmar', cls: 'monk', level: 65, twoHDelay: 30, sound: true }, cfg || {}));
+    const chat = (text, colour = 265) => hub.note({ type: 0, character: 'Aldenmar', data: JSON.stringify({ type: colour, text }) });
+    return { chat, step: (ms) => { t += ms; hub.tick(); }, sounds, eng: () => hub.engines.get('aldenmar').eng };
+  }
+  function warm(r) { for (let i = 0; i < 5; i++) { r.chat('crush a blood raven for 120'); r.step(IVB); } r.step(-IVB + 120); }
+  function weave(r, offLine) { r.chat('Loading bandolier set [fists]', 1011); r.step(100); r.chat(offLine); r.step(150); r.chat('Loading bandolier set [2h]', 1011); r.step(IVB - 370); r.chat('crush a blood raven for 120'); r.step(50); }
+
+  it('a landed weave plays the landed sound once; a big fist hit plays its own; a clip plays the clip sound', () => {
+    const r = rig(); warm(r); weave(r, 'strike a blood raven for 49');
+    expect(r.sounds.map(s => [s.name, s.kind, s.volume])).toEqual([['weave-punch', 'landed', 0.8]]);
+    weave(r, 'strike a blood raven for 260');
+    expect(r.sounds.map(s => s.name)).toEqual(['weave-punch', 'weave-smash']);
+    const c = rig(); warm(c);
+    c.step(1250); c.chat('Loading bandolier set [fists]', 1011); c.step(50); c.chat('strike a blood raven for 49'); c.step(100);
+    c.chat('Loading bandolier set [2h]', 1011); c.step(IVB - 1470 + 700); c.chat('crush a blood raven for 120'); c.step(50);
+    expect(c.sounds.map(s => s.name)).toEqual(['weave-thud']);
+  });
+  // 2026-11-09, the guild lead: "need to be able to turn on the sounds (off by default)".
+  it('sounds are off until the HUD switch turns them on', () => {
+    const r = rig({ sound: undefined }); warm(r); weave(r, 'strike a blood raven for 260');
+    expect(r.sounds).toEqual([]);
+    expect(W.cleanCfg({}).sound).toBe(false);
+    expect(W.cleanCfg({ sound: 'yes' }).sound).toBe(false);
+    const me = stripJs(readSource(path.join(MIMIC, 'me.html')));
+    expect(me).toContain("['weaveSnd', 'Weave sounds']");
+    expect(me).toContain('weaveSnd: 0,');
+    expect(me).toContain('sound: !!p.weaveSnd,');
+  });
+  it('a sound set to off plays nothing, and an unknown name falls back to the default', () => {
+    const r = rig({ sndLanded: 'off' }); warm(r); weave(r, 'strike a blood raven for 49');
+    expect(r.sounds).toEqual([]);
+    expect(W.cleanCfg({ sndLanded: '../../etc' }).sndLanded).toBe('weave-punch');
+  });
+  it('Ribcracker: a "crush" straight after the press is the offhand round, and the window follows its delay (25)', () => {
+    const r = rig({ offDelay: 25 }); warm(r); weave(r, 'crush a blood raven for 74');
+    expect(r.eng().tally).toMatchObject({ landed: 1, clips: 0, fistTried: 1, fistHit: 1, weaveDmg: 74 });
+    expect(Math.round(r.eng().core().fistInterval)).toBe(Math.round(2500 * IVB / 3000));
+    expect(W.cleanCfg({}).offDelay).toBe(0);
+  });
+  it('the four sounds ship with their credits, and the HUD offers them', () => {
+    const fs = require('node:fs');
+    for (const n of ['weave-punch', 'weave-smash', 'weave-slash', 'weave-thud']) {
+      const p = path.join(MIMIC, 'sounds', n + '.ogg');
+      expect(fs.statSync(p).size, n).toBeLessThan(60 * 1024);
+      expect(fs.readFileSync(p).subarray(0, 4).toString('latin1'), n).toBe('OggS');
+    }
+    const credits = fs.readFileSync(path.join(MIMIC, 'sounds', 'CREDITS.md'), 'utf8');
+    expect(credits).toMatch(/qubodup[^\n]*CC BY 4\.0/);
+    const me = stripJs(readSource(path.join(MIMIC, 'me.html')));
+    expect(me).toContain("var WEAVE_SOUNDS = ['weave-punch', 'weave-smash', 'weave-slash', 'weave-thud', 'slap', 'pop', 'off'];");
+    const trig = stripJs(readSource(path.join(MIMIC, 'triggers.html')));
+    expect(trig).toContain('if (!PART && window.mimic && window.mimic.onWeaveSound) window.mimic.onWeaveSound(function (s) { if (s && s.name) playSound(s.name, s.volume); });');
+  });
+});
+
+// 2026-11-09, the guild lead: "our config talks about hits vs crushes though" — the words are named for the hand.
+describe('the HUD names the words by hand, not fists', () => {
+  it('main hand (2H) words and offhand words, with the shared-word rule spelled out', () => {
+    const me = stripJs(readSource(path.join(MIMIC, 'me.html')));
+    expect(me).toContain("['weave2hVerbs', 'Main hand (2H) words, e.g. crush', 'text'],");
+    expect(me).toContain("['weaveFistVerbs', 'Offhand words (fists or the weave set weapon); a 2H word right after a press counts as offhand', 'text']");
+    expect(me).not.toContain("'Fist verbs'");
+  });
+});
+
+// 2026-11-09, the guild lead: "we can make two pipes one with /pipe weave, /pipe weave1hb, /pipe weave2hb" — "the 2hb hit should
+// just be an empty offhand slot" — "for comparison". The marker names the set; it times the NEXT window and tags the attempt.
+describe('/pipe weave, weave1hb, weave2hb: three sets compared', () => {
+  const IVB = 1530;
+  function rig() {
+    let t = 1_000_000; const recs = [];
+    const hub = W.createWeaveHub({ send: () => {}, now: () => t, onAttempt: (r) => recs.push(r) });
+    hub.setEnabled(true);
+    hub.setConfig('Aldenmar', { character: 'Aldenmar', cls: 'monk', level: 65, twoHDelay: 30, offDelay: 20, offDelay1hb: 25 });
+    const chat = (text, colour = 265) => hub.note({ type: 0, character: 'Aldenmar', data: JSON.stringify({ type: colour, text }) });
+    const pipe = (text) => hub.note({ type: 4, character: 'Aldenmar', data: JSON.stringify({ text }) });
+    return { chat, pipe, step: (ms) => { t += ms; hub.tick(); }, recs, eng: () => hub.engines.get('aldenmar').eng };
+  }
+  function warm(r) { for (let i = 0; i < 5; i++) { r.chat('crush a blood raven for 120'); r.step(IVB); } r.step(-IVB + 120); }
+  function weave(r, offLine, marker) {
+    r.chat('Loading bandolier set [1]', 1011); r.step(100); r.chat(offLine); r.step(150);
+    r.chat('Loading bandolier set [2]', 1011); r.pipe(marker); r.step(IVB - 370); r.chat('crush a blood raven for 120'); r.step(50);
+  }
+  const off = (r) => Math.round(r.eng().core().fistInterval * 3000 / (100 * IVB));   // back to the offhand delay
+
+  it('each marker sets the window for the next press: weave = the setting (20), weave1hb = 25, weave2hb = bare fists (20 at 65 human)', () => {
+    const r = rig(); warm(r);
+    expect(off(r)).toBe(20);
+    weave(r, 'strike a blood raven for 49', 'weave1hb');
+    expect(off(r)).toBe(25);
+    weave(r, 'crush a blood raven for 74', 'weave2hb');
+    expect(off(r)).toBe(20);
+    expect(r.eng().offDelayFor('2hb')).toBe(0);   // 0 = the bare-hand table
+  });
+  it('every attempt carries its set, and the tally keeps a count per set', () => {
+    const r = rig(); warm(r);
+    weave(r, 'strike a blood raven for 49', 'weave');
+    weave(r, 'crush a blood raven for 74', 'weave1hb');
+    weave(r, 'punch a blood raven for 30', 'weave2hb');
+    expect(r.recs.map(a => [a.tag, a.outcome])).toEqual([['', 'landed'], ['1hb', 'landed'], ['2hb', 'landed']]);
+    expect(r.eng().summary(Date.now()).bySet).toEqual({
+      '': { n: 1, landed: 1, clips: 0, misses: 0, weaveDmg: 49 },
+      '1hb': { n: 1, landed: 1, clips: 0, misses: 0, weaveDmg: 74 },
+      '2hb': { n: 1, landed: 1, clips: 0, misses: 0, weaveDmg: 30 },
+    });
+  });
+  it('only "weave" plus a short word is a marker; /pipe fd is not', () => {
+    const r = rig(); warm(r);
+    expect(r.pipe('fd')).toBe(false);
+    expect(r.pipe('weave the night away')).toBe(false);
+    expect(r.pipe('weave2hb')).toBe(true);
+  });
+});
+
+// 2026-11-09, the guild lead alternated weave / weave1hb / weave2hb: 8 Ribcracker "clips" in a row, every one late by ~340 ms
+// whatever the press time, with the swap back loaded 190-270 ms BEFORE the 2H was due; and the 4:27 pm run, predicted 846 ms
+// for a real ~1340. A 2H that was back in the hand on time cannot have been clipped: the prediction was off, and it re-locks.
+describe('a late 2H after an early swap back is the prediction off, not a clip', () => {
+  const T = 1_000_000;
+  function run(lockedIv, realIv, n, back) {
+    const e = new W.WeaveEngine({ cls: 'monk', level: 65, twoHDelay: 30 });
+    rounds(e, 6, lockedIv, T);                       // a wrong lock: the engine believes lockedIv
+    let last = T + 5 * lockedIv;
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      e.load('Loading bandolier set [fists]', last + 100);
+      e.swing('You punch a gnoll for 40 points of damage.', last + 200);
+      e.load('Loading bandolier set [caen]', last + back);   // back in the hand well before the (wrong) due time
+      last += realIv;
+      e.swing(TWO(), last);
+      out.push(e.outcome.kind);
+    }
+    return { e, out };
+  }
+  it('the Ribcracker run (believed 1159, really 1500): landed, never clipped, and the engine moves to the real speed', () => {
+    const { e, out } = run(1159, 1500, 8, 900);
+    expect(out).not.toContain('clip');
+    expect(e.tally.clips).toBe(0);
+    expect(Math.abs(e.interval2H() - 1500)).toBeLessThan(75);
+  });
+  it('the 4:27 pm run (believed 846, really 1340): the same', () => {
+    const { e, out } = run(846, 1340, 6, 500);
+    expect(out).not.toContain('clip');
+    expect(Math.abs(e.interval2H() - 1340)).toBeLessThan(70);
+  });
+});
+
+// 2026-11-09, the guild lead: "update main mimic with the fistweaving stuff and the new pipe commands. We should start
+// recommending those": the HUD's weave settings say how to end the macro.
+describe('the HUD recommends the /pipe weave macros', () => {
+  it('a note row in the Weave timer settings, drawn as text with no setting behind it', () => {
+    const me = stripJs(readSource(path.join(MIMIC, 'me.html')));
+    expect(me).toMatch(/\['weaveMacro', 'Recommended: end your weave macro with \/pipe weave[^']*'\s*\+ '[^']*\/pipe weave1hb[^']*\/pipe weave2hb[^']*', 'note'\]/);
+    expect(me).toContain(`if (it[2] === 'note') { h += '<div class="bnote">' + esc(it[1]) + '</div>'; return; }`);
+  });
+});

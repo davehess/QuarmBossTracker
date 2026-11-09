@@ -358,6 +358,10 @@ function defaultConfig() {
     // agent honors this at the OUTERMOST boundary — excluded log files are
     // never opened. Going-forward only; doesn't touch already-uploaded data.
     excludedCharacters: [],
+    // Guest characters: a friend plays HIS characters on this PC. Their logs are still read (overlays, triggers, timers
+    // all work) but nothing attributable to them is uploaded. Same name rules as excludedCharacters; handed to the agent
+    // as WOLFPACK_GUEST_CHARS at launch and pushed live on a change (see _pushGuestCharacters).
+    guestCharacters: [],
     // Overlay positioning. Locked = click-through, lives in place. Unlocked =
     // draggable + resizable handle shown, NOT click-through, so the user can
     // reposition. Toggling lock is a pure window operation — NEVER restarts
@@ -4582,6 +4586,13 @@ async function launchAgent() {
     ? cfg.excludedCharacters.map(s => String(s || '').trim()).filter(Boolean)
     : [];
   if (excluded.length > 0) env.WOLFPACK_EXCLUDED_CHARS = excluded.join(',');
+  // Guest characters (see cfg.guestCharacters): the log is read, nothing from it leaves this PC. Only Mimic's own saved
+  // list counts, so an inherited value is dropped first.
+  delete env.WOLFPACK_GUEST_CHARS;
+  const guests = Array.isArray(cfg.guestCharacters)
+    ? cfg.guestCharacters.map(s => String(s || '').trim()).filter(Boolean)
+    : [];
+  if (guests.length > 0) env.WOLFPACK_GUEST_CHARS = guests.join(',');
   // Opt-in crash telemetry (tray → "Share crash reports"). Env-gated so the
   // agent literally cannot scan the crashes/ folder unless the user opted in.
   if (cfg.crashReports === true) env.WOLFPACK_CRASH_REPORTS = '1';
@@ -8347,7 +8358,7 @@ function createCanvasWindow() {
     x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height,
     frame: false, transparent: true, resizable: false, movable: false,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: _wpPrefs('Timers canvas', { nodeIntegrationInSubFrames: true }),
+    webPreferences: _wpPrefs('Timers canvas', { nodeIntegrationInSubFrames: true, backgroundThrottling: false }),   // the Weaving timer piece paints on animation frames too
   });
   canvasWindow.setAlwaysOnTop(true, 'screen-saver');
   canvasWindow.setVisibleOnAllWorkspaces(true);
@@ -8579,7 +8590,9 @@ function createMeOverlay() {
     minWidth: _OVERLAY_MIN_W, minHeight: 90,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: _wpPrefs('Me'),
+    // backgroundThrottling:false: the Weave timer lane paints on animation frames, which Chromium stops for a window it
+    // counts as hidden or occluded (the guild lead, 2026-11-09: "need the weaving to work", the lane idle mid-fight).
+    webPreferences: _wpPrefs('Me', { backgroundThrottling: false }),
   });
   meWindow.setAlwaysOnTop(true, 'screen-saver');
   meWindow.setVisibleOnAllWorkspaces(true);
@@ -8699,6 +8712,27 @@ async function _setMapMode(mode) {
 }
 ipcMain.handle('map-mode-get', () => { try { return loadConfig().mapMode === 'full' ? 'full' : 'window'; } catch { return 'window'; } });
 ipcMain.handle('map-mode-set', (_e, mode) => _setMapMode(mode === 'full' ? 'full' : 'window'));
+// The Map's mini mode (2026-11-09): a small square window so the round map fits. Going in keeps the size it had in
+// cfg.mapPreMini (only the first time, so a restart inside mini mode does not overwrite it with 260); going out gives it back,
+// from the same top-left corner. Full mode owns the window's rectangle, so this does nothing there.
+const _MAP_MINI_PX = 260;
+function _mapMiniSize(on) {
+  if (!_live(mapWindow) || _mapFull) return false;
+  try {
+    const cfg = loadConfig(), b = mapWindow.getBounds();
+    if (on) {
+      if (!cfg.mapPreMini) { cfg.mapPreMini = { width: b.width, height: b.height }; saveConfig(cfg); }
+      mapWindow.setBounds({ x: b.x, y: b.y, width: _MAP_MINI_PX, height: _MAP_MINI_PX });
+    } else {
+      const p = cfg.mapPreMini || { width: 760, height: 480 };
+      if (cfg.mapPreMini) { delete cfg.mapPreMini; saveConfig(cfg); }
+      mapWindow.setBounds({ x: b.x, y: b.y, width: Math.max(_OVERLAY_MIN_W, p.width), height: Math.max(140, p.height) });
+    }
+    return true;
+  } catch { return false; }
+}
+ipcMain.handle('map-mini-size', (_e, on) => _mapMiniSize(!!on));
+ipcMain.handle('map-mini-toggle', () => { if (_live(mapWindow)) { try { mapWindow.webContents.send('map-mini-toggle'); } catch { /* loading */ } } return true; });
 
 // Keep-clear areas. (a) The windows EverQuest has open, from the active character's UI ini: read-only, in EverQuest's
 // own pixels (visibleUiRects), plus Zeal's raid and assist bars as auto-arrange counts them. (b) The raider's own boxes,
@@ -14664,7 +14698,13 @@ function _broadcastPointer(cfg) {
 }
 
 ipcMain.handle('save-config', async (_e, incoming) => {
+  const _guestBefore = loadConfig().guestCharacters;
   const merged = Object.assign(loadConfig(), incoming || {});
+  // Guest characters: keep only plain names, then tell the running agent (it also reads the list at launch).
+  if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'guestCharacters')) {
+    merged.guestCharacters = _guestListOf(merged.guestCharacters);
+    _pushGuestCharacters(_guestBefore, merged.guestCharacters).catch(() => {});
+  }
   // Manual /token paste comes in as { token: "wpms_..." }. Route it through
   // the encrypted-at-rest path instead of persisting plaintext, then relaunch
   // the agent so the new token takes effect. A blank/cleared token signs out.
@@ -14914,6 +14954,27 @@ function _agentCall(method, pathname, body) {
     req.on('timeout', () => { req.destroy(); resolve(null); });
     req.end(data || undefined);
   });
+}
+// Guest characters (the guild lead, 2026-11-09): "when a friend is going to take his files and play as a guest on my
+// machine". cfg.guestCharacters is the saved list (the agent reads it at launch as WOLFPACK_GUEST_CHARS); a change saved
+// through save-config is told to the RUNNING agent here, so a name goes private at once with no restart. The agent is
+// the only judge of what is sent: this only keeps the two lists the same.
+function _guestListOf(list) {
+  const seen = new Set(), out = [];
+  for (const raw of (Array.isArray(list) ? list : [])) {
+    const n = String(raw || '').trim();
+    if (!/^[A-Za-z]{1,24}$/.test(n) || seen.has(n.toLowerCase())) continue;
+    seen.add(n.toLowerCase());
+    out.push(n);
+  }
+  return out;
+}
+async function _pushGuestCharacters(before, after) {
+  const b = new Set(_guestListOf(before).map(s => s.toLowerCase()));
+  const a = new Set(_guestListOf(after).map(s => s.toLowerCase()));
+  for (const n of _guestListOf(after)) if (!b.has(n.toLowerCase())) await _agentCall('POST', '/api/guest-character', { character: n, on: true });
+  for (const n of _guestListOf(before)) if (!a.has(n.toLowerCase())) await _agentCall('POST', '/api/guest-character', { character: n, on: false });
+  appendAgentLog(`[mimic] guest characters: ${[...a].join(', ') || '(none)'}\n`);
 }
 ipcMain.handle('character-modes-get', async () => {
   const r = await _agentCall('GET', '/api/character-modes');
@@ -15773,7 +15834,26 @@ function _weaveSend(st) {
   }
   _weaveHub.setEnabled(_weaveSubs.size > 0);
 }
-const _weaveHub = createWeaveHub({ send: _weaveSend });
+// Every weave attempt, the landed ones too (the guild lead, 2026-11-09: "capture the successful weave attempts as well"), one
+// JSON line each in <userData>/weave-attempts.ndjson: when it was pressed, the window it fell in, when the fist and the 2H
+// came, the outcome, and for a voided press the bandolier failure that voided it. Rotated at 5 MB; best effort only.
+const WEAVE_ATTEMPTS_LOG = () => path.join(app.getPath('userData'), 'weave-attempts.ndjson');
+const WEAVE_ATTEMPTS_CAP = 5 * 1024 * 1024;
+function _writeWeaveAttempt(rec) {
+  let line;
+  try { line = JSON.stringify(Object.assign({ iso: new Date(rec.at).toISOString() }, rec)) + '\n'; } catch { return; }
+  try {
+    const f = WEAVE_ATTEMPTS_LOG();
+    let size = 0; try { size = fs.statSync(f).size; } catch { /* first line */ }
+    if (size + line.length > WEAVE_ATTEMPTS_CAP) { try { fs.renameSync(f, f + '.1'); } catch { /* keep going */ } }
+    fs.appendFile(f, line, () => {});
+  } catch { /* best effort: never throw into the pipe handler */ }
+}
+// Weave outcome sounds go to the trigger window, the one voice (it honours mute and plays library names); none when it is gone.
+function _weaveSound(s) {
+  try { if (triggerWindow && !triggerWindow.isDestroyed()) triggerWindow.webContents.send('weave-sound', s); } catch { /* window gone */ }
+}
+const _weaveHub = createWeaveHub({ send: _weaveSend, onAttempt: _writeWeaveAttempt, onSound: _weaveSound });
 ipcMain.on('weave-subscribe', (e) => {
   const wc = e.sender;
   if (_weaveSubs.has(wc)) return;

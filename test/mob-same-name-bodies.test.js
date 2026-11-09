@@ -306,7 +306,7 @@ describe('fetchMobInfo with an npcId', () => {
       const fs = __s.fs, path = __s.path, zlib = __s.zlib, https = __s.https, http = __s.https;
       const __dirname = '/nowhere';
       const AGENT_VERSION = '0.0.0';
-      const eqServerCaps = () => ({ catalog: true }), eqServerForCharacter = () => 'quarm', _primaryCharacter = () => null;
+      const eqServerCaps = () => ({ catalog: true }), eqServerForCharacter = () => 'quarm', _primaryCharacter = () => null, _isGuestChar = () => false;
       let _uploadOpts = { botUrl: 'https://bot.example/api/agent/encounter', token: 't' };
       const _zealState = {};
       const _controlStandDown = () => ({ down: false });

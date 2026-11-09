@@ -55,6 +55,7 @@ function load() {
     const AGENT_VERSION = '4.0.20';
     const eqServerCaps = (k) => ({ catalog: k !== 'p1999' }), eqServerForCharacter = (c) => __s.servers[String(c).toLowerCase()] || 'quarm';
     const _primaryCharacter = () => null;
+    const _isGuestChar = () => false;
     let _uploadOpts = __s.uploadOpts;
     const _zealState = __s.zealState;
     const _currentTargetState = () => __s.target;
@@ -346,12 +347,12 @@ describe('what a feedback report carries about Target Info', () => {
     const sent = [];
     const res = { writeHead() {}, end(b) { this.body = b; return b; } };
     const run = new Function('req', 'res', '_readBody', '_uploadOpts', 'buildFeedbackLogSlice', 'AGENT_VERSION',
-      '_primaryCharacter', 'fetch', 'process', 'mobInfoFeedbackMeta',
+      '_primaryCharacter', 'fetch', 'process', 'mobInfoFeedbackMeta', '_isGuestChar',
       'return (async () => { ' + handler.replace(/\n      \/\/ Mimic pushes Zeal update status here$/, '') + ' })();');
     await run({ url: '/api/feedback-send', method: 'POST' }, res, async () => JSON.stringify(body),
       { botUrl: 'http://bot.test/api/agent/encounter', token: 't' }, () => slice, '4.0.20',
       () => 'Aldenmar', async (url, opts) => { sent.push(JSON.parse(opts.body)); return { ok: true, json: async () => ({ ok: true }) }; },
-      { env: {}, platform: 'win32' }, () => meta);
+      { env: {}, platform: 'win32' }, () => meta, () => false);
     return sent[0];
   }
   const META = { name_asked: 'Guardian Cigosh', zone_id: 202, shown: 'not_in_catalog' };

@@ -62,14 +62,16 @@
     value:     [['readout', 'Readout'], ['big', 'Big number'], ['badge', 'Badge'], ['seg', 'Ring arc']],
     list:      [['rows', 'Rows'], ['chips', 'Chips'], ['inline', 'One line'], ['columns', 'Columns'], ['seg', 'Ring arc']],
     // The Weave timer: a horizontal timing highway, or the slim upright lane the HUD ring and Box carry.
-    weave:     [['highway', 'Timing highway'], ['lane', 'Upright lane']],
+    // 2026-11-09, the guild lead: "we should have other formats available for the weaving, arc, thin vertical line, etc."
+    // (own keys: 'arc' and 'bar' already name other kinds' modes in RENDER).
+    weave:     [['highway', 'Timing highway'], ['lane', 'Upright lane'], ['warc', 'Arc'], ['wbar', 'Thin bar']],
   };
   var DEFAULT_SIZE = {
     bar: [220, 34], thin: [220, 18], vbar: [40, 120], ring: [96, 96], arc: [140, 90], readout: [200, 22],
     big: [120, 52], badge: [60, 60], pips: [180, 30],
     rows: [260, 150], chips: [260, 48], inline: [320, 22], columns: [300, 90],
     seg: [190, 52],   // DEFAULT_ARC's box (segBox) at about 0.7×, for a Ring arc placed on its own
-    highway: [320, 60], lane: [28, 150],
+    highway: [320, 60], lane: [28, 150], warc: [150, 150], wbar: [260, 12],
   };
   // What any piece can also set, whatever its mode: its label shown or not, how thick its bar or
   // ring is, its own colour, and where its text sits. Offered in the piece's menu.
@@ -419,15 +421,18 @@
   // is just a <canvas>: its HTML is identical on every poll, so the canvas is never rebuilt and the painter keeps drawing
   // it. data-wp-char/-cls/-level say whose lane it is (the painter tells the engine, so a lone Canvas piece with no HUD
   // open still knows the class and level).
-  function rWeave(style) {
+  // `arc` is the painter's geometry for a curved lane ("radius startDeg endDeg" in a 400-unit square, degrees clockwise
+  // from 12 o'clock): the Arc piece is a horseshoe open at the bottom, its future at the lower left, its hit at the lower right.
+  function rWeave(style, arc) {
     return function (part, v) {
-      return '<div class="pt pt-weave"><canvas data-wp-weave="' + style + '" data-wp-char="' + esc(v.char) + '" data-wp-cls="' + esc(v.cls)
-        + '" data-wp-level="' + esc(v.level) + '"></canvas></div>';
+      return '<div class="pt pt-weave"><canvas data-wp-weave="' + style + '"' + (arc ? ' data-wp-arc="' + arc + '"' : '')
+        + ' data-wp-char="' + esc(v.char) + '" data-wp-cls="' + esc(v.cls) + '" data-wp-level="' + esc(v.level) + '"></canvas></div>';
     };
   }
 
   var RENDER = { bar: rBar, thin: rThin, vbar: rVbar, ring: rRing, arc: rArc, readout: rReadout, big: rBig, badge: rBadge,
-    pips: rPips, rows: rRows, chips: rChips, inline: rInline, columns: rColumns, seg: rSeg, highway: rWeave('highway'), lane: rWeave('lane') };
+    pips: rPips, rows: rRows, chips: rChips, inline: rInline, columns: rColumns, seg: rSeg, highway: rWeave('highway'), lane: rWeave('lane'),
+    warc: rWeave('arc', '165 -125 125 22'), wbar: rWeave('bar') };
 
   // The one entry point: a piece, the mode it is drawn in, its view, and the piece's own
   // options ({ nolabel, thick, color, align }).

@@ -1041,6 +1041,8 @@ function _buildOverlayMenu(onClose, state) {
         () => ipcRenderer.invoke('wp-mini-pin-toggle')));
     }
   }
+  // The Map's own mini mode (a circle with the buttons as dots on its rim); the page flips it, and keeps its own size.
+  if (st.key === 'map') menu.appendChild(mkItem('◔ Mini map: switch on / off', '#1f4f47', () => ipcRenderer.invoke('map-mini-toggle')));
   menu.appendChild(mkItem('👁 Hide this overlay', '#6b2130', () => ipcRenderer.invoke('hide-overlay')));
   // Windows: overlays sit under other apps while EverQuest isn't focused (main's _applyOverlayZ); this keeps THIS one on top
   // always. Built only where that follow-EQ behaviour is live, so it is never a switch that does nothing.
@@ -1562,6 +1564,8 @@ contextBridge.exposeInMainWorld('mimic', {
   // ~30×/s while a fight is on. Subscribing asks main to send this window (and its frames: the Canvas draws panels in
   // iframes); setWeaveConfig is the HUD builder's settings plus the character's level and race.
   onWeaveState:   (cb)    => { ipcRenderer.send('weave-subscribe'); ipcRenderer.on('weave-state', (_e, st) => cb(st)); },
+  // The weave outcome sounds (2026-11-09), played by the trigger window, the one voice: { name, volume, character, kind }.
+  onWeaveSound:   (cb)    => { ipcRenderer.on('weave-sound', (_e, s) => cb(s)); },
   setWeaveConfig: (cfg)   => ipcRenderer.send('weave-config', cfg),
   // Setup-mode state — pushed to each overlay with its identifying key so
   // the renderer can show the per-window control strip (opacity slider, etc.)
@@ -1604,6 +1608,10 @@ contextBridge.exposeInMainWorld('mimic', {
   setMapMode:         (mode)       => ipcRenderer.invoke('map-mode-set', mode),
   onMapMode:          (cb)         => ipcRenderer.on('map-mode', (_e, m) => cb(m)),
   onMapGeom:          (cb)         => ipcRenderer.on('map-geom', (_e, b) => cb(b)),
+  // Mini map (2026-11-09): mapMiniSize(on) shrinks the Map window to a small square (the old size is kept) or gives the size back;
+  // onMapMiniToggle hears the ✥ right-click menu's "Mini map" row.
+  mapMiniSize:        (on)         => ipcRenderer.invoke('map-mini-size', !!on),
+  onMapMiniToggle:    (cb)         => ipcRenderer.on('map-mini-toggle', () => cb()),
   mapClearAreas:      (opts)       => ipcRenderer.invoke('map-clear-areas', opts || {}),
   mapClearBoxesSet:   (char, boxes) => ipcRenderer.invoke('map-clear-boxes-set', char, boxes),
   // One game window's keep / ignore pick (true | false | null = default; id null = all back to default); answers with the

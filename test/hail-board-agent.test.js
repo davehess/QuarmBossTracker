@@ -96,7 +96,7 @@ describe('which live hails leave the machine', () => {
 
 // The live tail's own lines, run through the real parser, the real gate and the real cross-log dedup.
 describe('the live tail uploads hails', () => {
-  const wire = sliceBlock(agent, "if (!_sourceExcluded) {\n          const hailEvt = parseWitnessedHail(line, b.character);\n          if (hailEvt && _hailNpcWanted(hailEvt.npc)",
+  const wire = sliceBlock(agent, "if (!_noSend) {\n          const hailEvt = parseWitnessedHail(line, b.character);\n          if (hailEvt && _hailNpcWanted(hailEvt.npc)",
     'popFlagBuffer.push(hailEvt);\n          }\n        }');
   function tail() {
     const h = load();
@@ -105,7 +105,7 @@ describe('the live tail uploads hails', () => {
     // eslint-disable-next-line no-new-func
     const mk = new Function('_hailNpcWanted', 'popBuf', '_zealState', 'parseEqTimestamp',
       'const _crossLogSeen = new Map();\n' + crossLogSrc + '\n' + parseSrc
-      + '\nconst popFlagBuffer = popBuf;\nreturn function (line, b, _sourceExcluded) {\n' + wire + '\n};');
+      + '\nconst popFlagBuffer = popBuf;\nreturn function (line, b, _noSend) {\n' + wire + '\n};');
     // The log's own timestamp: what makes the same line from two logs the same hail.
     const stamp = (line) => { const m = /^\[([^\]]+)\]/.exec(line); return m ? new Date(m[1]) : null; };
     return { feed: mk(h.api._hailNpcWanted, buf, {}, stamp), buf };

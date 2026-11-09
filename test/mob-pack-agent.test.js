@@ -52,7 +52,7 @@ function load() {
     const https = __s.https, http = __s.https;
     const __dirname = __s.dir;
     const AGENT_VERSION = '3.7.55';
-    const eqServerCaps = () => ({ catalog: true }), eqServerForCharacter = () => 'quarm', _primaryCharacter = () => null;
+    const eqServerCaps = () => ({ catalog: true }), eqServerForCharacter = () => 'quarm', _primaryCharacter = () => null, _isGuestChar = () => false;
     let _uploadOpts = __s.uploadOpts;
     const _zealState = __s.zealState;
     const _controlStandDown = () => ({ down: !!__s.down });

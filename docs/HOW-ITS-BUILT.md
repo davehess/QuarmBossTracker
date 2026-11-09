@@ -5373,6 +5373,16 @@ A raider's own DPS per fight over a window they pick. Three surfaces, two data s
   `test/my-parses-tab.test.js` (agent + dashboard + tray + filters + source switch), `test/my-logs-local.test.js`
   (the local fight log and its answer) and `test/dps-trend.test.js` (meter Trend).
 
+### Guest characters — someone else plays this character on this PC (agent 4.0.81 beta, §546)
+A guest's log is still read (overlays, triggers, timers, map) but nothing attributable to it is uploaded; the separate, stronger
+"Hide completely" below stops the log being read at all.
+- **Agent** (`packages/wolfpack-logsync/index.js`): `_isGuestChar` / `_guestChars` (env `WOLFPACK_GUEST_CHARS`, live
+  `POST /api/guest-character`), `shouldUploadForCharacter`, `_guestScrub` at the top of `enqueueUpload`, the tail loop's `_noSend`,
+  the live-state / raid-roster / trigger-relay / map-sync / request-query guards; `/api/state` carries `guest_characters`.
+- **Mimic** (`apps/mimic/main.js`): `cfg.guestCharacters` → `WOLFPACK_GUEST_CHARS`; `save-config` pushes the change to the running
+  agent (`_pushGuestCharacters`). **Dashboard** (`dashboard.html`, Me card): the **Guest** switch per character (`wpSetGuest`).
+- **Tests:** `test/guest-characters.test.js`.
+
 ### Main / alt · Inventory only · Hide completely (bot 3.1.214 · agent 3.7.96, stable in Mimic 2.7.9, §175)
 One choice per character, the same three columns as the switches on `/me` (no second copy):
 show = all off · inventory = `hidden_from_lists` · hidden = all three on. Any other mix reads as `custom`.
@@ -6144,6 +6154,14 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   sets `S.view.rot` every frame (`updateRot` → `rotStep` → `headingRot`); `wpt` / `projectPx` / `unprojectPx` / `screenToServer` / `unturnPx`
   carry it, `headingVec(h, rot)` turns the arrows and slices, `drawCompass` draws the rose and/or edge letters (`cfg.compass`, `cardinalSpots`,
   `roseSpot`). Test: `test/map-heading-up.test.js`.
+- **Map: mini mode** (2026-11-09, Mimic beta draft, `map.html` `body.mini` + the "Mini map" script block, `main.js` `_mapMiniSize`): the map in a circle (`border-radius` clip on
+  `#mapPane`) with twelve button dots on the rim (`#mini`, `.rd`, placed by CSS from `--mini-d` and each dot's `--a`), the zone name above, and a red N on the rim that rides to
+  north (`syncMiniNorth`, written only when the angle moves; the canvas rose is skipped in mini). Each dot clicks its toolbar twin or flips the same `cfg` switch
+  (`miniClick` / `viaBtn`; ring = `cfg.show.aggro`, compass = `setOrient`); `syncMiniDots` reads state off the toolbar by a MutationObserver. Switches: toolbar `#miniBtn`, the ✥ menu's
+  "Mini map" (preload `map-mini-toggle` → main → page `onMapMiniToggle`), a right-click on a dot. Saved as `wp-map-mini`. Window: `map-mini-size` shrinks to 260x260 and keeps the old
+  size in `cfg.mapPreMini`. Full mode never shows it. The dots are one run on the lower-left of the rim (200-314 degrees); the rest of the rim carries **edge arrows**
+  for what is off-view (`drawMiniArrows`, in the canvas pass: target with its distance, pet, group, raid capped at 8 and merged within 9 degrees; bearing is
+  `miniBearing(player, thing, rot)`, so it follows North up / Heading up; two `.ra` buttons carry the target and pet hover names). Test: `test/map-mini.test.js`.
 - **Kite circles on the Map** (2026-10-26, Mimic beta; kite coach 2026-10-15): `apps/mimic/kiteCoach.js` is the pure math (circle fit, laps,
   drift, cause) plus `filterLoops` (Others Live/All by `last_at`, Circles All/My speed/Near me) and `driftForecast`; `map.html` draws it
   (`drawKite`, `visibleLoops`) and owns the three toolbar buttons (`syncKiteBtns`; saved in `cfg.kiteOthers/kiteFilter/kiteDrift`).

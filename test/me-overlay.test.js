@@ -1684,8 +1684,8 @@ describe('the HUD — rounds, damage shield, builder', () => {
   });
 
   it('every part in the builder has a default, and every default is in the builder', () => {
-    const listed = R.HUD_PARTS.flatMap(g => g[1].map(it => it[0])).sort();
-    // `sizes` is the sliders' store, not a part of its own; `clickyPick` is the clicky picker's.
+    const listed = R.HUD_PARTS.flatMap(g => g[1].filter(it => it[2] !== 'note').map(it => it[0])).sort();
+    // `sizes` is the sliders' store, not a part of its own; `clickyPick` is the clicky picker's. A 'note' row is text, no part.
     expect(listed).toEqual(Object.keys(R.HUD_DEFAULTS).filter(k => k !== 'sizes' && k !== 'clickyPick').sort());
   });
 

@@ -36,6 +36,7 @@ const W1 = shout('Povar', 'Come forth my minions of vapor');
 const W2 = shout('E`ci', 'Come forth my minions of ice');
 const W3 = shout('Tarew Marr', 'Come forth minions of water');
 const BURN = 'The currents wrench across the reef as Pwelon, Nrinda and Vamuil gather before Coirnav. The Triumvirate speaks as one through the Avatar of Water: "We will permit no further advance. Pwelon, Nrinda, Vamuil - unite and drive these invaders from the depths!"';
+const FINAL = 'Water surges, ice fractures and vapor coils through the reef as Coirnav summons the remaining defenders of the depths. The Triumvirate\'s voices thunder as one: "We shall not yield! Defenders of vapor, ice and water - rise! Let the depths claim these invaders!"';
 const WON = 'Coirnav, the Avatar of Water, has fallen! His colossal form collapses, driving a thunderous shockwave through the reef.';
 const LOST = 'Three voices thunder as one through Coirnav. "The Triumvirate has spoken! These waters reject you. Be banished from our domain!" A crushing surge tears through the reef.';
 const FIENDS = ['A triloun vaporfiend', 'A hraquis icefiend', 'A regrua waterfiend'];
@@ -75,6 +76,26 @@ describe('a full run', () => {
     kill(10);
     say(BURN);
     expect(snap()).toMatchObject({ state: 'burn', kills: 75 });
+  });
+
+  // The guild lead, 2026-11-09: "we should also include the three minis after the 3 waves".
+  it('the three minis after the 75: each death ticks, the early wave minis never count', () => {
+    slainBy('Guardian of Coirnav');
+    slainBy('Pwelon of Vapor', t0 + 60e3);                 // wave 1's early miniboss: not one of the three
+    expect(snap(t0 + 60e3).minis_down).toEqual([false, false, false]);
+    say(BURN, t0 + 400e3);
+    expect(snap(t0 + 400e3)).toMatchObject({ state: 'burn', minis_down: [false, false, false] });
+    slainBy('Nrinda of Ice', t0 + 450e3);
+    say('You have slain Vamuil of Water!', t0 + 460e3);
+    expect(snap(t0 + 460e3).minis_down).toEqual([false, true, true]);
+    slainBy('Pwelon of Vapor', t0 + 470e3);
+    expect(snap(t0 + 470e3)).toMatchObject({ state: 'burn', minis_down: [true, true, true] });
+  });
+  it('the final-phase emote marks all three down even when the deaths were out of range', () => {
+    slainBy('Guardian of Coirnav');
+    kill(30);
+    say(FINAL, t0 + 500e3);
+    expect(snap(t0 + 500e3)).toMatchObject({ state: 'burn', kills: 75, minis_down: [true, true, true] });
   });
 
   it('the fail run: banished, retry 20 minutes after, row gone after that', () => {
@@ -169,11 +190,11 @@ describe('Command Center row', () => {
 
   it('waves: count, next wave countdown, time left, and the clock sub', () => {
     // 200 s in: wave 3 is 100 s away, 700 s (11:40) left
-    expect(plain(row({ wave: 2 }, 200))).toBe('🌊 Coirnav: fiends 37/75 · wave 3 in 1:40 · 11:40 left15:00 clock from the Guardian');
+    expect(plain(row({ wave: 2 }, 200))).toBe('🌊 Coirnav: fiends 37/75 · wave 3 in 1:40 · 11:40 left');
     expect(plain(row({ kills: 18, wave: 1 }, 138))).toContain('fiends 18/75 · wave 2 in 0:42 · 12:42 left');
   });
   it('after wave 3 it just names the wave', () => {
-    expect(plain(row({ wave: 3, kills: 60 }, 359))).toBe('🌊 Coirnav: fiends 60/75 · wave 3 · 9:01 left15:00 clock from the Guardian');
+    expect(plain(row({ wave: 3, kills: 60 }, 359))).toBe('🌊 Coirnav: fiends 60/75 · wave 3 · 9:01 left');
   });
   it('flashes "wave N soon" only in the last 30 seconds before the next wave', () => {
     expect(row({ kills: 18, wave: 1 }, 149)).not.toContain('crit');
@@ -188,15 +209,18 @@ describe('Command Center row', () => {
   });
   it('warns that killing faster will not bring the wave, at 20 (wave 1) and 45 (wave 2)', () => {
     expect(plain(row({ kills: 20, wave: 1 }, 100))).toContain('wave 1 nearly down — wave 2 arrives on the clock at 3:00');
-    expect(plain(row({ kills: 19, wave: 1 }, 100))).toContain('15:00 clock from the Guardian');
+    expect(plain(row({ kills: 19, wave: 1 }, 100))).not.toContain('nearly down');
     expect(plain(row({ kills: 45, wave: 2 }, 250))).toContain('wave 2 nearly down — wave 3 arrives on the clock at 5:00');
-    expect(plain(row({ kills: 45, wave: 3 }, 320))).toContain('15:00 clock from the Guardian');
+    expect(plain(row({ kills: 45, wave: 3 }, 320))).not.toContain('nearly down');
+    expect(stripJs(cmd)).not.toMatch(/15:00 clock from the Guardian/);   // the guild lead, 2026-11-09: not needed
   });
   it('a wave the clock has passed counts as arrived even if the agent had not said so yet', () => {
     expect(plain(row({ wave: 1, kills: 30 }, 190))).toContain('wave 3 in');
   });
   it('burn, done and banished', () => {
-    expect(plain(row({ state: 'burn', kills: 75 }, 288))).toContain('🌊 Coirnav: all 75 down · burn Coirnav · 10:12 left');
+    expect(plain(row({ state: 'burn', kills: 75, minis_down: [false, false, false] }, 288))).toBe('🌊 Coirnav: 75 down · minis 0/3 · 10:12 left' + 'Pwelon · Nrinda · Vamuil');
+    expect(plain(row({ state: 'burn', kills: 75, minis_down: [false, true, false] }, 288))).toBe('🌊 Coirnav: 75 down · minis 1/3 · 10:12 left' + 'Pwelon · ✓ Nrinda · Vamuil');
+    expect(plain(row({ state: 'burn', kills: 75, minis_down: [true, true, true] }, 288))).toBe('🌊 Coirnav: minis down · burn Coirnav · 10:12 left');
     expect(plain(row({ state: 'done' }, 500))).toBe('🌊 Coirnav has fallen');
     const b = row({ state: 'banished', retry_at: base.started_at + 2100e3 }, 905);
     expect(plain(b)).toMatch(/^🌊 Banished · retry at /);

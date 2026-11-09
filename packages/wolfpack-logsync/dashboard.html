@@ -49,6 +49,11 @@ table.wp-abtbl th.wp-r { color:var(--dim); }
 .wp-mode.on { background:#1f6feb33; color:#e6edf3; }
 .wp-mode.hide.on { background:#f8514922; color:var(--red); }
 .wp-mode:focus-visible { outline:2px solid var(--blue); outline-offset:-2px; }
+/* Guest: a separate on/off beside the three modes (someone else plays this character on this PC). */
+.wp-guestbtn { background:none; border:0; color:var(--dim); font:inherit; font-size:11px; padding:2px 7px; cursor:pointer; white-space:nowrap; }
+.wp-guestbtn:hover { color:var(--text); }
+.wp-guestbtn.on { background:color-mix(in srgb, var(--orange) 20%, transparent); color:var(--orange); }
+.wp-guestbtn:focus-visible { outline:2px solid var(--blue); outline-offset:-2px; }
 /* Sidebar navigation (the guild lead, 2026-08-13: "having to scroll in our dashboard is
    somewhat annoying to navigate"). The row was FULL - 8 tabs plus Tour and
    Panels - so every new destination had to wrap or displace something, which is
@@ -2073,20 +2078,51 @@ function wpModeNote(r) {
   if (r.mode === 'custom') return 'set differently on wolfpack.quest';
   return '';
 }
-function wpModesHtml(modes) {
+// Guest characters (the guild lead, 2026-11-09: "when a friend is going to take his files and play as a guest on my
+// machine, he's able to do so"). A separate switch beside the three modes: a guest's log is still read here (overlays,
+// triggers, timers work) but nothing attributable to it is uploaded. Under Mimic it is saved with the SAME saveConfig
+// call the rest of Settings uses (cfg.guestCharacters; Mimic tells the running engine, no restart); a plain browser
+// posts /api/guest-character, which holds until the engine restarts. The list comes from /api/state guest_characters.
+var _wpGuestNow = [];           // lowercase names the engine says are guests (set each paint)
+var _wpGuestCase = {};          // lowercase -> name as the character list spells it
+function wpGuestOn(name) { return _wpGuestNow.indexOf(String(name).toLowerCase()) >= 0; }
+function wpSetGuest(name, on) {
+  var lc = String(name).toLowerCase();
+  var next = _wpGuestNow.filter(function (n) { return n !== lc; });
+  if (on) next.push(lc);
+  var names = next.map(function (n) { return _wpGuestCase[n] || n; });
+  var viaMimic = !!(window.mimic && window.mimic.saveConfig);
+  var call = viaMimic
+    ? window.mimic.saveConfig({ guestCharacters: names })
+    : fetch('/api/guest-character', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ character: name, on: !!on }) }).then(function (r) { return r.json(); });
+  Promise.resolve(call).then(function (r) {
+    if (r && r.ok === false) { wpModeSay('Could not save that for ' + name + '. Try again.', 'var(--red)'); return; }
+    _wpGuestNow = next;
+    wpModeSay(name + ': ' + (on ? 'guest. Overlays and triggers keep working; nothing from this character is uploaded.' : 'no longer a guest.')
+      + (viaMimic ? '' : ' (Until the engine restarts; set it in Mimic to keep it.)'), 'var(--green)');
+    try { refresh(); } catch (e) { void e; }
+  }).catch(function () { wpModeSay('Could not reach the engine to save that. Try again.', 'var(--red)'); });
+}
+function wpModesHtml(modes, guests) {
+  _wpGuestNow = (guests || []).map(function (n) { return String(n).toLowerCase(); });
+  modes.forEach(function (r) { _wpGuestCase[String(r.name).toLowerCase()] = r.name; });
   var h = '<details ' + wpKeep('me-char-modes') + ' style="margin-top:6px"><summary class="dim" style="cursor:pointer;font-size:11px">'
     + '👁 How each character shows (' + modes.length + ')</summary>'
     + '<div class="dim" style="font-size:10px;margin:4px 0"><b>Inventory only</b>: kept for your account inventory, left out of every list and chart. '
-    + '<b>Hide completely</b>: Mimic stops reading that log and the website hides it. Same switches as My Stats on wolfpack.quest.</div>'
+    + '<b>Hide completely</b>: Mimic stops reading that log and the website hides it. Same switches as My Stats on wolfpack.quest. '
+    + '<b>Guest</b>: someone else plays this character on this PC. Overlays work, nothing is uploaded.</div>'
     + '<div style="font-size:12px;line-height:1.9">';
   modes.forEach(function (r) {
     var note = wpModeNote(r);
+    var isGuest = wpGuestOn(r.name);
     h += '<div><span class="name">' + esc(r.name) + '</span> <span class="wp-seg" role="radiogroup" aria-label="Show ' + esc(r.name) + ' as">'
       + WP_MODES.map(function (m) {
           return '<button type="button" role="radio" aria-checked="' + (r.mode === m[0] ? 'true' : 'false') + '" class="wp-mode' + (r.mode === m[0] ? ' on' : '') + (m[0] === 'hidden' ? ' hide' : '')
             + '" data-char="' + esc(r.name) + '" data-mode="' + m[0] + '">' + m[1] + '</button>';
         }).join('')
-      + '</span>' + (note ? ' <span class="dim" style="font-size:10px">' + esc(note) + '</span>' : '') + '</div>';
+      + '</span> <span class="wp-seg"><button type="button" role="switch" aria-checked="' + (isGuest ? 'true' : 'false') + '" class="wp-guestbtn' + (isGuest ? ' on' : '')
+      + '" data-char="' + esc(r.name) + '" data-guest="' + (isGuest ? '0' : '1') + '" title="Guest: someone else plays this character on this PC. Overlays work, nothing is uploaded.">Guest</button></span>'
+      + (note ? ' <span class="dim" style="font-size:10px">' + esc(note) + '</span>' : '') + '</div>';
   });
   h += '</div>';
   if (_wpModeMsg) h += '<div style="font-size:11px;margin-top:4px;color:' + _wpModeMsg.color + '">' + esc(_wpModeMsg.text) + '</div>';
@@ -2122,6 +2158,12 @@ document.addEventListener('click', function (e) {
   if (!b) return;
   e.preventDefault();
   wpSetCharacterMode(b.dataset.char, b.dataset.mode);
+});
+document.addEventListener('click', function (e) {
+  var b = e.target && e.target.closest ? e.target.closest('.wp-guestbtn') : null;
+  if (!b) return;
+  e.preventDefault();
+  wpSetGuest(b.dataset.char, b.dataset.guest === '1');
 });
 
 // 👋 Your characters — the first-sign-in card (the guild lead, 2026-10-24: "We should be asking what characters
@@ -2405,7 +2447,7 @@ function renderMeCard(s) {
   // Main / alt · Inventory only · Hide completely, per character (see wpModesHtml). Listed even when no
   // log is being watched: a character this PC no longer reads is exactly the one that needs the way back.
   const charModes = Array.isArray(s.characterModes) ? s.characterModes : [];
-  if (charModes.length > 0) h += wpModesHtml(charModes);
+  if (charModes.length > 0) h += wpModesHtml(charModes, Array.isArray(s.guest_characters) ? s.guest_characters : []);
   h += '</div>';
 
   // Recent tells (local only — they never leave the machine).

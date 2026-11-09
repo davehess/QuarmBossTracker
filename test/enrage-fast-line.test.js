@@ -214,3 +214,15 @@ describe('Mimic forwards only the two enrage lines', () => {
     expect(stripJs(mainSrc)).toMatch(/_zealFastLineNote\(obj\)/);
   });
 });
+
+// 2026-11-09: Zeal's chat timestamp can lead the pipe line; the fast enrage line must still fire.
+describe('a timestamped enrage line', () => {
+  const { enrageLineOf } = require('../apps/mimic/zealPipe.js');
+  const obj = (text) => ({ type: 0, character: 'Aldenmar', data: JSON.stringify({ type: 306, text }) });
+  it('fires with [HH:MM:SS], [HH:MM] and [hh:mm:ss AM] in front, and hands on the line without it', () => {
+    for (const stamp of ['[11:53:53] ', '[11:53] ', '[11:53:53 AM] ']) {
+      const l = enrageLineOf(obj(stamp + 'Lord Inquisitor Seru has become ENRAGED.'), 5);
+      expect(l, stamp).toEqual({ character: 'Aldenmar', text: 'Lord Inquisitor Seru has become ENRAGED.', at: 5 });
+    }
+  });
+});

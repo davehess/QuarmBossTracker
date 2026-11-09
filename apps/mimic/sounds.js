@@ -4,7 +4,8 @@
 // use the sound effects instead of callouts tts").
 //
 // Two folders, one name space:
-//   shipped  <resources>/sounds   generated with ffmpeg for this project (no third-party audio)
+//   shipped  <resources>/sounds   eight generated with ffmpeg for this project, and four weave sounds from Freesound
+//                                 (three CC0, one CC BY 4.0): sounds/CREDITS.md carries the authors and licences
 //   custom   <userData>/sounds    the member drops .wav / .mp3 / .ogg here
 // A trigger stores a sound NAME ("slap"), or "custom:<file>" for a member's own file — never a path,
 // so a guild or synced trigger plays on every PC. A custom file with the same name as a shipped one
