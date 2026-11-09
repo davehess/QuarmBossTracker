@@ -249,7 +249,13 @@ next touch one rather than assuming a missing row means a missing doc.
   "exact doubles", replace the samples; the old band refused a 1.65 s → 3.65 s change forever, so ours showed red where
   Basketweaver said swing). Tally adds Basketweaver's terms (`rounds`, `fistTried` / `fistHit`, `weaveDmg`, `addedDps`,
   `reactAvg`); a landed weave flashes green with "WEAVE +damage"; the highway and Thin bar show four swings ahead (were two;
-  ours scrolled twice as fast); the HUD lane can run bottom to top (`weaveDir`).
+  ours scrolled twice as fast); the HUD lane can run bottom to top (`weaveDir`). **/mystats calibrates (same day,** *"running
+  /mystats will sync up the basketweaver apparently"***):** EQMacEmu `Mob::ShowStats` prints `Haste: N (cap M)` with N = 100 +
+  haste (`Mob::GetHaste`; under 100 = slowed) and `Client::SetAttackTimer` times a swing as delay × 10000 / N. The hub reads
+  that line (your class only: a targeted pet prints its own), and `mystats()` / `_calibrate()` turn N and the measured interval
+  into the 2H's real delay (`statsDelay`), which then sets the haste at any later interval, so the fist window no longer leans
+  on the "2H weapon delay" setting. The guild lead's numbers fit: 3000 / 1.82 = 1648 ms hasted, 3000 / 0.82 = 3659 ms
+  slowed (Basketweaver's 3.65 s).
   **First live report (2026-11-09, agent 4.0.78 beta):** *"WEAVING IS WAITING FOR A FIGHT BUT I'M IN ONE"*. The hub only fed
   the engine lines on colours 265 / 267 (the unverified guess above), so a client whose melee lines arrive on any other colour
   never started a swing. Now it takes any line that starts `You ` on any colour (other people's hits and non-melee are still
