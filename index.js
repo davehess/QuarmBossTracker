@@ -11558,6 +11558,30 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
         for (let i = 0; i < eff.length; i++) if (Number(eff[i]) === 92 && Number(base[i]) > 0) sum += Number(base[i]);
         return sum > 0 ? sum : null;
       }
+      // Attack-speed effects, the numbers Mob::GetHaste adds up (the guild lead, 2026-11-09: "We should be figuring out haste
+      // based on buffs too"): [SE_AttackSpeed 11, SE_AttackSpeed2 98, SE_AttackSpeed3 119] as the server's effect value, so
+      // 100 is no change, 130 is 30% haste, 40 is a heavy slow; for 119 (overhaste) the value is the haste itself and a slow is
+      // negative (EQMacEmu zone/bonuses.cpp:1136-1182, c2cd265). A fixed formula is the base; a level formula is read at the era
+      // cap. Zeros are kept to hold the slot; a spell with none carries no `hs` at all, so the payload barely grows.
+      function _hasteSlots(r) {
+        const eff  = r.raw && Array.isArray(r.raw.eff)     ? r.raw.eff     : null;
+        const base = r.raw && Array.isArray(r.raw.base)    ? r.raw.base    : null;
+        if (!eff || !base) return null;
+        const form = r.raw && Array.isArray(r.raw.formula) ? r.raw.formula : null;
+        const maxA = r.raw && Array.isArray(r.raw.max)     ? r.raw.max     : null;
+        const out = [0, 0, 0];
+        const SPA = { 11: 0, 98: 1, 119: 2 };
+        for (let i = 0; i < 12 && i < eff.length; i++) {
+          const k = SPA[Number(eff[i])];
+          if (k === undefined) continue;
+          const b = Number(base[i]) || 0;
+          const f = form && form[i] != null ? Number(form[i]) : 100;
+          const mx = maxA && maxA[i] != null ? Math.abs(Number(maxA[i])) : 0;
+          const mag = _dsFormulaValue(b, f === 0 ? 100 : f, _dsLevel, mx);
+          out[k] = b < 0 ? -mag : mag;
+        }
+        return (out[0] || out[1] || out[2]) ? out : null;
+      }
       // Estimated heal magnitude for the heal-attribution join + the tank
       // overlay's inbound-heal amounts (the guild lead, 2026-07-14: heal amounts are
       // private to the healed, so a witnessed landing is credited at the
@@ -11674,6 +11698,8 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
             cc: _ccKinds(r) || undefined,
             // Hate the spell adds (_hateAdded) — omitted for the ~99% that add none.
             hate: _hateAdded(r) || undefined,
+            // Attack-speed effects (_hasteSlots): the agent's Weave timer adds up a raider's buffs like the server does.
+            hs: _hasteSlots(r) || undefined,
             // Decoded effect strings, for the dashboard's Buffs tab. Attached
             // ONLY to beneficial timed buffs (1233 of 3933 spells), so the
             // catalog grows by ~50KB on an hour-cached ETag'd fetch rather than
@@ -11711,7 +11737,7 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
         }
       }
       const body = JSON.stringify({
-        version: 9,   // `st`/`sws` (debuff stacking signature) ride v9 — the ETag, a hash of the body, is what makes agents refetch · v9: adds `ae` (area-spell flag) — FB-57 Melody AE chip · v8: adds `npc` (NPC-castable flag) — #206 instant-mechanic index
+        version: 10,  // `hs` (attack-speed effect values) rides v10 · `st`/`sws` (debuff stacking signature) ride v9 — the ETag, a hash of the body, is what makes agents refetch · v9: adds `ae` (area-spell flag) — FB-57 Melody AE chip · v8: adds `npc` (NPC-castable flag) — #206 instant-mechanic index
         fetched_at: new Date().toISOString(),
         count: entries.length,
         entries,
@@ -11764,6 +11790,7 @@ async function _handleAgentItemClickies(req, res, isPublic) {
   if (!fresh) {
     const entries = [];
     let wornDs = [];
+    let wornHaste = null;   // null = unread (an older database): the agent then knows it has no gear haste
     let failed = false;
     try {
       const supabase = require('./utils/supabase');
@@ -11791,6 +11818,12 @@ async function _handleAgentItemClickies(req, res, isPublic) {
       const worn = await supabase.select('item_worn_damage_shield', 'select=item_id,item_name,ds&order=item_id&limit=500');
       if (Array.isArray(worn)) wornDs = worn.map(w => ({ id: w.item_id, name: w.item_name, ds: Number(w.ds) || 0 }));
       else console.warn('[item-clickies] worn damage-shield read failed — serving without it');
+      // Items whose WORN effect is an attack-speed spell (SE_AttackSpeed 11), with the haste they add (the value less 100):
+      // the server fills itembonuses.haste from the worn effect (EQMacEmu zone/bonuses.cpp:247, c2cd265) and Mob::GetHaste adds the
+      // best one. Same fail-soft as worn_ds: a failed read serves the catalog without them and the agent then reads no gear haste.
+      const wornH = await supabase.selectAllPaged('item_worn_haste', 'select=item_id,item_name,haste', 'item_id');
+      if (Array.isArray(wornH)) wornHaste = wornH.map(w => ({ id: w.item_id, name: w.item_name, haste: Number(w.haste) || 0 }));
+      else console.warn('[item-clickies] worn haste read failed — serving without it');
     } catch (err) {
       // Column missing (migration not applied yet) or other transient failure.
       // Nothing from a failed read is cached: the last good catalog keeps serving
@@ -11801,11 +11834,12 @@ async function _handleAgentItemClickies(req, res, isPublic) {
     }
     if (!failed) {
       const body = JSON.stringify({
-        version: 2,                         // 2: + worn_ds (additive; older agents ignore it)
+        version: 3,                         // 3: + worn_haste · 2: + worn_ds (additive; older agents ignore them)
         fetched_at: new Date().toISOString(),
         count: entries.length,
         entries,
         worn_ds: wornDs,
+        worn_haste: wornHaste,
       });
       const etag = '"' + require('crypto').createHash('sha1').update(body).digest('hex') + '"';
       _itemClickyCache = { fetchedAt: Date.now(), body, etag };

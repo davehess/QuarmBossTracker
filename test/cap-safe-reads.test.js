@@ -656,7 +656,7 @@ describe('8c · catalogs read whole, and a failed page is never cached as the ca
       const worn = [{ item_id: 8364, item_name: 'Talisman of Vah Kerrath', ds: 8 }, { item_id: 15805, item_name: 'Shroud of Eternity', ds: 5 }];
       fake = installFakePostgrest({ tables: { eqemu_items: items(), item_worn_damage_shield: worn } });
       const body = JSON.parse((await get(load().handler)).body);
-      expect(body.version).toBe(2);
+      expect(body.version).toBe(3);
       expect(body.worn_ds).toEqual([{ id: 8364, name: 'Talisman of Vah Kerrath', ds: 8 }, { id: 15805, name: 'Shroud of Eternity', ds: 5 }]);
       expect(body.entries.some(e => e.name === 'Talisman of Vah Kerrath')).toBe(false);
     });
@@ -799,7 +799,7 @@ describe('8c · catalogs read whole, and a failed page is never cached as the ca
       ];
       fake = installFakePostgrest({ tables: { eqemu_spells: rows, eqemu_npc_spells_entries: [] } });
       const body = JSON.parse((await get(load().handler)).body);
-      expect(body.version).toBe(9);
+      expect(body.version).toBe(10);
       const flagged = body.entries.filter(e => e.ae === true).map(e => e.id).sort((a, b) => a - b);
       expect(flagged).toEqual([703, 742, 9001, 9002, 9003, 9004, 9005]);
       // Omitted, not `false`: a flat payload, and the agent reads "no entry has ae" as a pre-v9 bot.
