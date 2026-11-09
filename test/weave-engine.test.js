@@ -315,22 +315,39 @@ describe('the hub: pipe objects in, states out', () => {
     expect(h.engines.size).toBe(0);
     expect(sent.length).toBe(0);
   });
-  it('takes colour 265 and 267 lines that are yours, and bandolier loads on any colour; nothing else', () => {
+  // The guild lead, 2026-11-08: "WEAVING IS WAITING FOR A FIGHT BUT I'M IN ONE". Your lines count by their words on any
+  // colour (a crit prints on its own colour); other people's never do, whatever the colour.
+  it('takes your melee lines on any colour and bandolier loads; never other people\'s hits or non-melee', () => {
     const { h, sent, advance } = hub();
     h.setEnabled(true);
     expect(h.note(chat('Aldenmar', 265, TWO()))).toBe(true);
     advance(100);
     expect(h.note(chat('Aldenmar', 267, 'You try to crush a gnoll, but miss!'))).toBe(true);
-    advance(100);
-    expect(h.note(chat('Aldenmar', 266, TWO()))).toBe(false);                       // the other colours are other people's hits
-    expect(h.note(chat('Aldenmar', 256, TWO()))).toBe(false);
+    advance(400);
+    expect(h.note(chat('Aldenmar', 301, TWO()))).toBe(true);                        // a crit's colour
+    advance(400);
+    expect(h.note(chat('Aldenmar', 266, 'Brackwyn crushes a gnoll for 5 points of damage.'))).toBe(false);
     expect(h.note(chat('Aldenmar', 265, 'Brackwyn crushes a gnoll for 5 points of damage.'))).toBe(false);
+    expect(h.note(chat('Aldenmar', 264, 'You hit a gnoll for 900 points of non-melee damage.'))).toBe(false);
     expect(h.note(chat('Aldenmar', 1010, LOAD('caen')))).toBe(true);
     expect(h.note({ type: 2, character: 'Aldenmar', data: '[]' })).toBe(false);     // a gauge is not a chat line
     expect(h.note({ type: 0, character: 'Aldenmar', data: 'not json' })).toBe(false);
     expect(sent.length).toBeGreaterThan(0);
     expect(sent[sent.length - 1].character).toBe('Aldenmar');
     expect(sent[sent.length - 1].source).toBe('zeal');
+  });
+  it('melee seen but no word matched: the state names the word, and the idle canvas line says it', () => {
+    const { h, sent, advance } = hub();
+    h.setEnabled(true);
+    expect(h.note(chat('Aldenmar', 265, 'You bludgeon a gnoll for 40 points of damage.'))).toBe(false);
+    advance(2100);
+    expect(h.note(chat('Aldenmar', 265, 'You kick a gnoll for 30 points of damage.'))).toBe(false);   // a kick is never offered
+    expect(h.note(chat('Aldenmar', 265, 'You bludgeon a gnoll for 41 points of damage.'))).toBe(false);
+    const st = sent[sent.length - 1];
+    expect(st.active).toBe(false);
+    expect(st.diag).toEqual({ seen: 2, matched: 0, lastVerb: 'bludgeon' });
+    const draw = src('weaveDraw.js');
+    expect(draw).toContain('\'Weaving timer: your swings say "\' + String(dg.lastVerb).slice(0, 16)');
   });
   it('keeps a character\'s engine apart from another\'s', () => {
     const { h, advance } = hub();

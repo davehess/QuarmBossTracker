@@ -164,7 +164,13 @@
     ctx.globalAlpha = live ? 0.3 : 0.16; ctx.fillStyle = c.dim; ctx.fillRect(0, laneTop, w, laneH); ctx.globalAlpha = 1;
     if (!live) {
       font(ctx, px); ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = c.dim;
-      ctx.fillText(st && st.source === 'needs-zeal' ? 'Weaving timer: needs Zeal' : 'Weaving timer: waiting for a fight', 2, head / 2);
+      // Idle with melee seen but none matched: name the word, so a 2H or fist verb we do not know is one setting away.
+      var dg = st && st.diag;
+      var idle = st && st.source === 'needs-zeal' ? 'Weaving timer: needs Zeal'
+        : dg && dg.seen > 0 && dg.matched === 0 && dg.lastVerb
+          ? 'Weaving timer: your swings say "' + String(dg.lastVerb).slice(0, 16) + '" (add it in the HUD ⚙)'
+          : 'Weaving timer: waiting for a fight';
+      ctx.fillText(idle, 2, head / 2);
       glyph(c, ctx, st, now, w - px, head / 2, px + 2);
       return;
     }
