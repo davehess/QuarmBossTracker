@@ -285,6 +285,12 @@ next touch one rather than assuming a missing row means a missing doc.
   short word, type 4) marks the press, tags its attempt record (`tag`) and the per-set tally (`tally.bySet`), and times the NEXT
   window for that set (`offDelayFor`: `1hb` = `offDelay1hb`, default 25, Ribcracker; `2hb` = the empty slot, bare fists by the
   table; plain = `offDelay`, the fist wraps). The weave macro's set names in the guild lead's log are `1` and `2`.
+  **First comparison, and false clips (same day, beta):** three minutes alternating the sets: fist wraps 27 of 30 landed,
+  ~51 weave damage a press; Ribcracker 46 of 59, ~38 a press (half its offhand rounds missed, and its swap takes ~880 ms
+  against ~440 for the wraps, so its 2 real clips were late swaps); empty slot 22 of 29, ~28 a press. 8 Ribcracker "clips"
+  and the 4:27 pm run were the engine's prediction off (1159 / 846 ms for a real ~1.5 / ~1.34 s), and a clip kept that swing out
+  of the re-lock, so it never recovered. A clip now needs the swap back loaded no earlier than `SWAP_IN_MS` (150) before the 2H
+  was due; of 424 clips recorded that day, 235 had swapped back earlier than that.
   **First live report (2026-11-09, agent 4.0.78 beta):** *"WEAVING IS WAITING FOR A FIGHT BUT I'M IN ONE"*. The hub only fed
   the engine lines on colours 265 / 267 (the unverified guess above), so a client whose melee lines arrive on any other colour
   never started a swing. Now it takes any line that starts `You ` on any colour (other people's hits and non-melee are still

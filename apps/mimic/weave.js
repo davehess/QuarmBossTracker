@@ -200,6 +200,7 @@
   var PRESS_GROUP_MS = 1200; // the macro loads two sets back to back: loads this close are ONE press
   var FIST_AFTER_MS = 700;   // a fist round this soon after a load belongs to that press
   var CLIP_MS = 250;         // the next 2H round later than expected by more than this = clipped
+  var SWAP_IN_MS = 150;      // ...but only when the swap back loaded no earlier than this before the 2H was due
   var FIGHT_GAP_MS = 12000;  // no swing this long: the fight is over, the tally and the samples reset
   var MAX_SAMPLES = 6;
   var BARE_MISS_2H_MS = 300;
@@ -349,7 +350,11 @@
         var p = this.pending, late = p.expected != null ? t - p.expected : 0;
         // Late by a whole number of swings (± CLIP_MS) is on time with rounds we never saw in between (a missed round whose
         // line named no weapon), not a clip: a real clip restarts the 2H from the fist's swing, a fraction of an interval late.
-        clipped = late > CLIP_MS && !onBeat(late, this.interval2H());
+        // And a clip needs the 2H still out of the hand when it was due: a swap back that loaded well before then cannot
+        // have delayed it, so a late swing is the prediction being off (the guild lead's ndjson, 2026-11-09: 8 Ribcracker
+        // "clips" and a run at 4:27 pm all swapped back 190-430 ms early, while the engine predicted 1159 and 846 ms for a
+        // real ~1.5 s and ~1.34 s, and the clips kept those swings out of the re-lock, so it never recovered).
+        clipped = late > CLIP_MS && !onBeat(late, this.interval2H()) && !(p.expected != null && p.lastLoad < p.expected - SWAP_IN_MS);
         this._resolve(clipped ? 'clip' : (p.fist != null ? 'landed' : 'miss'), t);
       }
       if (this.last2H != null) {
