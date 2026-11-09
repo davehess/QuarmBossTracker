@@ -103,6 +103,15 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 Gold splits for every scripted PoP event (web 2.1.116 on main, [beta], 2026-11-09, §555).** The guild lead: *"yes make gold
+  splits a site feature for every event, linked for replays and parses"*. https://wolfpack.quest/pop/events/splits (index) and
+  https://wolfpack.quest/pop/events/<slug>/splits (one event): attempts found in `encounters` (`web/lib/eventAttemptsLoad.ts`,
+  grouped by a start match, raid night or a 30-minute gap), stacked timelines first and largest with click-to-align on a key
+  moment and time-to-next, the splits table with gold for each segment's best ever, sum of best and each attempt's possible
+  save; every split links its parse, every attempt its replay window. Hand-written moments for the five elemental events
+  (`web/lib/eventSplitsDefs.ts`), a generic default for the other 98. "Play these attempts together" links to the replay
+  overlay, labelled "coming" until it ships. Tests `test/gold-splits.test.js` (gold comparison mutation-checked).
+
 - **🧾 raidmimic.com front door: C "Home panel" graduated, b deleted (web 2.1.114 on main, 2026-11-09).** Picked on the Decision
   Desk 2026-11-09 (DECISIONS §546). Signed out: the story stage with a big "Skip video" at the top, remembered per viewer, and
   "Rewatch the video" (`#video`) on the collapsed bar. Signed in: "Your Raid Mimic" (their characters, what each needs next, the

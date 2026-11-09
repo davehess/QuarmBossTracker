@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-116-2026-11-09',
+    title: 'Web 2.1.116',
+    version: 'Web 2.1.116',
+    date: '2026-11-09',
+    headline: 'Gold splits: every attempt at a Planes of Power event, side by side, with your best time for each part.',
+    features: [
+      { name: 'Gold splits (beta)', blurb: 'Each event gets a splits page: every attempt as a timeline, one under the other. Click a key moment and every attempt lines up on it, showing how long each took to reach the next. The table marks the best time ever for each part in gold, adds them up into the best possible run, and shows how much each attempt could save.' },
+      { name: 'Linked to the fight', blurb: 'Every split opens that kill\'s parse, and every attempt opens the raid replay for its window.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'bot-4-0-61-2026-11-09',
     title: 'Bot 4.0.61',
     version: 'Bot 4.0.61 · Web 2.1.115',

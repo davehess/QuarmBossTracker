@@ -5097,6 +5097,14 @@ crash card labels it "🐺 Wolf Pack Zeal" (`wpZealBuildTag`). Runbook: `docs/up
   `WISHLIST_BID_KEY` — anything encrypted (bids, UI snapshots) is bot-only;
   the bot must extract/serve plaintext derivatives the web needs.
 
+### Gold splits per scripted event (web 2.1.116, 2026-11-09, §555)
+https://wolfpack.quest/pop/events/splits and `/pop/events/<slug>/splits` ([beta]). Moments per event:
+`web/lib/eventSplitsDefs.ts` (hand-written for the five elemental events, a generic default for the rest of
+`web/lib/popEvents.ts`). Attempts: `web/lib/eventAttempts.ts` (pure grouping) + `web/lib/eventAttemptsLoad.ts` (the only
+reader: `encounters`, guild-scoped, paged). Maths: `web/lib/goldSplits.ts` (segments, gold = best ever, sum of best, time save).
+Timeline + click-to-align: `web/app/pop/events/[slug]/splits/SplitsTimeline.tsx`. Links: parse per split, replay window per
+attempt; the overlay replay link waits for the replay overlay (§555 follow-up). Tests `test/gold-splits.test.js`.
+
 ### Raid timeline strip and Raid routes (web 1.9.20–1.9.21, 2026-10-21, §400)
 - **Raid timeline strip.** `web/components/RaidTimeline.tsx` at the top of `/spectator` (live: polls the members-only
   `/api/spectator/timeline` every 10 s, curated kills by `ended_at`, corrected by the server's `now`) and `/spectator/replay`
