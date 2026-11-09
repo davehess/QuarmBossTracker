@@ -119,6 +119,7 @@
   #builder .grp{margin:8px 0 2px;color:var(--dim);text-transform:uppercase;font-size:10px;letter-spacing:.5px}
   #builder label{display:flex;align-items:center;gap:7px;padding:2px 0;cursor:pointer}
   #builder label .bl{flex:1;min-width:0}
+  #builder .bnote{padding:3px 0 4px;color:var(--dim);font-size:10px;line-height:1.35}
   #builder .bsz{width:54px;flex:none;margin:0;accent-color:var(--wp-blue);cursor:ew-resize}
   #builder select,#builder button,#builder input[type=text]{background:rgba(var(--wp-panel-rgb),.9);color:var(--text);border:1px solid var(--border);
     border-radius:4px;font:inherit;font-size:10px;padding:1px 6px;cursor:pointer}
@@ -942,6 +943,10 @@
     // The Weave timer (the guild lead, 2026-11-07): a slim vertical lane on the right of the ring, where the mana
     // arc is, timing a monk's bandolier weave. apps/mimic/weave.js runs it in Mimic's main process from the Zeal pipe.
     ['Weave timer', [['weave', 'Lane on the right (auto = Monk and Beastlord)', ['auto', 'on', 'off']],
+      // The recommended macro (the guild lead, 2026-11-09: "the new pipe commands. We should start recommending those"): the
+      // /pipe line marks each press exactly, so the timer scores it from the press, not from guessing at the swap lines.
+      ['weaveMacro', 'Recommended: end your weave macro with /pipe weave (after both /band load lines). Comparing offhands? '
+        + 'Make two more ending /pipe weave1hb (a one-hand blunt like Ribcracker) and /pipe weave2hb (empty offhand).', 'note'],
       // The guild lead, 2026-11-09: "the sidebar on weaving for the Hud should have the option to go to the top ... i mean bottom to top".
       ['weaveDir', 'Lane moves: down to the hit line, or up to it', ['down', 'up']],
       // Swap time: from the press to the 2H back in hand. 400 ms is what Basketweaver measured ("Weave Off Delay"); the old 150
@@ -1802,6 +1807,7 @@
     HUD_PARTS.forEach(function(g){
       h += '<div class="grp">' + esc(g[0]) + '</div>';
       g[1].forEach(function(it){
+        if (it[2] === 'note') { h += '<div class="bnote">' + esc(it[1]) + '</div>'; return; }
         if (it[2] === 'text') {
           h += '<label><span class="bl">' + esc(it[1]) + '</span><input type="text" data-part="' + it[0] + '" value="' + esc(hudParts[it[0]]) + '" maxlength="80" spellcheck="false" style="width:120px">'
             + '<button type="button" class="brs" data-reset="' + it[0] + '" title="Back to default">↺</button></label>';

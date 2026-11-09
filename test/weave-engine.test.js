@@ -1175,3 +1175,13 @@ describe('a late 2H after an early swap back is the prediction off, not a clip',
     expect(Math.abs(e.interval2H() - 1340)).toBeLessThan(70);
   });
 });
+
+// 2026-11-09, the guild lead: "update main mimic with the fistweaving stuff and the new pipe commands. We should start
+// recommending those": the HUD's weave settings say how to end the macro.
+describe('the HUD recommends the /pipe weave macros', () => {
+  it('a note row in the Weave timer settings, drawn as text with no setting behind it', () => {
+    const me = stripJs(readSource(path.join(MIMIC, 'me.html')));
+    expect(me).toMatch(/\['weaveMacro', 'Recommended: end your weave macro with \/pipe weave[^']*'\s*\+ '[^']*\/pipe weave1hb[^']*\/pipe weave2hb[^']*', 'note'\]/);
+    expect(me).toContain(`if (it[2] === 'note') { h += '<div class="bnote">' + esc(it[1]) + '</div>'; return; }`);
+  });
+});
