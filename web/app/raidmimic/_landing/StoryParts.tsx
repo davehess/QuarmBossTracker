@@ -24,7 +24,7 @@ export function FeatureBlocks() {
           // An odd last block spans both columns, picture beside its words, so no block sits alone in a row.
           const wide = FEATURES.length % 2 === 1 && i === FEATURES.length - 1;
           return (
-            <li key={f.id} className={`min-w-0 ${wide ? 'sm:col-span-2 sm:grid sm:grid-cols-2 sm:items-center sm:gap-6' : ''}`}>
+            <li key={f.id} id={f.id} className={`min-w-0 scroll-mt-20 ${wide ? 'sm:col-span-2 sm:grid sm:grid-cols-2 sm:items-center sm:gap-6' : ''}`}>
               <FeaturePicture f={f} />
               <div className="min-w-0">
                 <h3 className="mt-3 text-lg text-[#f2ede1]">{f.name}</h3>

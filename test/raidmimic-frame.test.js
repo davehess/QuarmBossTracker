@@ -17,16 +17,18 @@ describe('the Raid Mimic frame', () => {
     expect(frame).toMatch(/<nav aria-label="Raid Mimic"/);
     // "Your guilds" means "manage my Raid Mimic account", so it carries stay=1 (2026-11-02, redirect by default): without it
     // a one-guild player would be bounced to their guild's site every time they pressed it.
-    expect(frame).toMatch(/href: GUILDS_STAY_PATH/);
+    expect(code('web/lib/raidmimicNav.ts')).toMatch(/href: GUILDS_STAY_PATH/);
     expect(GUILDS_STAY_PATH).toBe('/guilds?stay=1');
     expect(frame).toMatch(/<Footer onHost \/>/);
     // "top bar on the raidmimic.com site doesn't lock" (2026-11-02): pinned, opaque, one line (links scroll inside it)
     expect(frame).toMatch(/<header className="sticky top-0 z-40 [^"]*\bbg-bg\b[^"]*">/);
-    expect(frame).toMatch(/<nav aria-label="Raid Mimic" className="[^"]*overflow-x-auto whitespace-nowrap"/);
+    expect(frame).toMatch(/<nav aria-label="Raid Mimic" className="[^"]*overflow-x-auto whitespace-nowrap[^"]*"/);
     // the landing page takes the same bar under its stage, on a raidmimic host only
     const landing = code('web/app/raidmimic/page.tsx');
     expect(landing).toMatch(/import \{ HostBar \} from '@\/components\/RaidmimicFrame';/);
-    expect(landing).toMatch(/\{onHost && <HostBar \/>\}\s*<FeatureBlocks \/>/);
+    // Signed out the bar sits under the stage; signed in it comes first, above the Dashboard (2026-11-09). Once either way.
+    expect(landing).toMatch(/\{!signedIn && onHost && <HostBar \/>\}\s*<FeatureBlocks \/>/);
+    expect(landing).toMatch(/\{signedIn && onHost && <div className="mx-auto max-w-5xl"><HostBar \/><\/div>\}/);
     expect(frame).toMatch(/if \(!onHost\) return <>\{children\}<\/>;/);
     expect(frame).not.toMatch(/['"]use client['"]/);
   });

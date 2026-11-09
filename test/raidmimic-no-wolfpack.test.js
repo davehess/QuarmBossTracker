@@ -264,7 +264,7 @@ describe('the wiring, as source', () => {
     for (const rel of SURFACES.filter(f => f.endsWith('.tsx'))) {
       expect(code(rel), `${rel} links /guilds without stay=1`).not.toMatch(/href="\/guilds"|href=\{'\/guilds'\}|href: '\/guilds'/);
     }
-    expect(code('web/components/RaidmimicFrame.tsx')).toMatch(/\{ label: 'Your guilds', href: GUILDS_STAY_PATH \}/);
+    expect(code('web/lib/raidmimicNav.ts')).toMatch(/\{ label: 'Your guilds', href: GUILDS_STAY_PATH \}/);
     for (const rel of ['web/app/guilds/[slug]/page.tsx', 'web/app/guilds/new/page.tsx']) expect(code(rel), rel).toMatch(/href=\{GUILDS_STAY_PATH\}[^>]*>&larr; Your guilds/);
     expect(code('web/app/guilds/JoinForm.tsx')).toMatch(/router\.replace\(GUILDS_STAY_PATH\)/);
     expect(code('web/app/auth/mimic-link/page.tsx')).toMatch(/<Link href=\{GUILDS_STAY_PATH\}/);

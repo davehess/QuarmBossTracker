@@ -93,8 +93,8 @@ describe('header chrome', () => {
   });
 
   it('builds the Menu from the nav\'s own groups, never a second copy', () => {
-    expect(headerCode).toMatch(/import Nav, \{ GROUPS, SIMPLE_GROUPS, SubNav \} from '\.\/Nav'/);
-    expect(headerCode).toMatch(/menuGroups\.map/);
+    expect(headerCode).toMatch(/import Nav, \{ GROUPS \} from '\.\/Nav'/);
+    expect(headerCode).toMatch(/GROUPS\.map/);
     // A second hard-coded list is how one of them goes stale.
     expect(headerCode).not.toMatch(/const GROUPS\s*[:=]/);
   });

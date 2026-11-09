@@ -65,6 +65,15 @@
         ],
         "createdAt": "2026-10-23T21:52:26.620Z",
         "reason": "Embedded ISO-GLOW isometric drawing: its small mono labels are drawn text inside an illustration, not page typography; the page's own heading hierarchy lives in HowItWorks.tsx (session triage 2026-10-23)"
+      },
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": [
+          "test/raidmimic-landing-variants.test.js"
+        ],
+        "createdAt": "2026-11-09T16:25:52.843Z",
+        "reason": "session 2026-11-09: '<img' is a regex/string inside a vitest assertion, not rendered markup"
       }
     ]
   }

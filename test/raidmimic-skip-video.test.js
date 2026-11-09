@@ -15,7 +15,7 @@ import * as H from '../web/lib/raidmimicHome.ts';
 const code = (rel) => stripJs(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
 const page = code('web/app/raidmimic/page.tsx');
 const stage = code('web/app/raidmimic/_landing/StoryStage.tsx');
-const panel = code('web/app/raidmimic/_landing/HomePanel.tsx');
+const panel = code('web/app/raidmimic/_landing/HomeDashboard.tsx');   // the Dashboard replaced the Home panel (option B, 2026-11-09)
 const gate = code('web/app/raidmimic/_landing/HomePanelGate.tsx');
 const chars = code('web/app/characters/page.tsx');
 const mine = code('web/lib/hubMine.ts');
@@ -24,21 +24,24 @@ describe('the page: signed out gets the stage, signed in gets the panel', () => 
   it('reads the session, and only a Discord id swaps the video for the panel', () => {
     expect(page).toMatch(/const \{ data: \{ user \} \} = await supabaseServer\(\)\.auth\.getUser\(\);/);
     expect(page).toMatch(/const discordId = discordIdOf\(user\);/);
-    // 2026-11-09: the default is written as a stage plus an `if (user && discordId)` that swaps in the panel; the signed-in
-    // previews (raidmimic-home-variants.test.js) branch inside it, and no `?v=` keeps this path.
-    expect(page).toMatch(/let top = <StoryStage downloadUrl=\{DOWNLOAD_URL\} onHost=\{onHost\} \/>;\s*if \(user && discordId\) \{[^]*top = <HomePanelGate[^]*<HomePanel mine=\{await loadMine\(discordId\)\}/);
+    expect(page).toMatch(/const signedIn = !!\(user && discordId\);/);
+    expect(page).toMatch(/let top = <StoryStage downloadUrl=\{DOWNLOAD_URL\} onHost=\{onHost\} \/>;/);
+    expect(page).toMatch(/if \(signedIn\) \{[^]*<HomePanelGate[^]*panel=\{<HomeDashboard [^]*mine=\{mine\} guilds=\{guilds\}/);
   });
-  it('reads a query only for the signed-in home previews, and no redirect or big-skip variant survives', () => {
-    expect(page).not.toMatch(/\bv === |\?v=|redirect\(|bigSkip/);
-    expect(page).toMatch(/searchParams\?\.v, onHost\)/);
-    expect(page).toMatch(/export default async function RaidmimicPage\(\{ searchParams \}/);
+  it('signed in, the bar is drawn once, ABOVE the Dashboard; signed out, once under the stage', () => {
+    expect(page).toMatch(/\{signedIn && onHost && <div className="mx-auto max-w-5xl"><HostBar \/><\/div>\}\s*\{top\}/);
+    expect(page).toMatch(/\{!signedIn && onHost && <HostBar \/>\}/);
+    expect(panel).not.toMatch(/HostBar/);
+  });
+  it('reads no query at all, and no variant or redirect survives', () => {
+    expect(page).not.toMatch(/searchParams|\bv === |\?v=|redirect\(|bigSkip/);
+    expect(page).toMatch(/export default async function RaidmimicPage\(\)/);
     expect(chars).not.toMatch(/searchParams|doorway|rewatch|\?v=/i);
     expect(chars).toMatch(/from '@\/lib\/hubMine'/);
     expect(chars).not.toMatch(/from\('hub_characters'\)/);
     expect(chars).toMatch(/<h1 className="text-2xl text-gold">/);
     expect(chars).toMatch(/text-text/);
-    expect(Object.keys(H)).not.toContain('rewatchHref');   // no rewatchHref with its `video=1` query
-    expect(Object.keys(H).sort()).toEqual(['DASH_WORDS', 'HOME_WORDS', 'REWATCH_HASH', 'SKIP_KEY', 'STEPS_WORDS', 'checklistSteps', 'comingLine', 'homeVariant', 'toHomeGuilds']);   // + the home previews (raidmimic-home-variants.test.js)
+    expect(Object.keys(H).sort()).toEqual(['DASH_WORDS', 'HOME_WORDS', 'REWATCH_HASH', 'SKIP_KEY', 'comingLine', 'toHomeGuilds']);   // no rewatchHref, no preview switch
   });
   it('the shared read pages hub_flags past the 1,000-row cap, ordered on id', () => {
     expect(mine).toMatch(/selectAll</);
@@ -48,18 +51,22 @@ describe('the page: signed out gets the stage, signed in gets the panel', () => 
   });
 });
 
-describe('the Home panel', () => {
-  it('lists characters, a /characters link and four coming placeholders that are not links', () => {
+describe('the Dashboard (option B, 2026-11-09)', () => {
+  it('lists characters, guilds and Mimic, and the coming ideas as one line that is not a link', () => {
     expect(panel).toMatch(/c\.flagCount/);
-    expect(panel).toMatch(/c\.next\.top\[0\]/);
-    expect(panel).toMatch(/RAIDMIMIC_CHARACTERS_PATH/);
+    expect(panel).toMatch(/charactersHref/);
+    expect(panel).toMatch(/guilds\.map/);
+    expect(panel).toMatch(/href=\{downloadUrl\}/);
     expect(H.HOME_WORDS.coming).toHaveLength(4);
-    expect(H.HOME_WORDS.coming.join(' ')).toMatch(/Looking for flags or loot/);
-    expect(panel).toMatch(/data-coming/);
-    expect(panel).toMatch(/>coming</);
-    const coming = panel.slice(panel.indexOf('H.coming.map'));
-    expect(coming).not.toMatch(/<a |<button|onClick/);
+    expect(H.comingLine()).toBe('Coming: looking for flags or loot · raids that fit your loot system (need before greed, random rolls, DKP) · guilds recruiting your class · help on one character, get flagged on another');
+    expect(panel).toMatch(/<p data-coming [^>]*>\{comingLine\(\)\}<\/p>/);
     expect(panel).not.toMatch(/dangerouslySetInnerHTML/);
+  });
+  it('the built-in guild comes first with its configured site, then hosted guilds', () => {
+    expect(H.toHomeGuilds({ key: 'wp', name: 'Wolf Pack' }, [{ guild_id: 'zz', name: 'Zed', site: null }], 'https://wp.example')).toEqual([
+      { key: 'wp', name: 'Wolf Pack', site: 'https://wp.example' }, { key: 'zz', name: 'Zed', site: null },
+    ]);
+    expect(H.toHomeGuilds(null, [], 'https://wp.example')).toEqual([]);
   });
   it('Rewatch reveals the stage in place, and #video in the address does too', () => {
     expect(gate).toMatch(/setStage\(true\)/);

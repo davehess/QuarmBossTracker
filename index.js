@@ -544,6 +544,9 @@ client.once(Events.ClientReady, async (readyClient) => {
   // The weekly anonymous-feedback count (counts only): checked hourly, posts on Monday after 13:00 UTC.
   setTimeout(() => _afbWeeklyDigest(readyClient).catch(err => console.warn('[afb] digest:', err?.message)), 5 * 60_000);
   setInterval(() => _afbWeeklyDigest(readyClient).catch(err => console.warn('[afb] digest:', err?.message)), 60 * 60_000);
+  // New raidmimic.com guild registrations -> one card each in the officers' #feedback thread, every 10 minutes.
+  setTimeout(() => _guildInterestNotice(readyClient).catch(() => {}), 150_000);
+  setInterval(() => _guildInterestNotice(readyClient).catch(() => {}), 10 * 60_000);
   // Quarm patch notes mirror (it never throws): a minute after boot, then every 6 hours.
   setTimeout(() => _syncQuarmPatchNotes(), 60_000);
   setInterval(() => _syncQuarmPatchNotes(), 6 * 60 * 60_000);
@@ -22341,6 +22344,57 @@ async function _afbWeeklyDigest(readyClient) {
   if (!Array.isArray(latched)) return 'latch-failed';
   if (!line) return 'quiet';
   await thread.send({ content: line, allowedMentions: { parse: [] }, flags: MessageFlags.SuppressEmbeds });
+  return 'posted';
+}
+
+// New raidmimic.com guild registrations (public.guild_interest) post as one embed card each into the officers'
+// #feedback thread. The text is typed by strangers: utils/guildInterestNotice.js sanitizes it, the send allows no
+// mentions, and nothing on the card is actionable. Row text is never logged, counts only. The watermark (newest
+// created_at posted) lives in bot_kv, not state.json; first run sets it to now and posts nothing. A failure logs
+// once an hour on stdout and leaves the watermark, so the next tick retries.
+const _ginLogAt = {};
+function _ginLog(reason, msg) {
+  const t = Date.now();
+  if (t - (_ginLogAt[reason] || 0) < 60 * 60_000) return;
+  _ginLogAt[reason] = t;
+  console.log(`[guild-interest] ${msg}`);
+}
+async function _guildInterestNotice(readyClient) {
+  const threadId = process.env.FEEDBACK_THREAD_ID;
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return 'skipped';
+  if (!threadId) { _ginLog('no-thread', 'FEEDBACK_THREAD_ID not set; registration cards skipped'); return 'skipped'; }
+  const gin = require('./utils/guildInterestNotice');
+  const guildId = supabase.guildId();
+  const key = 'guild_interest_notified_at';
+  const kv = await supabase.select('bot_kv', `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${key}&select=value&limit=1`);
+  if (!Array.isArray(kv)) { _ginLog('kv', 'bot_kv not readable; registration check will retry'); return 'unknown'; }
+  const watermark = kv[0] && kv[0].value ? kv[0].value.at : null;
+  const saveMark = at => supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key, value: { at }, updated_at: new Date().toISOString() }], 'guild_id,key');
+  if (!watermark) { await saveMark(new Date().toISOString()); return 'first-run'; }
+  const rows = await supabase.select('guild_interest',
+    'select=created_at,guild_name,game,server,raiders,nights,tz,raid_start,raid_end,bid_mode,dkp,heard,discord_contact'
+    + `&created_at=gt.${encodeURIComponent(watermark)}&order=created_at.asc&limit=100`);
+  if (!Array.isArray(rows)) { _ginLog('read', 'guild_interest not readable; registration check will retry'); return 'unknown'; }
+  const p = gin.plan({ rows, watermark, now: new Date() });
+  if (!p.toPost.length) return 'quiet';
+  const thread = await readyClient.channels.fetch(threadId).catch(() => null);
+  if (!thread) { _ginLog('fetch', 'officers thread not reachable; registration cards will retry'); return 'no-thread'; }
+  let done = 0;
+  try {
+    for (const row of p.toPost) {
+      await thread.send({ embeds: [gin.card(row)], allowedMentions: { parse: [] } });
+      done++;
+      await saveMark(row.created_at);
+    }
+    if (p.more) await thread.send({ content: gin.moreLine(p.more), allowedMentions: { parse: [] }, flags: MessageFlags.SuppressEmbeds });
+    await saveMark(p.nextWatermark);
+  } catch (err) {
+    _ginLog('send', `post failed after ${done} of ${p.toPost.length} card(s); will retry`);
+    return 'failed';
+  }
+  console.log(`[guild-interest] posted ${done} registration card(s)${p.more ? `, ${p.more} more left to the admin page` : ''}`);
   return 'posted';
 }
 
