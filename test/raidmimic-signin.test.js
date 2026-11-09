@@ -813,7 +813,7 @@ describe('migration 20261031150000_hub_registry_discord_guild.sql', () => {
 });
 
 describe('the /guilds page', () => {
-  const page = code('web/app/guilds/page.tsx');
+  const page = code('web/app/guilds/page.tsx') + code('web/lib/hubGuildsLoad.ts');   // the page's reads moved to the shared loader (2026-11-09)
   it('requires a sign-in and sends the visitor back to /guilds after it', () => {
     expect(page).toMatch(/if \(!user\) redirect\('\/auth\/signin\?next=\/guilds'\);/);
   });

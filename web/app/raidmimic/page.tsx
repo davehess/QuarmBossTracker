@@ -19,8 +19,10 @@ import { headers } from 'next/headers';
 import { supabaseServer } from '@/lib/supabase-server';
 import { discordIdOf } from '@/lib/lockout';
 import { loadMine } from '@/lib/hubMine';
-import HomePanel from './_landing/HomePanel';
 import HomePanelGate from './_landing/HomePanelGate';
+import HomeDashboard from './_landing/HomeDashboard';
+import { loadHomeGuilds } from '@/lib/hubGuildsLoad';
+import { profileOf } from '@/lib/hubRegistry';
 import type { Metadata } from 'next';
 import { isRaidmimicHost, raidmimicSeo, RAIDMIMIC_SETUP_PATH } from '@/lib/raidmimicHost';
 import { EQMIMIC_FEEDBACK_PATH, EQMIMIC_ORIGIN, interestUrl } from '@/lib/raidmimicLanding';
@@ -57,18 +59,26 @@ export default async function RaidmimicPage() {
     : { onHost, interest: interestUrl(EQMIMIC_FEEDBACK_PATH), setup: RAIDMIMIC_SETUP_PATH };
   const { data: { user } } = await supabaseServer().auth.getUser();
   const discordId = discordIdOf(user);
-  const top = user && discordId
-    ? <HomePanelGate downloadUrl={DOWNLOAD_URL} onHost={onHost} panel={<HomePanel mine={await loadMine(discordId)} />} />
-    : <StoryStage downloadUrl={DOWNLOAD_URL} onHost={onHost} />;
+  const signedIn = !!(user && discordId);
+  let top = <StoryStage downloadUrl={DOWNLOAD_URL} onHost={onHost} />;
+  if (signedIn) {
+    // The Dashboard (the guild lead picked option B, 2026-11-09): who you are, your characters, your guilds, Mimic.
+    const [mine, guilds] = await Promise.all([loadMine(discordId!), loadHomeGuilds(discordId!)]);
+    const { displayName, avatarUrl } = profileOf(user!);
+    top = <HomePanelGate downloadUrl={DOWNLOAD_URL} onHost={onHost}
+      panel={<HomeDashboard name={displayName} avatarUrl={avatarUrl} mine={mine} guilds={guilds} downloadUrl={DOWNLOAD_URL} />} />;
+  }
   // The stage is outside the width cap so it can span the viewport; the page under it is a reading column. No query is read:
   // a raidmimic host drops every one in the middleware, and the Wolf Pack hosts show the same page.
   return (
     <div id="raidmimic-home">
+      {/* Signed in, the bar comes FIRST (the guild lead, 2026-11-09: the bar sat under the panel). */}
+      {signedIn && onHost && <div className="mx-auto max-w-5xl"><HostBar /></div>}
       {top}
       <div className="mx-auto max-w-5xl pb-12">
         {/* The bar the other raidmimic.com pages carry: it slides in under the stage and stays pinned (the guild lead,
             2026-11-02: "top bar on the raidmimic.com site doesn't lock"). The stage keeps its own header. */}
-        {onHost && <HostBar />}
+        {!signedIn && onHost && <HostBar />}
         <FeatureBlocks />
         <RaidManagement />
         <Pricing setup={ctx.setup} onHost={onHost} />

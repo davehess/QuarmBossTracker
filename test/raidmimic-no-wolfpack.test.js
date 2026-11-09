@@ -239,7 +239,7 @@ describe('the built-in guild\'s site comes from configuration, with today\'s pro
 });
 
 describe('the wiring, as source', () => {
-  const page = code('web/app/guilds/page.tsx');
+  const page = code('web/app/guilds/page.tsx') + code('web/lib/hubGuildsLoad.ts');   // the page's reads moved to the shared loader (2026-11-09)
 
   it('/guilds redirects only on a raidmimic host, only through redirectTarget, and honours ?stay=1', () => {
     expect(page).toMatch(/if \(onHost\) \{[\s\S]*?redirectTarget\(mine, wantsToStay\(searchParams\)\)[\s\S]*?if \(to\) redirect\(to\);\s*\}/);
