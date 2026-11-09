@@ -264,7 +264,20 @@ next touch one rather than assuming a missing row means a missing doc.
   slowed (Basketweaver's 3.65 s). **Re-syncs are said out loud (same day: "it jumps and doesn't say anything"):** the engine
   keeps `notice` { kind, text, at }: `SYNC ±N ms` when a 2H swing lands ≥ 150 ms off the prediction, `SPEED a → b s` on a
   re-lock, `/mystats: 2H delay D, haste H%` on a calibration; the highway's header and the ring (beside the arc's end) show it
-  for 2 s, fading. **Reconciled on the guild lead's own data (same day; our `weave-attempts.ndjson` and Basketweaver's
+  for 2 s, fading. **Haste from buffs and gear (same day: "We should be figuring out haste based on buffs too"; agent 4.0.83,
+  beta):** the agent adds up the live Zeal buff list and the worn items the way the server's `Mob::GetHaste` does (EQMacEmu
+  c2cd265: `zone/mob.cpp:2887`, cap `zone/client.cpp:5789`, SPA 11/98/119 `zone/bonuses.cpp:1136-1182`) and serves it as
+  `gear.haste` = `{ value: N, spell, v2, item, v3, cap, from: 'buffs' }` on `/api/me` (null when buffs, catalog or gear are
+  unread). Best-of spell haste, type 2 from level 50 up to 10, worn haste (best item, 10 at level 25 or less), cut to the cap
+  (200 from 60), then overhaste up to 25 over it; a slow ends the sum at 100 + the slow. Data: spell catalog v10 carries `hs`
+  = [11, 98, 119] values per spell; the item-clickies payload v3 carries `worn_haste` (view `item_worn_haste`, migration
+  `20261109120000`, the worn-effect SPA 11 minus 100, worn type 2 only; ⚠ 105 of the 115 items are spell 998 "Haste", base 101
+  + the item's worn level (formula 102), so a level formula reads the item's own `haste` figure, not the base: the first draft
+  read them all as 1%. Applied 2026-11-09, 114 items). The HUD sends `hasteN`; the engine uses it as the prior
+  (`delay * 10000 / N`) and a CHANGE re-locks at once with `HASTE 170% → 125% (buffs)`; three agreeing swings still win, and a
+  `/mystats` newer than the last buff change still wins the prior and keeps its calibrated delay. ⚠ Needs the BOT part on
+  `main` (catalog `hs`, `worn_haste`) and the migration applied; until then `gear.haste` is null and nothing changes.
+  Tests `test/weave-haste.test.js`. **Reconciled on the guild lead's own data (same day; our `weave-attempts.ndjson` and Basketweaver's
   `%APPDATA%\Basketweaver` folder):** for a blood raven Basketweaver recorded 43 of 48 rounds weaved, 76 fist attempts / 46
   landed, 2,930 fist damage, +37.9 dps, 287 ms average reaction (its `leaderboard.json`); our current build landed 40 of 50
   presses, 4 clips, 6 with no fist line. Across the day's builds: before beta.13 21 of 151 landed, beta.13 260 of 994, beta.14+
@@ -278,7 +291,8 @@ next touch one rather than assuming a missing row means a missing doc.
   (`weave-punch` / `weave-thud` / `weave-smash` CC0, `weave-slash` CC BY 4.0, credited in `sounds/CREDITS.md`; trimmed, mono,
   levelled to the set's −10 dB peaks); the hub's `onSound` fires once per new outcome (landed, a big fist hit ≥ `bigHit`, clip)
   and main hands it to the trigger window (`weave-sound`), which plays it by library name and honours mute; the HUD ⚙ picks each
-  sound and the volume. Ribcracker (item 28808, secondary only, 1H blunt, delay 25) prints "crush", the staff's word: a 2H word
+  sound and the volume. **Off by default** (same day: *"need to be able to turn on the sounds (off by default)"*): the HUD ⚙
+  "Weave sounds" tick (`weaveSnd` → `cfg.sound`) is the master switch. Ribcracker (item 28808, secondary only, 1H blunt, delay 25) prints "crush", the staff's word: a 2H word
   straight after a press, more than CLIP_MS before the 2H is due, is the offhand round; `offDelay` (HUD "Offhand in the weave
   set") sets the window from the offhand weapon's delay, 0 = fists. **Three sets compared (same day:** *"/pipe weave, /pipe
   weave1hb, /pipe weave2hb"*, *"the 2hb hit should just be an empty offhand slot"*, *"for comparison"***):** `/pipe weave<set>` (a

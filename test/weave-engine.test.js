@@ -804,15 +804,15 @@ describe('weave attempts: captured, marked by /pipe weave, voided by a failed sw
 // Dark Hand Wraps (28949) are armour. The swap's round trip is 400 ms (Basketweaver's measured "Weave Off Delay"), not 150.
 describe('the weave reads the character: epic from the Hands slot, race from /who; the swap time is 400 ms', () => {
   const agentSrc = readSource(path.join(ROOT, 'packages', 'wolfpack-logsync', 'index.js'));
-  const block = sliceBlock(agentSrc, 'function _meGear(character, who) {', '\n  };\n}');
-  const gearOf = (invs, who) => new Function('stats', block + '\nreturn _meGear;')({ characterInventories: invs })('aldenmar', who);
+  const block = sliceBlock(agentSrc, 'function _meGear(character, who, level, st) {', '\n  };\n}');
+  const gearOf = (invs, who) => new Function('stats', '_meHaste', block + '\nreturn _meGear;')({ characterInventories: invs }, () => null)('aldenmar', who);
   it('_meGear: the Hands item, the weapons and /who race, from the inventory the agent already parsed', () => {
     const invs = { Aldenmar: { worn: { Hands: { id: 28949, name: 'Dark Hand Wraps' } },
       weapons: { primary: { id: 26599, name: 'Caen\'s Bo Staff of Fury' } }, _updatedAt: '2026-11-09T17:48:11Z' } };
     expect(gearOf(invs, { race: 'Iksar' })).toEqual({ hands_id: 28949, primary: { id: 26599, name: 'Caen\'s Bo Staff of Fury' },
-      secondary: null, race: 'Iksar', inventory_at: '2026-11-09T17:48:11Z' });
-    expect(gearOf({}, null)).toEqual({ hands_id: null, primary: null, secondary: null, race: null, inventory_at: null });
-    expect(agentSrc).toContain('    gear: _meGear(active, who),');
+      secondary: null, race: 'Iksar', inventory_at: '2026-11-09T17:48:11Z', haste: null });
+    expect(gearOf({}, null)).toEqual({ hands_id: null, primary: null, secondary: null, race: null, inventory_at: null, haste: null });
+    expect(agentSrc).toContain('    gear: _meGear(active, who, level, st),');
   });
   it('the HUD sends epic only for Celestial Fists in Hands, race from /who, and the new swap-time key', () => {
     const me = stripJs(readSource(path.join(MIMIC, 'me.html')));
@@ -1029,7 +1029,7 @@ describe('weave sounds and a crushing offhand', () => {
     let t = T; const sounds = [];
     const hub = W.createWeaveHub({ send: () => {}, now: () => t, onSound: (s) => sounds.push(s) });
     hub.setEnabled(true);
-    hub.setConfig('Aldenmar', Object.assign({ character: 'Aldenmar', cls: 'monk', level: 65, twoHDelay: 30 }, cfg || {}));
+    hub.setConfig('Aldenmar', Object.assign({ character: 'Aldenmar', cls: 'monk', level: 65, twoHDelay: 30, sound: true }, cfg || {}));
     const chat = (text, colour = 265) => hub.note({ type: 0, character: 'Aldenmar', data: JSON.stringify({ type: colour, text }) });
     return { chat, step: (ms) => { t += ms; hub.tick(); }, sounds, eng: () => hub.engines.get('aldenmar').eng };
   }
@@ -1045,6 +1045,17 @@ describe('weave sounds and a crushing offhand', () => {
     c.step(1250); c.chat('Loading bandolier set [fists]', 1011); c.step(50); c.chat('strike a blood raven for 49'); c.step(100);
     c.chat('Loading bandolier set [2h]', 1011); c.step(IVB - 1470 + 700); c.chat('crush a blood raven for 120'); c.step(50);
     expect(c.sounds.map(s => s.name)).toEqual(['weave-thud']);
+  });
+  // 2026-11-09, the guild lead: "need to be able to turn on the sounds (off by default)".
+  it('sounds are off until the HUD switch turns them on', () => {
+    const r = rig({ sound: undefined }); warm(r); weave(r, 'strike a blood raven for 260');
+    expect(r.sounds).toEqual([]);
+    expect(W.cleanCfg({}).sound).toBe(false);
+    expect(W.cleanCfg({ sound: 'yes' }).sound).toBe(false);
+    const me = stripJs(readSource(path.join(MIMIC, 'me.html')));
+    expect(me).toContain("['weaveSnd', 'Weave sounds']");
+    expect(me).toContain('weaveSnd: 0,');
+    expect(me).toContain('sound: !!p.weaveSnd,');
   });
   it('a sound set to off plays nothing, and an unknown name falls back to the default', () => {
     const r = rig({ sndLanded: 'off' }); warm(r); weave(r, 'strike a blood raven for 49');

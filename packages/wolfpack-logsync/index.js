@@ -17821,6 +17821,93 @@ function _wornItemDs(character) {
   }
   return sum;
 }
+// Haste from BUFFS and GEAR (the guild lead, 2026-11-09: "We should be figuring out haste based on buffs too"), for the Weave
+// timer: a swing takes delay * 10000 / N (Client::SetAttackTimer, zone/attack.cpp:4686) and N is what Mob::GetHaste returns
+// (zone/mob.cpp:2887, EQMacEmu c2cd265, the server Project Quarm runs). Spell values are the catalog's `hs` = [SE_AttackSpeed 11,
+// SE_AttackSpeed2 98, SE_AttackSpeed3 119] as the server's effect value (bot spell catalog v10); gear is `worn_haste` on the
+// item-clickies payload.
+//   - spellbonuses.haste (SPA 11): the best buff, `value - 100`; a haste is skipped once the total is negative, a slow replaces
+//     it and the deepest slow wins, in buff-slot order (zone/bonuses.cpp:1136-1148). A client's slow is not cut by
+//     mitigation (GetSlowMitigation is an NPC's).
+//   - hastetype2 (SPA 98): the same order and rules (bonuses.cpp:1153-1165), counted from level 50 up, at most 10 (mob.cpp:2898-2899).
+//   - itembonuses.haste: the best worn haste, all of it above level 25, at most 10 at or below (mob.cpp:2902-2909).
+//   - that sum is cut to GetHasteCap: 125 + level to 50, 185 at 51-59, 200 from 60 (zone/client.cpp:5789-5802; rule HasteCap 100).
+//   - THEN hastetype3 (SPA 119, overhaste) is added over the cap: at most 25 above level 50, 10 at or below (mob.cpp:2915-2918;
+//     bonuses.cpp:1169-1181: a slow is negative, the best wins).
+//   - A slowed character (spellbonuses.haste < 0) is just 100 + the slow: no type 2, no gear, no type 3 (mob.cpp:2889-2890).
+let _wornHasteByItem = new Map();   // "id:<n>" and "name:<lower>" → the haste a worn item adds
+let _wornHasteKnown = false;        // false while the bot sends no worn_haste: the gear is then unknown, not hasteless
+function _setWornHasteCatalog(list) {
+  _wornHasteKnown = Array.isArray(list);
+  const m = new Map();
+  for (const w of (Array.isArray(list) ? list : [])) {
+    const h = Number(w && w.haste);
+    if (!(h > 0)) continue;
+    if (Number(w.id) > 0) m.set('id:' + Number(w.id), h);
+    if (w.name) m.set('name:' + String(w.name).toLowerCase(), h);
+  }
+  _wornHasteByItem = m;
+}
+function _hasteCapFor(level) { return level > 59 ? 200 : level > 50 ? 185 : 125 + level; }
+// One SPA 11 / 98 value (100 = no change) folded into the running total, as bonuses.cpp does.
+function _foldHaste(cur, v) {
+  if (!v || v === 100) return cur;
+  if (v > 100) return (cur >= 0 && v - 100 > cur) ? v - 100 : cur;
+  return (v - 100 < cur) ? v - 100 : cur;
+}
+// buffs: the catalog's `hs` arrays in buff-slot order. Returns { value, spell, v2, item, v3, cap }, value being N.
+function _serverHaste(level, buffs, itemHaste) {
+  let h1 = 0, h2 = 0, h3 = 0;
+  for (const hs of buffs) {
+    if (!hs) continue;
+    h1 = _foldHaste(h1, Number(hs[0]) || 0);
+    h2 = _foldHaste(h2, Number(hs[1]) || 0);
+    const c = Number(hs[2]) || 0;
+    if (c < 0 ? c < h3 : c > h3) h3 = c;
+  }
+  const cap = _hasteCapFor(level);
+  if (h1 < 0) return { value: 100 + h1, spell: h1, v2: 0, item: 0, v3: 0, cap };
+  const v2 = (h2 > 0 && level > 49) ? Math.min(h2, 10) : 0;
+  const item = level > 25 ? itemHaste : Math.min(itemHaste, 10);
+  const v3 = level > 50 ? Math.min(h3, 25) : Math.min(h3, 10);
+  return { value: Math.min(100 + h1 + v2 + item, cap) + v3, spell: h1, v2, item, v3, cap };
+}
+// The best haste among a character's worn items, or null when the gear is unknown (no inventory export, or a bot that sends no
+// worn_haste): a 30% item left out would make the answer wrong, so the answer is no answer.
+function _wornItemHaste(character) {
+  if (!_wornHasteKnown) return null;
+  const invs = stats.characterInventories || {};
+  const cl = String(character || '').toLowerCase();
+  const key = Object.keys(invs).find(k => k.toLowerCase() === cl);
+  const inv = key ? invs[key] : null;
+  let items = inv && Array.isArray(inv.items) ? inv.items : null;
+  const since = inv ? (Date.parse(inv._updatedAt || '') || 0) : 0;
+  let q = null;
+  try { q = _quarmyLocalItems(character); } catch { q = null; }
+  if (q && Array.isArray(q.items) && (!items || q.at > since)) items = q.items;   // the newer export wins
+  if (!items) return null;
+  let best = 0;
+  for (const it of items) {
+    if (!INVENTORY_WORN_SLOTS.has(String(it.loc || '').replace(/\d+$/, ''))) continue;
+    const h = (Number(it.id) > 0 && _wornHasteByItem.get('id:' + Number(it.id)))
+      || _wornHasteByItem.get('name:' + String(it.name || '').toLowerCase()) || 0;
+    if (h > best) best = h;
+  }
+  return best;
+}
+// gear.haste on /api/me: null when the level, the buff list, the spell catalog or the gear is unread.
+function _meHaste(character, level, st) {
+  const lv = Number(level);
+  if (!(lv > 0) || !st || !Array.isArray(st.buffs) || !_spellCatalogMeta || !_spellCatalogMeta.hasHaste) return null;
+  const item = _wornItemHaste(character);
+  if (item == null) return null;
+  const hs = [];
+  for (const b of st.buffs) {
+    const e = b && b.name ? _meSpell(b.name) : null;
+    if (e && e.hs) hs.push(e.hs);
+  }
+  return Object.assign(_serverHaste(lv, hs, item), { from: 'buffs' });
+}
 // ── XP events (FB-37 option B, docs/DESIGN-xp-tracking.md) ─────────────────────
 // The guild lead, 2026-10-02: "observe group composition and xp totals for groups that are together
 // during the day and find what compositions work and in what area in what zone, with what mobs we're
@@ -17981,7 +18068,7 @@ function _meBardCounts(cls, level, manaCur, gems, charmLeft) {
 // (the server gives a monk's bare fists delay 16 only for Celestial Fists, item 10652, in slot 12 — EQMacEmu
 // Client::GetHandToHandDelay; Dark Hand Wraps are armour and change nothing), the weapons, and /who's race (Iksar fists are
 // slower). From the newest <Char>-Inventory.txt the agent already parses; null where it has none.
-function _meGear(character, who) {
+function _meGear(character, who, level, st) {
   const invs = stats.characterInventories || {};
   const key = Object.keys(invs).find(k => k.toLowerCase() === String(character || '').toLowerCase());
   const inv = key ? invs[key] : null;
@@ -17992,6 +18079,7 @@ function _meGear(character, who) {
     secondary: inv ? item(inv.weapons && inv.weapons.secondary) : null,
     race: who && who.race ? String(who.race) : null,
     inventory_at: inv && inv._updatedAt ? inv._updatedAt : null,
+    haste: _meHaste(character, level, st),
   };
 }
 
@@ -18152,7 +18240,7 @@ function _serializeMeState() {
     character: active,
     generated_at: now,
     level, class: cls,
-    gear: _meGear(active, who),
+    gear: _meGear(active, who, level, st),
     // Warriors, rogues and monks have no mana at all (the guild lead, 2026-09-24:
     // "don't expose that for them"); a class we cannot read falls back to an
     // empty pool.
@@ -47242,6 +47330,9 @@ let _spellCatalogMeta = null;
 // is exactly what the Melody AE chip needs to know (the same shape as the `npc` flag's check).
 // False for a pre-v9 bot, and the chip then keeps counting every detrimental song.
 function _catalogHasAe(entries) { return Array.isArray(entries) && entries.some(e => !!(e && e.ae)); }
+// And the attack-speed values (`hs`, spell catalog v10): a catalog with none is a bot that predates them, and the Weave timer's
+// buff haste then reads null instead of "no haste".
+function _catalogHasHaste(entries) { return Array.isArray(entries) && entries.some(e => !!(e && e.hs)); }
 const SPELL_CATALOG_FILE = path.join(__dirname, 'logsync.spell-catalog.json');
 
 // Item-clicky catalog — item name (lowercased) → { casttime, clickeffect,
@@ -47295,7 +47386,7 @@ function _loadSpellCatalogFromDisk() {
     for (const e of raw.entries) {
       if (e && e.name) _spellByNameLower.set(String(e.name).toLowerCase(), e);
     }
-    _spellCatalogMeta = { fetchedAt: raw.fetched_at, etag: raw.etag || null, count: raw.entries.length, hasAe: _catalogHasAe(raw.entries) };
+    _spellCatalogMeta = { fetchedAt: raw.fetched_at, etag: raw.etag || null, count: raw.entries.length, hasAe: _catalogHasAe(raw.entries), hasHaste: _catalogHasHaste(raw.entries) };
     _rebuildBuffMatchers();
     _rebuildMechanicMatchers();   // #206 — the instant-effect index, built from the same catalog
     console.log(`[spell-catalog] loaded ${raw.entries.length} spells from disk (cached ${raw.fetched_at || '?'})`);
@@ -47355,7 +47446,7 @@ function fetchSpellCatalog({ botUrl, token }) {
             for (const e of data.entries) {
               if (e && e.name) _spellByNameLower.set(String(e.name).toLowerCase(), e);
             }
-            _spellCatalogMeta = { fetchedAt: data.fetched_at, etag: etag || null, count: data.entries.length, hasAe: _catalogHasAe(data.entries) };
+            _spellCatalogMeta = { fetchedAt: data.fetched_at, etag: etag || null, count: data.entries.length, hasAe: _catalogHasAe(data.entries), hasHaste: _catalogHasHaste(data.entries) };
             _rebuildBuffMatchers();
             _rebuildMechanicMatchers();   // #206 — same catalog, separate instant-effect key
             try {
@@ -47388,9 +47479,10 @@ function _loadItemClickiesFromDisk() {
       if (e && e.name) _itemClickyByNameLower.set(String(e.name).toLowerCase(), e);
     }
     // A file written before `worn_ds` was kept: forget its etag, so the next fetch is a full 200.
-    const etag = Array.isArray(raw.worn_ds) ? (raw.etag || null) : null;
+    const etag = (Array.isArray(raw.worn_ds) && 'worn_haste' in raw) ? (raw.etag || null) : null;
     _itemClickyMeta = { fetchedAt: raw.fetched_at, etag, count: raw.entries.length };
     _setWornDsCatalog(raw.worn_ds);
+    _setWornHasteCatalog(raw.worn_haste);
     console.log(`[item-clickies] loaded ${raw.entries.length} clicky items from disk (cached ${raw.fetched_at || '?'})`);
   } catch (err) {
     console.warn('[item-clickies] disk load failed:', err && err.message);
@@ -47436,8 +47528,9 @@ function fetchItemClickies({ botUrl, token }) {
             }
             _itemClickyMeta = { fetchedAt: data.fetched_at, etag: etag || null, count: data.entries.length };
             _setWornDsCatalog(data.worn_ds);
+            _setWornHasteCatalog(data.worn_haste);
             try {
-              const out = { fetched_at: data.fetched_at, etag: etag || null, entries: data.entries, worn_ds: data.worn_ds || [] };
+              const out = { fetched_at: data.fetched_at, etag: etag || null, entries: data.entries, worn_ds: data.worn_ds || [], worn_haste: data.worn_haste === undefined ? null : data.worn_haste };
               fs.writeFileSync(ITEM_CLICKY_FILE + '.tmp', JSON.stringify(out));
               fs.renameSync(ITEM_CLICKY_FILE + '.tmp', ITEM_CLICKY_FILE);
             } catch (e) { /* disk cache best-effort */ }

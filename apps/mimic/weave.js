@@ -80,6 +80,7 @@
     offDelay1hb: 25,
     // Sounds for a press's outcome (2026-11-09: "lets add some sounds into ours"): names from Mimic's sound library, '' = none.
     sndLanded: 'weave-punch', sndBig: 'weave-smash', sndClip: 'weave-thud', sndVol: 0.8, bigHit: 200,
+    sound: false,   // the master switch, off until the player turns it on (the guild lead, 2026-11-09: "off by default")
   };
   function verbList(v, dflt) {
     var a = Array.isArray(v) ? v : (typeof v === 'string' ? v.split(/[\s,]+/) : null);
@@ -110,6 +111,8 @@
       sndClip: sndName(c.sndClip, DEFAULT_CFG.sndClip),
       sndVol: (function (v) { v = Number(v); return isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_CFG.sndVol; })(c.sndVol),
       bigHit: intIn(c.bigHit, 1, 5000, DEFAULT_CFG.bigHit),
+      sound: c.sound === true,
+      hasteN: intIn(c.hasteN, 30, 400, null),   // the haste the character's buffs and gear add up to (agent /api/me gear.haste), N as /mystats prints it
     };
     out.fistVerbs = out.fistVerbs.filter(function (v) { return out.twoVerbs.indexOf(v) < 0; });   // a verb is one or the other
     if (!out.fistVerbs.length) out.fistVerbs = DEFAULT_CFG.fistVerbs.filter(function (v) { return out.twoVerbs.indexOf(v) < 0; });
@@ -224,6 +227,7 @@
     this.attempts = [];      // the last 50 attempt records (_record), kept across fights
     this.onAttempt = null;   // set by the hub: each record goes to Mimic's capture file
     this.hasteN = null; this.hasteAt = null; this.statsDelay = null;   // from /mystats (mystats())
+    this.buffN = null; this.buffAt = null;                              // from the buffs and gear (setConfig's hasteN)
     this.notice = null;
     this.weaveTag = '';   // the set the last /pipe weave<set> named (marker())
     this.fresh();
@@ -240,7 +244,28 @@
       rounds: 0, fistTried: 0, fistHit: 0, weaveDmg: 0, reactSum: 0, reactN: 0 };
     this.fightStart = null;
   };
-  WeaveEngine.prototype.setConfig = function (cfg) { this.cfg = cleanCfg(cfg); };
+  WeaveEngine.prototype.setConfig = function (cfg, t) {
+    this.cfg = cleanCfg(cfg);
+    this._buffHaste(this.cfg.hasteN, t == null ? Date.now() : t);
+  };
+  // Haste from the buff list (the guild lead, 2026-11-09: "We should be figuring out haste based on buffs too"). The agent adds
+  // up the character's buffs and worn gear the way the server does (Mob::GetHaste, zone/mob.cpp:2887, EQMacEmu c2cd265) and
+  // Mimic hands over N. The swing is delay * 10000 / N, so the moment the buff list changes the interval is known: no two
+  // swings to wait for. The first N is only a prior; a CHANGE re-locks at once (the old samples were timed at the old N) and
+  // says so. Measured swings win again once three agree, as ever. null (no read) keeps the last N: a dropped read is not a fade.
+  WeaveEngine.prototype._buffHaste = function (n, t) {
+    if (n == null || n === this.buffN) return;
+    var was = this.buffN;
+    this.buffN = n; this.buffAt = t;
+    if (was == null) return;
+    this.samples = []; this.offBand = []; this.divStreak = 0;
+    this._note('speed', 'HASTE ' + was + '% \u2192 ' + n + '% (buffs)', t);
+  };
+  // The N the prior leans on: /mystats while it is the newer word, the buffs' when they changed after it.
+  WeaveEngine.prototype.priorN = function () {
+    if (this.hasteN && (this.buffN == null || (this.hasteAt != null && this.hasteAt >= this.buffAt))) return this.hasteN;
+    return this.buffN || null;
+  };
   // /mystats (the guild lead, 2026-11-09: "running /mystats will sync up the basketweaver apparently"): the server prints
   // "Haste: N (cap M)" with N = 100 + haste (Mob::GetHaste; under 100 = slowed), and times a swing as delay * 10000 / N
   // (Client::SetAttackTimer). With N and a measured 2H interval the 2H's real delay follows, and from it the haste at any
@@ -251,7 +276,8 @@
   WeaveEngine.prototype.twoHDelay = function () { return this.statsDelay || this.cfg.twoHDelay; };
   WeaveEngine.prototype.interval2H = function () {
     if (this.samples.length >= 3) return median(this.samples);
-    return this.hasteN ? this.twoHDelay() * 10000 / this.hasteN : this.cfg.twoHDelay * 100;
+    var n = this.priorN();
+    return n ? this.twoHDelay() * 10000 / n : this.cfg.twoHDelay * 100;
   };
   WeaveEngine.prototype.mystats = function (hasteN, t) {
     if (!(hasteN > 0 && hasteN < 400)) return false;
@@ -514,7 +540,7 @@
       if (typeof o.onSound === 'function' && oc && oc.at && oc.at !== e.soundAt) {
         e.soundAt = oc.at;
         var cf = e.eng.cfg;
-        var name = oc.kind === 'landed' ? ((oc.dmg || 0) >= cf.bigHit && cf.sndBig ? cf.sndBig : cf.sndLanded) : oc.kind === 'clip' ? cf.sndClip : '';
+        var name = !cf.sound ? '' : oc.kind === 'landed' ? ((oc.dmg || 0) >= cf.bigHit && cf.sndBig ? cf.sndBig : cf.sndLanded) : oc.kind === 'clip' ? cf.sndClip : '';
         if (name) { try { o.onSound({ name: name, volume: cf.sndVol, character: e.character, kind: oc.kind }); } catch (err) { /* never into the pipe */ } }
       }
     }
@@ -526,9 +552,9 @@
         var e = entry(character, true);
         if (!e) return;
         // A Canvas piece only knows the class and level: it must not wipe the delay and verbs a HUD set.
-        if (cfg && cfg.partial) { e.eng.setConfig(Object.assign({}, e.eng.cfg, { cls: cfg.cls, level: cfg.level })); return; }
+        if (cfg && cfg.partial) { e.eng.setConfig(Object.assign({}, e.eng.cfg, { cls: cfg.cls, level: cfg.level }), Date.now()); return; }
         e.configured = true;
-        e.eng.setConfig(cfg);
+        e.eng.setConfig(cfg, Date.now());
         dflt = cleanCfg(cfg);
       },
       // Every object off the pipe. Cheap on the hot path: only type 0 (a chat line) is parsed, and only for a
