@@ -36361,8 +36361,8 @@ const COMMAND_HTML = `<!doctype html>
     return '<div class="relv"><span>🔥 Falto: ' + main + '</span>'
          +   '<span class="sub">mepheekas killed ' + (Number(v.mepheekas) || 0) + '</span></div>';
   }
-  // Coirnav's event in Plane of Water (the guild lead, 2026-11-04): fiends this client has seen die, of the 75, and the
-  // 15:00 clock from the Guardian. The agent sends s.coirnav only while the event runs (and a few minutes after); the count
+  // Coirnav's event in Plane of Water (the guild lead, 2026-11-04): fiends this client has seen die, of the 75, the three
+  // minis after them, and the 15:00 clock from the Guardian. The agent sends s.coirnav only while the event runs (and a few minutes after); the count
   // is a floor (a far death line never prints here). The waves come on the CLOCK (3:00, 5:00), never from kills, so the
   // row counts down to the next one from started_at and flashes in the last 30 seconds; killing faster does not bring it.
   // Everything that ticks is worked out here from started_at / deadline_at / retry_at (ms) on each poll.
@@ -36379,17 +36379,24 @@ const COMMAND_HTML = `<!doctype html>
       return '<div class="coirnav bad"><span>🌊 Banished · retry at ' + rt + '</span></div>';
     }
     if (v.state === 'burn') {
-      return '<div class="coirnav"><span>🌊 Coirnav: all 75 down · burn Coirnav · <span class="n">' + leftTxt + '</span> left</span>'
-           +   '<span class="sub">15:00 clock from the Guardian</span></div>';
+      // The three minis after the 75 (the guild lead, 2026-11-09); the row names who is still up, ✓ the dead.
+      var md = Array.isArray(v.minis_down) ? v.minis_down : [], names = ['Pwelon', 'Nrinda', 'Vamuil'], down = 0, sub = [];
+      for (var i = 0; i < 3; i++) { if (md[i]) down++; sub.push((md[i] ? '✓ ' : '') + names[i]); }
+      if (down < 3) {
+        return '<div class="coirnav"><span>🌊 Coirnav: 75 down · minis <span class="n">' + down + '/3</span> · <span class="n">' + leftTxt + '</span> left</span>'
+             +   '<span class="sub">' + sub.join(' · ') + '</span></div>';
+      }
+      return '<div class="coirnav"><span>🌊 Coirnav: minis down · burn Coirnav · <span class="n">' + leftTxt + '</span> left</span></div>';
     }
     var nextIn = wave < 3 ? Math.round((startedAt + (wave === 1 ? 180000 : 300000) - nowMs) / 1000) : 0;
     var soon = wave < 3 && nextIn <= 30;
     var mid = wave < 3 ? (soon ? 'wave ' + (wave + 1) + ' soon (' + mmss(nextIn) + ')' : 'wave ' + (wave + 1) + ' in ' + mmss(nextIn)) : 'wave 3';
+    // No standing "15:00 clock" sub (the guild lead, 2026-11-09: "We don't need the section that says 15:00 clock").
     var note = wave < 3 && kills >= (wave === 1 ? 20 : 45)
-             ? 'wave ' + wave + ' nearly down — wave ' + (wave + 1) + ' arrives on the clock at ' + (wave === 1 ? '3:00' : '5:00')
-             : '15:00 clock from the Guardian';
+             ? '<span class="sub">wave ' + wave + ' nearly down — wave ' + (wave + 1) + ' arrives on the clock at ' + (wave === 1 ? '3:00' : '5:00') + '</span>'
+             : '';
     return '<div class="coirnav' + (soon ? ' crit' : '') + '"><span>🌊 Coirnav: fiends <span class="n">' + kills + '/75</span> · ' + mid + ' · ' + leftTxt + ' left</span>'
-         +   '<span class="sub">' + note + '</span></div>';
+         +   note + '</div>';
   }
   // Tower of Solusek Ro braziers (the guild lead, 2026-11-02; the game calls it a flaming cauldron, the raid calls it a
   // brazier, and the row says brazier): one row per wing boss killed, counting down to the brazier's depop (30 minutes after it spawned) and saying whether THIS character has clicked it. The agent sends
@@ -60813,6 +60820,10 @@ function _relvSnapshot(character, now) {
 // across the reef can be missed: the number is a floor, never exact, and never above 75. Nothing is shared.
 // The RP() emotes arrive as plain log lines; the matches below use stable substrings, not the full sentences. Raw
 // lines, the same stream the Relv counter reads. Live tail only (the caller is the live loop), so it takes now.
+// The three minibosses (the guild lead, 2026-11-09: "we should also include the three minis after the 3 waves"): the 75th
+// fiend spawns Pwelon of Vapor, Nrinda of Ice and Vamuil of Water (Coirnav.lua:21-23, 236-243); the final phase starts
+// when all three are dead (244-249, its "We shall not yield!" emote). Each wave also brings an early miniboss of the same
+// type, depopped at the 75th fiend, so a mini's death counts only after the burn starts.
 const COIRNAV_FIENDS     = 75;
 const COIRNAV_EVENT_MS   = 900 * 1000;
 const COIRNAV_RETRY_MS   = 1200 * 1000;
@@ -60823,9 +60834,11 @@ const _COIRNAV_GUARD_RX  = /^Guardian of Coirnav$/i;
 const _COIRNAV_FIEND_RX  = /^an? (?:triloun vaporfiend|hraquis icefiend|regrua waterfiend)$/i;
 const _COIRNAV_SHOUT_RX  = /Coirnav the Avatar of Water shouts.*power imbued to me by (Povar|E.ci|Tarew Marr)/;
 const _COIRNAV_BURN_RX   = /We will permit no further advance/;
+const _COIRNAV_FINAL_RX  = /We shall not yield! Defenders of vapor/;
+const COIRNAV_MINIS      = ['pwelon of vapor', 'nrinda of ice', 'vamuil of water'];
 const _COIRNAV_WON_RX    = /Coirnav, the Avatar of Water, has fallen!/;
 const _COIRNAV_LOST_RX   = /The Triumvirate has spoken! These waters reject you/;
-const _coirnavState   = new Map();   // character (lower) → { state, kills, wave, startedAt, endedAt }
+const _coirnavState   = new Map();   // character (lower) → { state, kills, wave, startedAt, endedAt, minis: [3 × dead?] }
 const _coirnavLogZone = new Map();   // character (lower) → last zone a zone-change line named (lower)
 function _coirnavInWater(cl) {
   for (const ch of Object.keys(_zealState || {})) {
@@ -60845,7 +60858,7 @@ function _coirnavLive(cl, now) {
   return st;
 }
 function _coirnavBegin(cl, now, wave) {
-  _coirnavState.set(cl, { state: 'waves', kills: 0, wave, startedAt: now - COIRNAV_WAVE_AT_MS[wave - 1], endedAt: 0 });
+  _coirnavState.set(cl, { state: 'waves', kills: 0, wave, startedAt: now - COIRNAV_WAVE_AT_MS[wave - 1], endedAt: 0, minis: [false, false, false] });
 }
 function _coirnavNoteLine(line, character, now) {
   if (!line || !character) return;
@@ -60858,7 +60871,8 @@ function _coirnavNoteLine(line, character, now) {
     _coirnavLogZone.set(cl, zm[1].trim().toLowerCase());
     return;
   }
-  if (line.indexOf('Coirnav') === -1 && line.indexOf('Triumvirate') === -1 && line.indexOf('fiend') === -1) return;
+  if (line.indexOf('Coirnav') === -1 && line.indexOf('Triumvirate') === -1 && line.indexOf('fiend') === -1
+      && line.indexOf('Pwelon') === -1 && line.indexOf('Nrinda') === -1 && line.indexOf('Vamuil') === -1) return;
   const st = _coirnavLive(cl, now);
   const running = !!st && (st.state === 'waves' || st.state === 'burn');
   const sm = _COIRNAV_SHOUT_RX.exec(line);
@@ -60871,12 +60885,15 @@ function _coirnavNoteLine(line, character, now) {
   if (_COIRNAV_WON_RX.test(line)) { _coirnavState.set(cl, { state: 'done', kills: COIRNAV_FIENDS, wave: 3, startedAt: st ? st.startedAt : now, endedAt: now }); return; }
   if (_COIRNAV_LOST_RX.test(line)) { _coirnavState.set(cl, { state: 'banished', kills: st ? st.kills : 0, wave: st ? st.wave : 1, startedAt: st ? st.startedAt : now, endedAt: now }); return; }
   if (running && _COIRNAV_BURN_RX.test(line)) { st.state = 'burn'; st.kills = COIRNAV_FIENDS; return; }
+  if (running && _COIRNAV_FINAL_RX.test(line)) { st.state = 'burn'; st.kills = COIRNAV_FIENDS; st.minis = [true, true, true]; return; }
   const dead = _deadMobNameFromLine(line);
   if (!dead) return;
   if (_COIRNAV_GUARD_RX.test(dead)) {
     if (!running && _coirnavInWater(cl)) _coirnavBegin(cl, now, 1);
     return;
   }
+  const mi = COIRNAV_MINIS.indexOf(dead.toLowerCase());
+  if (mi !== -1) { if (running && st.state === 'burn') st.minis[mi] = true; return; }
   if (running && st.state === 'waves' && _COIRNAV_FIEND_RX.test(dead)) {
     st.kills++;
     if (st.kills >= COIRNAV_FIENDS) { st.kills = COIRNAV_FIENDS; st.state = 'burn'; }
@@ -60893,6 +60910,7 @@ function _coirnavSnapshot(character, now) {
     state: st.state, kills: st.kills, total: COIRNAV_FIENDS, wave: Math.min(3, wave),
     started_at: st.startedAt, deadline_at: st.startedAt + COIRNAV_EVENT_MS,
     retry_at: st.state === 'banished' ? st.endedAt + COIRNAV_RETRY_MS : 0,
+    minis_down: (st.minis || [false, false, false]).slice(),
   };
 }
 // ── end Coirnav fiend counter ────────────────────────────────────────────────────────────────────────────────

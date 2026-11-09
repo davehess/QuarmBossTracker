@@ -219,6 +219,12 @@ next touch one rather than assuming a missing row means a missing doc.
   lead: *"Do we have a fiend counter for the 75 for command center?"* … *"wave soon when we're at 20 and 45"*. Modelled on the
   Relv counter. Quarm's waves come on the clock only (3:00, 5:00), so "wave soon" is the last 30 s of the countdown, and at 20/45
   kills the row says the next wave still waits for the clock. Emote substrings come from the script; check on the first attempt.
+  **The three minis (agent 4.0.79 beta, 2026-11-09).** The guild lead, from a live attempt: *"we should also include the three minis
+  after the 3 waves. We don't need the section that says 15:00 clock from the Guardian"*. After the 75 the row reads
+  `75 down · minis N/3 · M:SS left` with `Pwelon · Nrinda · Vamuil` (✓ the dead), then `minis down · burn Coirnav`. A mini's death
+  counts only once the burn has started (each wave brings an early mini of the same type, `Coirnav.lua:222`, depopped at the
+  75th fiend, 236-239); the final-phase emote ("We shall not yield!", 248) marks all three down if the deaths were out of range.
+  The standing "15:00 clock from the Guardian" sub is gone; the "wave N nearly down" note stays. Tests `test/coirnav-counter.test.js`.
 
 - **🧪 Mob Info tags a partially slowable mob, "Slow −N%" (bot 4.0.53 on main `969605f7`; agent 4.0.61 on beta `c3c4ee8b`;
   2026-11-04).** The guild lead: *"Obsidian Tree Spider Queen is only partially slowable apparently. look for those tags"*. Quarm's
