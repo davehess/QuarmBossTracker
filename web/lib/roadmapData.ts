@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'bot-4-0-60-2026-11-09',
+    title: 'Bot 4.0.60',
+    version: 'Bot 4.0.60 · Web 2.1.111',
+    date: '2026-11-09',
+    headline: 'The Command Center hail board now covers the four elemental Essences.',
+    features: [
+      { name: 'Essence hails', blurb: 'When Coirnav, Fennin Ro, Xegony or the Avatar of Earth dies, the Command Center lists who still has to hail the Essence for their Sphere, Globe, Cloud or Mound. The Essence says nothing when you hail it, so your own hail (or a tap on your name) marks you done.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-2-1-110-2026-11-08',
     title: 'Web 2.1.110',
     version: 'Web 2.1.110',
