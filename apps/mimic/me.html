@@ -941,6 +941,8 @@
     // The Weave timer (the guild lead, 2026-11-07): a slim vertical lane on the right of the ring, where the mana
     // arc is, timing a monk's bandolier weave. apps/mimic/weave.js runs it in Mimic's main process from the Zeal pipe.
     ['Weave timer', [['weave', 'Lane on the right (auto = Monk and Beastlord)', ['auto', 'on', 'off']],
+      // The guild lead, 2026-11-09: "the sidebar on weaving for the Hud should have the option to go to the top ... i mean bottom to top".
+      ['weaveDir', 'Lane moves: down to the hit line, or up to it', ['down', 'up']],
       // Swap time: from the press to the 2H back in hand. 400 ms is what Basketweaver measured ("Weave Off Delay"); the old 150
       // (key weaveMargin) left the last quarter second of green clipping (the guild lead, 2026-11-09: "Our weaving timer is
       // being unreliable"). A new key, so a save holding the old default does not keep it.
@@ -967,7 +969,7 @@
   var HUD_DEFAULTS = { target: 1, tot: 1, status: 1, hp: 1, mana: 1, end: 1, regen: 1, dps: 1, focus: 1, tick: 1, swing: 1, cast: 1, cooldowns: 1,
     hitsIn: 1, hitsOut: 1, ds: 1, procs: 1, rounds: 5, split: 2, hitsSide: 'inside', resists: 1, tres: 1, weight: 'thin',
     track: 1, trackShow: 'all', ramp: 1, lowhp: 1, clickies: 1, clickyRows: 1, clickyPick: [], sizes: {},
-    weave: 'auto', weaveDelay: 30, weaveSwapMs: 400, weaveRace: 'human', weaveTally: 1,
+    weave: 'auto', weaveDir: 'down', weaveDelay: 30, weaveSwapMs: 400, weaveRace: 'human', weaveTally: 1,
     weave2hVerbs: 'crush, crushes', weaveFistVerbs: 'punch, punches, hit, hits, strike, strikes' };
   // The Weave timer lane is on when picked, or by default for the two classes that hand-to-hand weave. It takes the right
   // arc's place (the mana or endurance BAR; the label beside it stays).
@@ -2023,6 +2025,8 @@
     // for the circle"): the canvas covers the ring's square and weaveDraw.js paints the arc at the ring's own radius and
     // angles (renderHud: R 172, 56° to 124°). The Box keeps the straight column.
     var kind = isHud(style) ? 'arc' : 'lane';
+    var dir = hudParts.weaveDir === 'up' ? 'up' : 'down';   // which way the windows travel to the hit line
+    if (cv.getAttribute('data-wp-dir') !== dir) { cv.setAttribute('data-wp-dir', dir); if (window.WpWeaveDraw) WpWeaveDraw.redraw(); }
     // A switch between the two drops the ring's square placement, so the Box's CSS column applies again.
     if (cv.getAttribute('data-wp-weave') !== kind) { cv.setAttribute('data-wp-weave', kind); cv.removeAttribute('style'); _weaveBox = ''; }
     if (kind === 'arc' && cv.getAttribute('data-wp-arc') !== '172 56 124') cv.setAttribute('data-wp-arc', '172 56 124');

@@ -64,8 +64,8 @@ describe('the hand-to-hand delay table (attack.cpp:3160)', () => {
 describe('lines', () => {
   it('your hits and misses are swings; the verb sorts them into 2H and fist', () => {
     const cfg = W.cleanCfg({});
-    expect(W.parseSwing(TWO())).toEqual({ verb: 'crush', target: 'a gnoll', miss: false });
-    expect(W.parseSwing('You try to punch a gnoll, but miss!')).toEqual({ verb: 'punch', target: 'a gnoll', miss: true });
+    expect(W.parseSwing(TWO())).toMatchObject({ verb: 'crush', target: 'a gnoll', miss: false });
+    expect(W.parseSwing('You try to punch a gnoll, but miss!')).toMatchObject({ verb: 'punch', target: 'a gnoll', miss: true });
     expect(W.parseSwing('You try to crush a gnoll, but a gnoll dodges!').miss).toBe(true);
     expect(W.classify('crush', cfg)).toBe('2h');
     expect(W.classify('crushes', cfg)).toBe('2h');
@@ -212,7 +212,7 @@ describe('what a press did', () => {
     e.swing(FIST(), T + 340);
     e.swing(TWO(), T + IV + 40);
     expect(e.outcome.kind).toBe('landed');
-    expect(e.tally).toEqual({ presses: 1, landed: 1, clips: 0, misses: 0, voided: 0 });
+    expect(e.tally).toMatchObject({ presses: 1, landed: 1, clips: 0, misses: 0, voided: 0 });
   });
   it('clip: the next 2H round more than 250 ms later than expected (the swap came too late), and that interval is not measured', () => {
     const e = ready();
@@ -237,7 +237,7 @@ describe('what a press did', () => {
     e.load(LOAD(), T + 300);
     e.swing(TWO(), T + IV);
     expect(e.outcome.kind).toBe('miss');
-    expect(e.tally).toEqual({ presses: 1, landed: 0, clips: 0, misses: 1, voided: 0 });
+    expect(e.tally).toMatchObject({ presses: 1, landed: 0, clips: 0, misses: 1, voided: 0 });
   });
   it('a fist round more than 700 ms after the load is not that press\'s', () => {
     const e = ready();
@@ -253,14 +253,14 @@ describe('what a press did', () => {
     expect(e.tally.presses).toBe(1);
     e.swing(FIST(), T + 740);
     e.swing(TWO(), T + IV);
-    expect(e.tally).toEqual({ presses: 1, landed: 1, clips: 0, misses: 0, voided: 0 });
+    expect(e.tally).toMatchObject({ presses: 1, landed: 1, clips: 0, misses: 0, voided: 0 });
     expect(e.lastPress).toBe(T + 700);
   });
   it('two presses in two cycles are two outcomes', () => {
     const e = ready();
     e.load(LOAD(), T + 200); e.swing(FIST(), T + 240); e.swing(TWO(), T + IV);
     e.load(LOAD(), T + IV + 200); e.swing(FIST(), T + IV + 240); e.swing(TWO(), T + 2 * IV);
-    expect(e.tally).toEqual({ presses: 2, landed: 2, clips: 0, misses: 0, voided: 0 });
+    expect(e.tally).toMatchObject({ presses: 2, landed: 2, clips: 0, misses: 0, voided: 0 });
   });
   it('a press nobody saw a 2H round after settles by time: a fist but no 2H is a clip', () => {
     const e = ready();
@@ -286,7 +286,7 @@ describe('fights', () => {
     expect(e.snapshot(last + 11900).active).toBe(true);
     expect(e.snapshot(last + 12100).active).toBe(false);
     expect(e.tick(last + 12100)).toBe(true);
-    expect(e.tally).toEqual({ presses: 0, landed: 0, clips: 0, misses: 0, voided: 0 });
+    expect(e.tally).toMatchObject({ presses: 0, landed: 0, clips: 0, misses: 0, voided: 0 });
     expect(e.samples).toEqual([]);
     expect(e.snapshot(last + 12200).phase).toBe('idle');
   });
@@ -650,7 +650,7 @@ describe('timestamped and short-form melee lines', () => {
       expect(W.maybeSwing(line), line).toBe(true);
       expect(W.parseSwing(line), line).toMatchObject({ verb: 'crush', target: 'a potameid wildling' });
     }
-    expect(W.parseSwing('[11:53:56] miss')).toBeNull();                       // names no weapon
+    expect(W.parseSwing('[11:53:56] miss')).toMatchObject({ verb: null, bareMiss: true });   // names no weapon: the engine places it by time
     expect(W.maybeSwing('Brackwyn crushes a potameid wildling for 99 points of damage.')).toBe(false);   // another player's line
   });
   it('a stamped short-form fight lights the lane and counts a weave', () => {
@@ -824,5 +824,98 @@ describe('the weave reads the character: epic from the Hands slot, race from /wh
     expect(W.handToHandDelay({ cls: 'monk', level: 65, race: 'human', epic: false })).toBe(20);
     expect(W.handToHandDelay({ cls: 'monk', level: 65, race: 'iksar', epic: false })).toBe(21);
     expect(W.handToHandDelay({ cls: 'monk', level: 65, race: 'human', epic: true })).toBe(16);
+  });
+});
+
+// 2026-11-09, the guild lead's side-by-side with Basketweaver ("B 26/33 rounds weaved | Bonus attacks: 52 attempts 38 landed |
+// Added DPS: 33 | Avg reaction: 334ms"), our tally reading 3✓ 5✕ 6· at the moment Basketweaver had 12 weaves. The short form
+// prints every miss as a bare "miss": a missed 2H round vanished (the next weave read as a clip) and a missed fist read as no fist.
+describe('scoring like Basketweaver: bare misses placed, unseen rounds not clips, added DPS and reaction', () => {
+  const IVS = 1650;
+  function rig() {
+    let t = 1_000_000; const recs = [], sent = [];
+    const hub = W.createWeaveHub({ send: (s) => sent.push(s), now: () => t, onAttempt: (r) => recs.push(r) });
+    hub.setEnabled(true);
+    hub.setConfig('Aldenmar', { character: 'Aldenmar', cls: 'monk', level: 65, twoHDelay: 30 });
+    const chat = (text, colour = 265) => hub.note({ type: 0, character: 'Aldenmar', data: JSON.stringify({ type: colour, text }) });
+    const step = (ms) => { t += ms; hub.tick(); };
+    return { chat, step, recs, last: () => sent[sent.length - 1] };
+  }
+  const TWO = (n = 256) => '[11:53:53] crush a frost giant elite for ' + n;
+  function warm(r) { for (let i = 0; i < 4; i++) { r.chat(TWO()); r.step(IVS); } r.chat(TWO()); r.step(120); }
+  function weave(r, fistLine) {
+    r.chat('Loading bandolier set [fists]', 1011); r.step(150);
+    r.chat(fistLine); r.step(250);
+    r.chat('Loading bandolier set [2h]', 1011); r.step(IVS - 520);
+  }
+
+  it('a bare "miss" right after the press is the fist round missing: an attempt, not a hit, and the weave still lands', () => {
+    const r = rig(); warm(r); weave(r, '[11:53:54] miss'); r.chat(TWO()); r.step(50);
+    expect(r.recs.map(a => [a.outcome, a.fistMissed, a.fistDmg])).toEqual([['landed', true, 0]]);
+    expect(r.last().tally).toMatchObject({ landed: 1, clips: 0, misses: 0, fistTried: 1, fistHit: 0 });
+  });
+  it('a bare "miss" on the beat is the 2H round missing: the next weave is not read as a clip', () => {
+    const r = rig(); warm(r);
+    r.step(IVS - 120); r.chat('[11:53:55] miss');      // the 2H round, missed (no weapon named)
+    r.step(120); weave(r, '[11:53:56] punch a frost giant elite for 91'); r.chat(TWO()); r.step(50);
+    expect(r.recs.map(a => a.outcome)).toEqual(['landed']);
+    expect(r.last().tally.rounds).toBe(7);
+  });
+  it('a 2H round we never saw at all is "on the beat" late, not a clip; a real clip still is one', () => {
+    const r = rig(); warm(r); weave(r, '[11:53:56] punch a frost giant elite for 91');
+    r.step(IVS); r.chat(TWO()); r.step(50);              // one whole swing later than expected: the round between left no line
+    expect(r.recs.map(a => a.outcome)).toEqual(['landed']);
+    const c = rig(); warm(c);
+    c.chat('Loading bandolier set [fists]', 1011); c.step(150); c.chat('[11:53:56] punch a frost giant elite for 91'); c.step(250);
+    c.chat('Loading bandolier set [2h]', 1011); c.step(IVS - 520 + 700); c.chat(TWO()); c.step(50);   // 700 ms late: a clip
+    expect(c.recs.map(a => a.outcome)).toEqual(['clip']);
+  });
+  it('added DPS is the weaved fists\' damage over the fight; reaction is the press after the window opened', () => {
+    const r = rig(); warm(r); weave(r, '[11:53:56] punch a frost giant elite for 91'); r.chat(TWO()); r.step(50);
+    const t = r.last().tally;
+    expect(t.weaveDmg).toBe(91);
+    expect(t.addedDps).toBe(Math.round(91 / ((5 * IVS + 50) / 1000)));   // first swing to now: five swings and the 50 ms tick
+    expect(t.reactAvg).toBe(120);                          // pressed 120 ms after the 2H swing that opened the window
+    expect(r.recs[0]).toMatchObject({ fistDmg: 91, reaction: 120 });
+  });
+  it('the painter: four swings ahead, WEAVE +damage and a green flash on a landed weave, and the up direction', () => {
+    const d = stripJs(readSource(path.join(MIMIC, 'weaveDraw.js')));
+    expect(d).toContain('var LOOK_SWINGS = 4;');
+    expect(d).toContain('var look = LOOK_SWINGS * st.core.interval2H');
+    expect(d).toContain("ctx.fillText('WEAVE' + (o.dmg ? ' +' + o.dmg : ''), w / 2, head / 2);");
+    expect(d).toContain("+ (t.addedDps ? '  +' + t.addedDps + ' dps' : '')");
+    expect(d.match(/weaveFlash\(c, ctx, st, now,/g).length).toBe(5);   // its definition, then the lane, arc, bar and highway
+    expect(d).toContain("var up = cv.getAttribute('data-wp-dir') === 'up';");
+    const me = stripJs(readSource(path.join(MIMIC, 'me.html')));
+    expect(me).toContain("['weaveDir', 'Lane moves: down to the hit line, or up to it', ['down', 'up']],");
+    expect(me).toContain("var dir = hudParts.weaveDir === 'up' ? 'up' : 'down';");
+  });
+});
+
+// 2026-11-09, the guild lead: "basketweaver is catching the delay appropriately by pulling in the right flow. I've had several
+// instances where they've called for me to swing where ours was on red" (its card: 3.65 s, the hasted swing being 1.65 s).
+describe('the swing speed re-locks when haste changes', () => {
+  function swings(gaps) {
+    const e = new W.WeaveEngine({ cls: 'monk', level: 65, twoHDelay: 30 });
+    let t = 1_000_000;
+    e.swing('You crush a gnoll for 200 points of damage.', t);
+    for (const g of gaps) { t += g; e.swing('You crush a gnoll for 200 points of damage.', t); }
+    return e;
+  }
+  it('haste falling off (1.65 s -> 3.65 s): the new speed is taken after two swings', () => {
+    const e = swings([1650, 1650, 1650, 1650, 3650, 3650]);
+    expect(Math.round(e.interval2H())).toBe(3650);
+  });
+  it('haste coming back (3.65 s -> 1.65 s): the same, the other way', () => {
+    const e = swings([3650, 3650, 3650, 1650, 1650]);
+    expect(Math.round(e.interval2H())).toBe(1650);
+  });
+  it('one odd gap is not a new speed', () => {
+    const e = swings([1650, 1650, 1650, 2600, 1650]);
+    expect(Math.round(e.interval2H())).toBe(1650);
+  });
+  it('exactly double three times running is a slower swing, not three unseen misses', () => {
+    expect(Math.round(swings([1650, 1650, 1650, 3300]).interval2H())).toBe(1650);              // once: an unseen round
+    expect(Math.round(swings([1650, 1650, 1650, 3300, 3300, 3300, 3300]).interval2H())).toBe(3300);
   });
 });

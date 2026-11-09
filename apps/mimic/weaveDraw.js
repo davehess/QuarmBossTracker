@@ -77,6 +77,17 @@
     ctx.fillText(g[0], cx, cy);
     ctx.restore();
   }
+  // A landed weave lights up (the guild lead, 2026-11-09: "When we do weave we should highlight it"): a green outline that fades
+  // over 900 ms, drawn by `stroke` (each painter gives its own shape).
+  var FLASH_MS = 900;
+  // The highway and the Thin bar show four 2H swings ahead (were two): Basketweaver shows about four and a half, and ours
+  // scrolled twice as fast (the guild lead, 2026-11-09: "our weaving overlay is going faster than theirs").
+  var LOOK_SWINGS = 4;
+  function weaveFlash(c, ctx, st, now, stroke) {
+    var o = st && st.outcome;
+    if (!o || o.kind !== 'landed' || now - o.at >= FLASH_MS) return;
+    ctx.save(); ctx.globalAlpha = 1 - (now - o.at) / FLASH_MS; ctx.strokeStyle = c.green; ctx.lineWidth = 2; stroke(); ctx.restore();
+  }
   // The ring's short idle reason, or '' (nothing to say: waiting for a fight is the normal rest state).
   function idleReason(st) {
     if (!st) return '';
@@ -97,32 +108,38 @@
   // ── The slim vertical lane (HUD ring, Box) ─────────────────────────────────────────────────────────────────
   // Future is at the top; the windows scroll DOWN to the hit line near the bottom. Blue = wait, green = go,
   // red = late, a thin orange tick where the next 2H swing is due, the last outcome as a glyph under the lane.
-  function drawLane(c, f, st, live, now) {
+  // `data-wp-dir="up"` (the guild lead, 2026-11-09: "bottom to top"): the future comes up from the bottom to a hit line near
+  // the top, the outcome glyph above it. Default "down": the future at the top, the hit line near the bottom.
+  function drawLane(c, f, st, live, now, cv) {
     var ctx = f.ctx, w = f.w, h = f.h, gh = Math.round(Math.max(9, Math.min(14, w * 0.8)));
-    var top = 1, hitY = h - gh - 5, span = hitY - top;
-    ctx.globalAlpha = live ? 0.3 : 0.16; ctx.fillStyle = c.dim; ctx.fillRect(0, top, w, hitY + 4 - top); ctx.globalAlpha = 1;
+    var up = !!(cv && cv.getAttribute && cv.getAttribute('data-wp-dir') === 'up');
+    var laneTop = up ? gh + 4 : 1, laneBot = up ? h - 1 : h - gh - 1;
+    var hitY = up ? laneTop + 4 : laneBot - 4, glyphY = up ? gh / 2 + 1 : h - gh / 2 - 1;
+    ctx.globalAlpha = live ? 0.3 : 0.16; ctx.fillStyle = c.dim; ctx.fillRect(0, laneTop, w, laneBot - laneTop); ctx.globalAlpha = 1;
     if (!live) {
-      if (st && st.source === 'needs-zeal') note(c, ctx, 'needs Zeal', w, hitY);
-      glyph(c, ctx, st, now, w / 2, h - gh / 2 - 1, gh);
+      if (st && st.source === 'needs-zeal') note(c, ctx, 'needs Zeal', w, h);
+      glyph(c, ctx, st, now, w / 2, glyphY, gh);
       return;
     }
     var z = WV.zones(st.core, now, 3);
     if (!z) return;
-    var look = 2 * st.core.interval2H, ppm = span / look;
-    var yOf = function (t) { return hitY - (t - now) * ppm; };
+    var span = laneBot - laneTop - 4, ppm = span / (2 * st.core.interval2H);
+    var yOf = function (t) { return up ? hitY + (t - now) * ppm : hitY - (t - now) * ppm; };
     ctx.save();
-    ctx.beginPath(); ctx.rect(0, top, w, hitY + 4 - top); ctx.clip();
+    ctx.beginPath(); ctx.rect(0, laneTop, w, laneBot - laneTop); ctx.clip();
     z.zones.forEach(function (zn) {
-      var y0 = yOf(zn.end), y1 = yOf(zn.start), cur = zn.start <= now && now < zn.end;
+      var a = yOf(zn.start), b = yOf(zn.end), cur = zn.start <= now && now < zn.end;
       ctx.globalAlpha = cur ? 0.95 : 0.42; ctx.fillStyle = c[KIND_COLOR[zn.kind]];
-      ctx.fillRect(0, y0, w, Math.max(1, y1 - y0));
+      ctx.fillRect(0, Math.min(a, b), w, Math.max(1, Math.abs(b - a)));
     });
     ctx.globalAlpha = 1; ctx.fillStyle = c.orange;
     z.swings.forEach(function (s) { ctx.fillRect(0, yOf(s.at) - 0.75, w, 1.5); });
+    weaveFlash(c, ctx, st, now, function () { ctx.strokeRect(1, laneTop + 1, w - 2, laneBot - laneTop - 2); });
     ctx.restore();
     ctx.fillStyle = c.text; ctx.fillRect(-1, hitY - 0.75, w + 2, 1.5);
-    glyph(c, ctx, st, now, w / 2, h - gh / 2 - 1, gh);
+    glyph(c, ctx, st, now, w / 2, glyphY, gh);
   }
+
 
   // ── The curved lane (HUD ring) ─────────────────────────────────────────────────────────────────────────────
   // The guild lead, 2026-11-07: "please curve the line to match the arc for the circle". The canvas covers the ring's
@@ -134,7 +151,9 @@
     // An optional 4th number is the band's width in the same 400 units (the Arc piece is drawn small, so it asks for a wider one).
     var R = g[0] * s, a0 = g[1], a1 = g[2], band = (g[3] > 0 ? g[3] : 9) * s, cx = f.w / 2, cy = f.h / 2;
     var rad = function (deg) { return (deg - 90) * Math.PI / 180; };
-    var hitA = a1 - 5;
+    // "up" (2026-11-09: "bottom to top"): the hit tick sits near the start of the arc and the future comes from its end.
+    var up = cv.getAttribute('data-wp-dir') === 'up';
+    var hitA = up ? a0 + 5 : a1 - 5, endA = up ? a0 : a1, sgn = up ? -1 : 1;
     var arc = function (from, to, color, alpha, width) {
       if (!(to > from)) return;
       ctx.globalAlpha = alpha; ctx.strokeStyle = color; ctx.lineWidth = width || band;
@@ -149,14 +168,14 @@
     ctx.save();
     ctx.lineCap = 'butt';
     arc(a0, a1, c.dim, live ? 0.3 : 0.16);
-    var gp = gx(a1 + 7), gpx = Math.max(9, 14 * s);
+    var gp = gx(endA + 7 * sgn), gpx = Math.max(9, 14 * s);
     if (!live) {
       ctx.restore();
       glyph(c, ctx, st, now, gp[0], gp[1], gpx);
       // Why it is idle, as the Box lane and the Canvas piece already say: the ring's grey arc alone gave no reason (2026-11-09).
       var why = idleReason(st);
       if (why) {
-        var wp = gx(a1 + 14);
+        var wp = gx(endA + 14 * sgn);
         ctx.save(); font(ctx, Math.max(8, 9 * s)); ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
         ctx.fillStyle = c.dim; ctx.globalAlpha = 0.85; ctx.fillText(why, wp[0], wp[1]); ctx.restore();
       }
@@ -164,14 +183,16 @@
     }
     var z = WV.zones(st.core, now, 3);
     if (!z) { ctx.restore(); return; }
-    var dpm = (hitA - a0) / (2 * st.core.interval2H);
-    var aOf = function (t) { return hitA - (t - now) * dpm; };
+    var lo = up ? hitA : a0, hi = up ? a1 : hitA;   // the stretch the windows travel along
+    var dpm = (hi - lo) / (2 * st.core.interval2H);
+    var aOf = function (t) { return hitA - sgn * (t - now) * dpm; };
     z.zones.forEach(function (zn) {
-      var from = Math.max(a0, aOf(zn.end)), to = Math.min(hitA, aOf(zn.start)), cur = zn.start <= now && now < zn.end;
-      arc(from, to, c[KIND_COLOR[zn.kind]], cur ? 0.95 : 0.42);
+      var p = aOf(zn.start), q = aOf(zn.end), cur = zn.start <= now && now < zn.end;
+      arc(Math.max(lo, Math.min(p, q)), Math.min(hi, Math.max(p, q)), c[KIND_COLOR[zn.kind]], cur ? 0.95 : 0.42);
     });
-    z.swings.forEach(function (sw) { var a = aOf(sw.at); if (a >= a0 && a <= hitA) tick(a, c.orange, 1.5, band / 2); });
+    z.swings.forEach(function (sw) { var a = aOf(sw.at); if (a >= lo && a <= hi) tick(a, c.orange, 1.5, band / 2); });
     tick(hitA, c.text, 1.5, band / 2 + 2 * s);
+    weaveFlash(c, ctx, st, now, function () { ctx.lineWidth = band + 4 * s; ctx.beginPath(); ctx.arc(cx, cy, R, rad(a0), rad(a1)); ctx.stroke(); });
     ctx.restore();
     glyph(c, ctx, st, now, gp[0], gp[1], gpx);
   }
@@ -186,9 +207,9 @@
       if (why) { font(ctx, Math.max(8, Math.min(10, h * 0.8))); ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = c.dim; ctx.fillText(why, 2, h / 2); }
       return;
     }
-    var z = WV.zones(st.core, now, 3);
+    var z = WV.zones(st.core, now, LOOK_SWINGS + 1);
     if (!z) return;
-    var ppm = (w - hz - 3) / (2 * st.core.interval2H), xOf = function (t) { return hz + (t - now) * ppm; };
+    var ppm = (w - hz - 3) / (LOOK_SWINGS * st.core.interval2H), xOf = function (t) { return hz + (t - now) * ppm; };
     ctx.globalAlpha = 0.3; ctx.fillStyle = c.dim; ctx.fillRect(0, 0, w, h);
     z.zones.forEach(function (zn) {
       var x0 = xOf(zn.start), x1 = xOf(zn.end), cur = zn.start <= now && now < zn.end;
@@ -203,6 +224,7 @@
       ctx.globalAlpha = 0.55 + 0.45 * Math.abs(Math.sin(now / 120)); ctx.strokeStyle = c.red; ctx.lineWidth = 2;
       ctx.strokeRect(1, 1, w - 2, h - 2); ctx.globalAlpha = 1;
     }
+    weaveFlash(c, ctx, st, now, function () { ctx.strokeRect(1, 1, w - 2, h - 2); });
   }
 
   // ── The timing highway (the Canvas piece) ──────────────────────────────────────────────────────────────────
@@ -225,9 +247,9 @@
       glyph(c, ctx, st, now, w - px, head / 2, px + 2);
       return;
     }
-    var z = WV.zones(st.core, now, 3);
+    var z = WV.zones(st.core, now, LOOK_SWINGS + 1);
     if (!z) return;
-    var look = 2 * st.core.interval2H, ppm = (w - hz - 3) / look;
+    var look = LOOK_SWINGS * st.core.interval2H, ppm = (w - hz - 3) / look;
     var xOf = function (t) { return hz + (t - now) * ppm; };
     ctx.save();
     ctx.beginPath(); ctx.rect(0, laneTop, w, laneH); ctx.clip();
@@ -254,12 +276,18 @@
       ctx.globalAlpha = 0.55 + 0.45 * Math.abs(Math.sin(now / 120)); ctx.fillStyle = c.red; ctx.textAlign = 'center';
       ctx.fillText('CLIPPED', w / 2, head / 2); ctx.globalAlpha = 1;
     }
+    if (o && o.kind === 'landed' && now - o.at < FLASH_MS) {
+      ctx.globalAlpha = 1 - (now - o.at) / FLASH_MS; ctx.fillStyle = c.green; ctx.textAlign = 'center';
+      ctx.fillText('WEAVE' + (o.dmg ? ' +' + o.dmg : ''), w / 2, head / 2); ctx.globalAlpha = 1;
+    }
+    weaveFlash(c, ctx, st, now, function () { ctx.strokeRect(1, laneTop, w - 2, laneH); });
     ctx.textAlign = 'right';
     var tx = w - 2;
     if (st.cfg && st.cfg.showTally !== false && st.tally && st.tally.presses) {
       font(ctx, px - 1); ctx.fillStyle = c.text;
       var t = st.tally;
-      ctx.fillText(t.landed + '✓ ' + t.clips + '✕ ' + t.misses + '·' + (t.voided ? ' ' + t.voided + '⊘' : ''), tx - px - 6, head / 2);
+      ctx.fillText(t.landed + '✓ ' + t.clips + '✕ ' + t.misses + '·' + (t.voided ? ' ' + t.voided + '⊘' : '')
+        + (t.addedDps ? '  +' + t.addedDps + ' dps' : ''), tx - px - 6, head / 2);
     }
     glyph(c, ctx, st, now, tx - px / 2, head / 2, px + 2);
   }

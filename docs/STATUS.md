@@ -240,7 +240,16 @@ next touch one rather than assuming a missing row means a missing doc.
   `Client::GetHandToHandDelay`); Dark Hand Wraps (28949) are armour, so a monk in them is on bare fists (2.0 s at 65 human).
   The swap time (press to 2H back) defaults to 400 ms under a new key `weaveSwapMs` (was `weaveMargin` 150): Basketweaver's
   measured "Weave Off Delay", and the 150 left the last quarter second of green clipping (0 ✓ / 10 ✕ in the guild lead's
-  screenshot). Basketweaver's own "Offhand: Epic Fists 1.6 s" did not match the guild lead's gear.
+  screenshot). Basketweaver's own "Offhand: Epic Fists 1.6 s" did not match the guild lead's gear. **Side-by-side video
+  (same day; Basketweaver "B 26/33 rounds weaved | Bonus attacks: 52 attempts 38 landed | Added DPS: 33 | Avg reaction:
+  334ms", ours 3✓ 5✕ 6· at the frame its count read 12):** the short form prints every miss as a bare `miss`, so a missed 2H
+  round vanished (the next weave read as a clip) and a missed fist read as no fist. `weave.js` now places a bare miss by time
+  (after a press = the fist; within 300 ms of the predicted 2H = that round), treats lateness of a whole number of swings as
+  unseen rounds (`onBeat`), and re-locks the swing speed when haste changes (two agreeing gaps outside the band, or three
+  "exact doubles", replace the samples; the old band refused a 1.65 s → 3.65 s change forever, so ours showed red where
+  Basketweaver said swing). Tally adds Basketweaver's terms (`rounds`, `fistTried` / `fistHit`, `weaveDmg`, `addedDps`,
+  `reactAvg`); a landed weave flashes green with "WEAVE +damage"; the highway and Thin bar show four swings ahead (were two;
+  ours scrolled twice as fast); the HUD lane can run bottom to top (`weaveDir`).
   **First live report (2026-11-09, agent 4.0.78 beta):** *"WEAVING IS WAITING FOR A FIGHT BUT I'M IN ONE"*. The hub only fed
   the engine lines on colours 265 / 267 (the unverified guess above), so a client whose melee lines arrive on any other colour
   never started a swing. Now it takes any line that starts `You ` on any colour (other people's hits and non-melee are still

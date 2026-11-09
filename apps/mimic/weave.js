@@ -115,20 +115,22 @@
   var SHORT_HIT_RE = /^(?!(?:a|an|the|your)\b)([a-z]+) (.+?) for (\d+)\.?$/;
   // YOUR melee swing, or null. Only a line that starts "You " (or the short form above) counts: another player's hits
   // arrive on other colours, but this guards anyway.
+  var BARE_MISS_RE = /^miss(?:es)?!?\.?$/i;
   function parseSwing(text) {
     var t = bare(text), m = HIT_RE.exec(t), miss = false;
+    if (!m && BARE_MISS_RE.test(t)) return { verb: null, target: '', miss: true, bareMiss: true, dmg: 0 };
     if (!m) { m = MISS_RE.exec(t); miss = !!m; }
     var short = false;
     if (!m) { m = SHORT_HIT_RE.exec(t); short = !!m; }
     if (!m) return null;
-    var out = { verb: m[1].toLowerCase(), target: m[2], miss: miss };
+    var out = { verb: m[1].toLowerCase(), target: m[2], miss: miss, dmg: miss ? 0 : (parseInt(m[3], 10) || 0) };
     if (short) out.short = true;
     return out;
   }
   // Cheap gate for the hub's hot path: could this line be one of your swings?
   function maybeSwing(text) {
     var t = unstamp(text);
-    return t.slice(0, 4) === 'You ' || /^[a-z]+ .+ for \d+/.test(t);
+    return t.slice(0, 4) === 'You ' || /^[a-z]+ .+ for \d+/.test(t) || BARE_MISS_RE.test(t.trim());
   }
   function parseLoad(text) { var m = BAND_RE.exec(bare(text)); return m ? m[1] : null; }
   // Zeal's bandolier failures (Zeal/bandolier.cpp at CoastalRedwood/Zeal 094afa55): printed on CHANNEL_BANDOLIER_FAILURE (1012),
@@ -182,6 +184,9 @@
   var CLIP_MS = 250;         // the next 2H round later than expected by more than this = clipped
   var FIGHT_GAP_MS = 12000;  // no swing this long: the fight is over, the tally and the samples reset
   var MAX_SAMPLES = 6;
+  var BARE_MISS_2H_MS = 300; // a bare "miss" this close to a predicted 2H swing is that round missing
+  // `late` (ms past the expected 2H) is a whole number of swings, give or take CLIP_MS.
+  function onBeat(late, iv) { var k = Math.round(late / iv); return k >= 1 && Math.abs(late - k * iv) <= CLIP_MS; }
   var VOID_AFTER_MS = 2500;  // a bandolier failure this soon after the press's last load voids it (a set swaps over a few ticks)
 
   function median(a) {
@@ -204,8 +209,12 @@
     eagle: 1, tiger: 1, frenzy: 1, frenzies: 1, have: 1, are: 1, were: 1, gain: 1, feel: 1, begin: 1 };
   WeaveEngine.prototype.fresh = function () {
     this.last2H = null; this.last2HLine = null; this.lastFist = null; this.lastFistLine = null;
-    this.samples = []; this.lastSwingAt = null; this.pending = null;
-    this.lastPress = null; this.outcome = null; this.tally = { presses: 0, landed: 0, clips: 0, misses: 0, voided: 0 };
+    this.samples = []; this.lastSwingAt = null; this.pending = null; this.offBand = []; this.divStreak = 0;
+    this.lastPress = null; this.outcome = null; this.tally = { presses: 0, landed: 0, clips: 0, misses: 0, voided: 0,
+      // Basketweaver's terms (2026-11-09): 2H rounds and how many carried a weave, bonus (fist) attacks tried and hit, the
+      // damage the weaved fists did, and the press's reaction (press - the window opening).
+      rounds: 0, fistTried: 0, fistHit: 0, weaveDmg: 0, reactSum: 0, reactN: 0 };
+    this.fightStart = null;
   };
   WeaveEngine.prototype.setConfig = function (cfg) { this.cfg = cleanCfg(cfg); };
   WeaveEngine.prototype.interval2H = function () {
@@ -222,7 +231,12 @@
     if (!p) return;
     this.pending = null;
     this.outcome = { kind: kind, at: at, pressAt: p.firstT };
-    if (kind === 'landed') this.tally.landed++; else if (kind === 'clip') this.tally.clips++; else this.tally.misses++;
+    if (kind === 'landed') {
+      this.tally.landed++;
+      this.tally.weaveDmg += p.fistDmg || 0;   // a landed weave's fist round is extra: the 2H swung on time as well
+      if (p.open != null && p.firstT >= p.open) { this.tally.reactSum += p.firstT - p.open; this.tally.reactN++; }
+      this.outcome.dmg = p.fistDmg || 0;
+    } else if (kind === 'clip') this.tally.clips++; else this.tally.misses++;
     this._record(p, kind, at, null);
   };
   // Every attempt, the good ones too (the guild lead, 2026-11-09: "capture the successful weave attempts as well"): when it
@@ -233,7 +247,8 @@
     var rec = { at: at, outcome: kind, reason: reason || null, press: p.firstT, lastLoad: p.lastLoad, loads: p.loads || 0,
       marked: !!p.marked, phase: p.phase || null, open: p.open, close: p.close, last2H: p.last2H, lastFist: p.lastFist,
       fist: p.fist, expected2H: p.expected, actual2H: (kind === 'landed' || kind === 'clip') ? at : null,
-      interval2H: Math.round(c.interval2H), fistInterval: Math.round(c.fistInterval), measured: this.measured() };
+      interval2H: Math.round(c.interval2H), fistInterval: Math.round(c.fistInterval), measured: this.measured(),
+      fistDmg: p.fistDmg || 0, fistMissed: !!p.fistMissed, reaction: p.open != null ? p.firstT - p.open : null };
     this.attempts.push(rec);
     if (this.attempts.length > 50) this.attempts.shift();
     if (typeof this.onAttempt === 'function') { try { this.onAttempt(rec); } catch (e) { /* a writer must never break timing */ } }
@@ -242,36 +257,81 @@
   WeaveEngine.prototype.swing = function (text, t) {
     var s = parseSwing(text);
     if (!s) return false;
-    var kind = classify(s.verb, this.cfg);
+    // A bare "miss" (the short form names no weapon; 2026-11-09, compared against Basketweaver's "52 attempts 38 landed"):
+    // straight after a press it is the fist round missing (the 2H is out of the hand); near the next predicted 2H swing it is
+    // the 2H round missing. Anything else (a kick, a stray line) is left alone.
+    if (s.bareMiss) {
+      if (this.lastSwingAt == null || t - this.lastSwingAt > FIGHT_GAP_MS) return false;
+      var pm = this.pending;
+      if (pm && pm.fist == null && t >= pm.firstT && t - pm.lastLoad <= FIST_AFTER_MS) {
+        pm.fist = t; pm.fistMissed = true; pm.fistDmg = 0; this.lastFist = t; this.lastFistLine = t; this.lastSwingAt = t;
+        this.tally.fistTried++;
+        return true;
+      }
+      if (this.last2H == null) return false;
+      var ivm = this.interval2H(), km = Math.max(1, Math.round((t - this.last2H) / ivm));
+      if (Math.abs(t - (this.last2H + km * ivm)) > BARE_MISS_2H_MS) return false;
+      s = { verb: null, target: '', miss: true };
+      var kind = '2h';
+    } else {
+      var kind = classify(s.verb, this.cfg);   // eslint-disable-line no-redeclare
+    }
     if (s.short && !kind) return false;   // a short-form line counts only for a word the lists know (it has no "You" to prove it is yours)
-    if (!SPECIAL_VERBS[s.verb]) { this.diag.seen++; if (kind) this.diag.matched++; else this.diag.lastVerb = s.verb; }
+    if (s.verb && !SPECIAL_VERBS[s.verb]) { this.diag.seen++; if (kind) this.diag.matched++; else this.diag.lastVerb = s.verb; }
     if (!kind) return false;
     if (this.lastSwingAt != null && t - this.lastSwingAt > FIGHT_GAP_MS) this.fresh();   // a new fight
+    if (this.fightStart == null) this.fightStart = t;
     this.lastSwingAt = t;
     if (kind === '2h') {
       if (this.last2HLine != null && t - this.last2HLine <= ROUND_MS) { this.last2HLine = t; return true; }   // the second line of a double attack
       this.last2HLine = t;
+      this.tally.rounds++;
       var clipped = false;
       if (this.pending) {
         var p = this.pending, late = p.expected != null ? t - p.expected : 0;
-        clipped = late > CLIP_MS;
+        // Late by a whole number of swings (± CLIP_MS) is on time with rounds we never saw in between (a missed round whose
+        // line named no weapon), not a clip: a real clip restarts the 2H from the fist's swing, a fraction of an interval late.
+        clipped = late > CLIP_MS && !onBeat(late, this.interval2H());
         this._resolve(clipped ? 'clip' : (p.fist != null ? 'landed' : 'miss'), t);
       }
       if (this.last2H != null) {
         var dt = t - this.last2H, med = this.samples.length >= 3 ? median(this.samples) : null;
-        // A clipped interval is longer than the weapon's own, and a gap past a fight break is not an interval.
-        if (!clipped && dt >= 300 && (med != null ? dt <= 2 * med : dt <= FIGHT_GAP_MS)) {
+        // A gap of two or three swings (rounds we never saw) is that many intervals, not one long one; a clipped interval is
+        // longer than the weapon's own, and a gap past a fight break is not an interval.
+        var raw = dt, kk = med != null ? Math.round(dt / med) : 1;
+        if (kk >= 2 && kk <= 3 && Math.abs(dt - kk * med) <= CLIP_MS) { dt = dt / kk; this.divStreak++; } else this.divStreak = 0;
+        if (!clipped && dt >= 300 && (med != null ? (dt >= 0.67 * med && dt <= 1.5 * med) : dt <= FIGHT_GAP_MS) && this.divStreak < 3) {
           this.samples.push(dt);
           if (this.samples.length > MAX_SAMPLES) this.samples.shift();
+          this.offBand = [];
+        } else if (!clipped && raw >= 300 && raw <= FIGHT_GAP_MS) {
+          // Re-lock on a new speed (the guild lead, 2026-11-09: "basketweaver is catching the delay appropriately ... they've
+          // called for me to swing where ours was on red"; its card read 3.65 s against a hasted 1.65 s): haste dropping or
+          // coming back moves every interval at once, and the old band refused the new ones forever. Two in a row that agree
+          // with each other (within 15%) become the samples; so do three "missed rounds" in a row, which is a slower weapon.
+          this.offBand.push(raw);
+          if (this.offBand.length > 3) this.offBand.shift();
+          var ob = this.offBand, a = ob[ob.length - 1], b = ob[ob.length - 2];
+          if (b != null && Math.abs(a - b) <= 0.15 * Math.max(a, b)) {
+            this.samples = [b, a, (a + b) / 2];
+            this.offBand = []; this.divStreak = 0;
+          }
         }
       }
       this.last2H = t;
     } else {
-      if (this.lastFistLine != null && t - this.lastFistLine <= ROUND_MS) { this.lastFistLine = t; return true; }
+      var q = this.pending;
+      if (this.lastFistLine != null && t - this.lastFistLine <= ROUND_MS) {   // the second line of the same fist round
+        this.lastFistLine = t;
+        if (q && q.fist != null) { q.fistDmg = (q.fistDmg || 0) + s.dmg; if (q.fistMissed && s.dmg) { q.fistMissed = false; this.tally.fistHit++; } }
+        return true;
+      }
       this.lastFistLine = t;
       this.lastFist = t;
-      var q = this.pending;
-      if (q && q.fist == null && t >= q.firstT && t - q.lastLoad <= FIST_AFTER_MS) q.fist = t;
+      if (q && q.fist == null && t >= q.firstT && t - q.lastLoad <= FIST_AFTER_MS) {
+        q.fist = t; q.fistDmg = s.dmg; q.fistMissed = !s.dmg;
+        this.tally.fistTried++; if (s.dmg) this.tally.fistHit++;
+      }
     }
     return true;
   };
@@ -322,12 +382,21 @@
     if (this.lastSwingAt != null && !this.active(now)) { this.fresh(); return true; }
     return false;
   };
+  // The tally plus what follows from it: added DPS (the weaved fists' damage over the fight so far) and the average reaction.
+  WeaveEngine.prototype.summary = function (now) {
+    var t = Object.assign({}, this.tally);
+    var end = this.lastSwingAt != null ? Math.max(this.lastSwingAt, Math.min(now, this.lastSwingAt + 3000)) : now;
+    var secs = this.fightStart != null ? Math.max(1, (end - this.fightStart) / 1000) : 1;
+    t.addedDps = Math.round(t.weaveDmg / secs);
+    t.reactAvg = t.reactN ? Math.round(t.reactSum / t.reactN) : null;
+    return t;
+  };
   WeaveEngine.prototype.snapshot = function (now) {
     var c = this.core(), d = this.active(now) ? derive(c, now) : null;
     return {
       active: !!d, phase: d ? d.phase : 'idle', at: now,
       core: c, measured: this.measured(), open: d ? d.open : null, close: d ? d.close : null, next2H: d ? d.next2H : null,
-      lastPress: this.lastPress, outcome: this.outcome, tally: Object.assign({}, this.tally),
+      lastPress: this.lastPress, outcome: this.outcome, tally: this.summary(now),
       cfg: { showTally: this.cfg.showTally, marginMs: this.cfg.marginMs },
       diag: { seen: this.diag.seen, matched: this.diag.matched, lastVerb: this.diag.lastVerb },
     };
