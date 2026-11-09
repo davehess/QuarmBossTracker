@@ -3279,6 +3279,10 @@ anyone `pop_flags` + `STAGE_IMPLIES` already flag). Agent `_pollHailBoard` reads
 into the `hail` key of the Command Center state; a witnessed or own flag-NPC hail (`parseWitnessedHail`,
 `_hailNpcWanted`) rides the pop-flag upload; a tap posts the local `/api/hail-mark` (`_localOriginOk`) →
 `POST /api/agent/hail-mark`. Render: `hailBoardHtml` in `apps/mimic/command.html`.
+**The elemental Essences (bot 4.0.60 · web 2.1.111, 2026-11-09):** Coirnav, Fennin Ro, Xegony and the Avatar of
+Earth (board ids `coirnav` / `fennin_ro` / `xegony` / `rathe_council`) open `Essence of Water / Fire / Air / Earth`.
+The Essence hands its item to the cursor with no line, so only a witnessed hail or a tap marks a raider; `done` is
+the guide's hail step (`<boss>_dead`) or `time_1`. The Flag lab copy (`web/lib/hailBoardView.ts`) carries the same rows.
 **Flag cap + "leaves in" (bot 3.1.220 · agent 3.7.102 beta, 2026-10-07, the guild lead: "add the 72-flag cap to
 the hail board, and the countdown timers for when those mobs disappear"; §186):** each `HAIL_BOSSES` row carries
 its flagger script's `flagCap` (72 for every NPC; 144 = 72 × 2 with `flagTicks: 2` for Grummus and Mithaniel Marr,
