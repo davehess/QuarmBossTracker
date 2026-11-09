@@ -229,7 +229,8 @@ describe('the page', () => {
   });
   it('renders ONE page, the story stage (the guild lead’s pick C, 2026-11-01), and reads no query: no `?v=` branches, no beta tag, no old layouts', () => {
     expect(page).toMatch(/<StoryStage downloadUrl=\{DOWNLOAD_URL\} onHost=\{onHost\} \/>/);
-    expect(page).not.toMatch(/searchParams|\bv === |\?v=[a-z]/);
+    // 2026-11-09: `searchParams` is read for the signed-in home previews only (raidmimic-home-variants.test.js pins them).
+    expect(page).not.toMatch(/\bv === 'a'|\?v=[a-z]/);
     expect(page).not.toMatch(/PathsLayout|ChaptersStage|BetaTag|MotionStage|SignInTop|variantOf|PreviewBar/);
     for (const gone of ['PathsLayout', 'ChaptersStage', 'MotionStage', 'SignInTop', 'ClipTabs', 'SceneClip', 'MascotHero', 'MascotVideo', 'HowItWorks',
       'LadderLayout', 'SceneLayout', 'VariantParts', 'Figures']) {
@@ -290,7 +291,7 @@ describe('the shared pieces (Parts.tsx)', () => {
     expect(read(L + 'HomePanel.tsx')).not.toMatch(/['"]use client['"]/);
     for (const f of ['StoryStage.tsx', 'StoryVideo.tsx', 'HomePanelGate.tsx']) expect(read(L + f), f).toMatch(/^(?:\/\/[^\n]*\n)*'use client';|^'use client';/);
     expect(fs.readdirSync(path.join(ROOT, L)).sort()).toEqual([
-      'FeatureIcons.tsx', 'HomePanel.tsx', 'HomePanelGate.tsx', 'Parts.tsx', 'StoryBits.tsx', 'StoryParts.tsx', 'StoryStage.tsx', 'StoryVideo.tsx',
+      'FeatureIcons.tsx', 'HomeChecklist.tsx', 'HomeDashboard.tsx', 'HomePanel.tsx', 'HomePanelGate.tsx', 'HomeParts.tsx', 'Parts.tsx', 'StoryBits.tsx', 'StoryParts.tsx', 'StoryStage.tsx', 'StoryVideo.tsx',
     ]);   // HomePanel (server) and HomePanelGate (client): the signed-in top, 2026-11-09
   });
   it('fetches and embeds nothing external; every outbound link is one we name', () => {

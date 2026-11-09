@@ -786,7 +786,7 @@ describe('the door on raidmimic hosts', () => {
 });
 
 describe('the /guilds page links', () => {
-  const page = code('web/app/guilds/page.tsx');
+  const page = code('web/app/guilds/page.tsx') + code('web/lib/hubGuildsLoad.ts');   // the page's reads moved to the shared loader (2026-11-09)
   it('"Start a guild" is a link to /guilds/new, not a stub', () => {
     const start = page.slice(page.indexOf('Start a guild</h2>'));
     expect(start).toMatch(/href="\/guilds\/new"/);

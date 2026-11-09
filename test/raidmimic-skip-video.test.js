@@ -24,17 +24,21 @@ describe('the page: signed out gets the stage, signed in gets the panel', () => 
   it('reads the session, and only a Discord id swaps the video for the panel', () => {
     expect(page).toMatch(/const \{ data: \{ user \} \} = await supabaseServer\(\)\.auth\.getUser\(\);/);
     expect(page).toMatch(/const discordId = discordIdOf\(user\);/);
-    expect(page).toMatch(/user && discordId\s*\?\s*<HomePanelGate[^]*<HomePanel mine=\{await loadMine\(discordId\)\}[^]*:\s*<StoryStage downloadUrl=\{DOWNLOAD_URL\} onHost=\{onHost\} \/>;/);
+    // 2026-11-09: the default is written as a stage plus an `if (user && discordId)` that swaps in the panel; the signed-in
+    // previews (raidmimic-home-variants.test.js) branch inside it, and no `?v=` keeps this path.
+    expect(page).toMatch(/let top = <StoryStage downloadUrl=\{DOWNLOAD_URL\} onHost=\{onHost\} \/>;\s*if \(user && discordId\) \{[^]*top = <HomePanelGate[^]*<HomePanel mine=\{await loadMine\(discordId\)\}/);
   });
-  it('reads no query at all, and no variant or redirect survives', () => {
-    expect(page).not.toMatch(/searchParams|\bv === |\?v=|redirect\(|bigSkip/);
-    expect(page).toMatch(/export default async function RaidmimicPage\(\)/);
+  it('reads a query only for the signed-in home previews, and no redirect or big-skip variant survives', () => {
+    expect(page).not.toMatch(/\bv === |\?v=|redirect\(|bigSkip/);
+    expect(page).toMatch(/searchParams\?\.v, onHost\)/);
+    expect(page).toMatch(/export default async function RaidmimicPage\(\{ searchParams \}/);
     expect(chars).not.toMatch(/searchParams|doorway|rewatch|\?v=/i);
     expect(chars).toMatch(/from '@\/lib\/hubMine'/);
     expect(chars).not.toMatch(/from\('hub_characters'\)/);
     expect(chars).toMatch(/<h1 className="text-2xl text-gold">/);
     expect(chars).toMatch(/text-text/);
-    expect(Object.keys(H).sort()).toEqual(['HOME_WORDS', 'REWATCH_HASH', 'SKIP_KEY']);   // no rewatchHref with its `video=1` query
+    expect(Object.keys(H)).not.toContain('rewatchHref');   // no rewatchHref with its `video=1` query
+    expect(Object.keys(H).sort()).toEqual(['DASH_WORDS', 'HOME_WORDS', 'REWATCH_HASH', 'SKIP_KEY', 'STEPS_WORDS', 'checklistSteps', 'comingLine', 'homeVariant', 'toHomeGuilds']);   // + the home previews (raidmimic-home-variants.test.js)
   });
   it('the shared read pages hub_flags past the 1,000-row cap, ordered on id', () => {
     expect(mine).toMatch(/selectAll</);
