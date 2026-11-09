@@ -202,6 +202,7 @@
     this.diag = { seen: 0, matched: 0, lastVerb: null };
     this.attempts = [];      // the last 50 attempt records (_record), kept across fights
     this.onAttempt = null;   // set by the hub: each record goes to Mimic's capture file
+    this.hasteN = null; this.hasteAt = null; this.statsDelay = null;   // from /mystats (mystats())
     this.fresh();
   }
   // Words that are not swings at all, so never offered as "your swings say …".
@@ -217,12 +218,30 @@
     this.fightStart = null;
   };
   WeaveEngine.prototype.setConfig = function (cfg) { this.cfg = cleanCfg(cfg); };
+  // /mystats (the guild lead, 2026-11-09: "running /mystats will sync up the basketweaver apparently"): the server prints
+  // "Haste: N (cap M)" with N = 100 + haste (Mob::GetHaste; under 100 = slowed), and times a swing as delay * 10000 / N
+  // (Client::SetAttackTimer). With N and a measured 2H interval the 2H's real delay follows, and from it the haste at any
+  // later interval: the fist window no longer leans on the "2H weapon delay" setting. Kept across fights; a new /mystats
+  // recalibrates (another weapon).
+  WeaveEngine.prototype.twoHDelay = function () { return this.statsDelay || this.cfg.twoHDelay; };
   WeaveEngine.prototype.interval2H = function () {
-    return this.samples.length >= 3 ? median(this.samples) : this.cfg.twoHDelay * 100;
+    if (this.samples.length >= 3) return median(this.samples);
+    return this.hasteN ? this.twoHDelay() * 10000 / this.hasteN : this.cfg.twoHDelay * 100;
+  };
+  WeaveEngine.prototype.mystats = function (hasteN, t) {
+    if (!(hasteN > 0 && hasteN < 400)) return false;
+    this.hasteN = hasteN; this.hasteAt = t; this.statsDelay = null;
+    this._calibrate();
+    return true;
+  };
+  WeaveEngine.prototype._calibrate = function () {
+    if (!this.hasteN || this.statsDelay || !this.measured()) return;
+    var d = this.interval2H() * this.hasteN / 10000, r = Math.round(d);
+    if (r >= 10 && r <= 60 && Math.abs(d - r) <= 0.6) this.statsDelay = r;   // a weapon delay is a whole number of tenths
   };
   WeaveEngine.prototype.measured = function () { return this.samples.length >= 3; };
   WeaveEngine.prototype.core = function () {
-    var iv = this.interval2H(), haste = this.cfg.twoHDelay * 100 / iv;
+    var iv = this.interval2H(), haste = this.twoHDelay() * 100 / iv;
     return { last2H: this.last2H, lastFist: this.lastFist, interval2H: iv, haste: haste,
       fistInterval: handToHandDelay(this.cfg) * 100 / haste, marginMs: this.cfg.marginMs };
   };
@@ -304,6 +323,7 @@
           this.samples.push(dt);
           if (this.samples.length > MAX_SAMPLES) this.samples.shift();
           this.offBand = [];
+          this._calibrate();
         } else if (!clipped && raw >= 300 && raw <= FIGHT_GAP_MS) {
           // Re-lock on a new speed (the guild lead, 2026-11-09: "basketweaver is catching the delay appropriately ... they've
           // called for me to swing where ours was on red"; its card read 3.65 s against a hasted 1.65 s): haste dropping or
@@ -399,6 +419,7 @@
       lastPress: this.lastPress, outcome: this.outcome, tally: this.summary(now),
       cfg: { showTally: this.cfg.showTally, marginMs: this.cfg.marginMs },
       diag: { seen: this.diag.seen, matched: this.diag.matched, lastVerb: this.diag.lastVerb },
+      stats: { hasteN: this.hasteN, delay: this.statsDelay, at: this.hasteAt },
     };
   };
 
@@ -448,6 +469,19 @@
           e.eng.marker(now);
           if (now - e.sentAt >= SEND_MS) { e.wasActive = true; emit(e, e.eng.snapshot(now), now); }
           return true;
+        }
+        // /mystats: "  Level: 65  AC: …  Class: 7 … Haste: 182 (cap …)". Only YOUR line: a pet you target prints its own, so the
+        // class must be the one this engine times (Monk 7, Beastlord 15).
+        if (d.text.indexOf('Haste: ') >= 0) {
+          var ms = /\bLevel: \d+\s+AC: -?\d+\s+Class: (\d+)\b.*\bHaste: (\d+) \(cap/.exec(d.text);
+          if (ms) {
+            if (!e) { e = entry(obj.character, true); e.lastPipe = now; }
+            var want = e.eng.cfg.cls === 'beastlord' ? 15 : 7;
+            if (Number(ms[1]) !== want) return false;
+            var ok = e.eng.mystats(Number(ms[2]), now);
+            if (ok) emit(e, e.eng.snapshot(now), now);
+            return ok;
+          }
         }
         // A bandolier failure voids the press it follows (inventory full, something on the cursor, too busy, casting).
         if (isBandolierFailure(Number(d.type), d.text)) {

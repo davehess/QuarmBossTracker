@@ -919,3 +919,44 @@ describe('the swing speed re-locks when haste changes', () => {
     expect(Math.round(swings([1650, 1650, 1650, 3300, 3300, 3300, 3300]).interval2H())).toBe(3300);
   });
 });
+
+// 2026-11-09, the guild lead: "running /mystats will sync up the basketweaver apparently". EQMacEmu (c2cd265) Mob::ShowStats
+// prints "  Level: %i  AC: %i  Class: %i  Size: … Haste: %i (cap %i)" with Haste = 100 + haste (Mob::GetHaste), and
+// Client::SetAttackTimer times a swing as delay * 10000 / Haste: a delay-30 2H at Haste 182 swings every 1648 ms.
+describe('/mystats calibrates the 2H delay', () => {
+  const MYSTATS = (cls, haste) => '  Level: 65  AC: 1421  Class: ' + cls + '  Size: 6.0  ModelSize: 6.0  BaseSize: 6.0 Z-Offset 3.1 Haste: ' + haste + ' (cap 100)';
+  function rig(delaySetting) {
+    let t = 1_000_000; const sent = [];
+    const hub = W.createWeaveHub({ send: (s) => sent.push(s), now: () => t });
+    hub.setEnabled(true);
+    hub.setConfig('Aldenmar', { character: 'Aldenmar', cls: 'monk', level: 65, twoHDelay: delaySetting });
+    const chat = (text, colour = 265) => hub.note({ type: 0, character: 'Aldenmar', data: JSON.stringify({ type: colour, text }) });
+    return { chat, step: (ms) => { t += ms; hub.tick(); }, eng: () => hub.engines.get('aldenmar').eng, last: () => sent[sent.length - 1] };
+  }
+  const swing = (r, n) => { for (let i = 0; i < n; i++) { r.chat('You crush a gnoll for 200 points of damage.'); r.step(1648); } };
+
+  it('a wrong "2H weapon delay" setting (40) is corrected to the real one (30), and the fist window follows', () => {
+    const r = rig(40); swing(r, 5);
+    expect(Math.round(r.eng().core().fistInterval)).toBe(Math.round(2000 * 1648 / 4000));   // wrong before: haste read as 40/16.48
+    r.chat(MYSTATS(7, 182), 0);
+    expect(r.eng().statsDelay).toBe(30);
+    expect(Math.round(r.eng().core().fistInterval)).toBe(Math.round(2000 * 1648 / 3000));   // 1099 ms: bare fists at Haste 182
+    expect(r.last().stats).toMatchObject({ hasteN: 182, delay: 30 });
+  });
+  it('before any swing, /mystats gives the expected interval; it calibrates once the swings are measured', () => {
+    const r = rig(30); r.chat(MYSTATS(7, 182), 0);
+    expect(Math.round(r.eng().interval2H())).toBe(1648);
+    expect(r.eng().statsDelay).toBe(null);
+    swing(r, 5);
+    expect(r.eng().statsDelay).toBe(30);
+  });
+  it('a pet you target prints its own stats: another class is ignored; a slowed monk (Haste 82) still calibrates', () => {
+    const r = rig(30); swing(r, 5);
+    r.chat(MYSTATS(1, 140), 0);
+    expect(r.eng().hasteN).toBe(null);
+    const s = rig(30);
+    for (let i = 0; i < 5; i++) { s.chat('You crush a gnoll for 200 points of damage.'); s.step(3659); }
+    s.chat(MYSTATS(7, 82), 0);
+    expect(s.eng().statsDelay).toBe(30);
+  });
+});
