@@ -150,12 +150,13 @@ describe('GET /health carries the counter', () => {
     const block = sliceBlock(src, "if (req.method === 'GET' && (req.url === '/health'", '  // Default: health check');
     // eslint-disable-next-line no-new-func
     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-    const health = new AsyncFunction('req', 'res', 'require', '_botReady', '_shuttingDown', '_budgetBuckets', '_BUDGET_DEFAULTS', 'mimicLink', block);
+    const health = new AsyncFunction('req', 'res', 'require', '_botReady', '_shuttingDown', '_budgetBuckets', '_BUDGET_DEFAULTS', 'mimicLink', '_botLease', block);
     const run = async () => {
       let body = null;
       await health({ method: 'GET', url: '/health' }, { writeHead() {}, end: (b) => { body = JSON.parse(b); } },
         (m) => require('../' + m.replace(/^\.\//, '') + (m.endsWith('.json') ? '' : '.js')), true, false, new Map(), {},
-        { peekAgentAuth: async () => ({ user_id: 'u' }) });   // the detail fields are served to a signed-in caller
+        { peekAgentAuth: async () => ({ user_id: 'u' }) },   // the detail fields are served to a signed-in caller
+        { role: () => 'holder' });
       return body;
     };
     expect((await run()).supabase_row_cap).toEqual({ truncated_reads: 0, sites: [] });
