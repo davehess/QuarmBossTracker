@@ -7071,6 +7071,16 @@ async function _callerMayActAs(identity, characterName) {
   _uploadedAsCache.set(memoKey, Date.now());
   return true;
 }
+// True only when the character is linked to a Discord account OUTSIDE the caller's household. The fight upload uses
+// this instead of _callerMayActAs: an unlinked or brand-new alt, and a failed lookup, must still upload as before.
+async function _characterBelongsToAnotherMember(identity, characterName) {
+  const callerId = identity && identity.discord_id ? String(identity.discord_id) : '';
+  const name = String(characterName || '').trim();
+  if (!callerId || !_CHAR_NAME_RX.test(name)) return false;
+  const owner = await _characterOwnerDiscordId(name);
+  if (!owner) return false;
+  return !(await _householdDiscordIds(callerId)).has(owner);
+}
 // The names in `names` the caller may act as (case-preserving, de-duplicated, order kept).
 async function _callerOwnNames(identity, names) {
   const out = []; const seen = new Set();
@@ -23519,6 +23529,7 @@ async function _recordKillLockouts({
     + (foreign ? `, ${foreign} not from our raid` : ''));
 }
 
+const _foreignUploadLogged = new Set();
 async function _handleAgentUpload(req, res) {
   // Auth: per-user session token (wpms_...), checked by requireAgentAuth.
   const identity = await mimicLink.requireAgentAuth(req, res);
@@ -23563,7 +23574,23 @@ async function _handleAgentUpload(req, res) {
   // AUTOPARSE_TEST_THREAD, no session damage accumulation, no auto-kill /
   // timer reset. Otherwise importing weeks of old combat would spam Discord
   // and stomp every active boss timer.
-  const { character, encounter } = payload || {};
+  let { character } = payload || {};
+  const { encounter } = payload || {};
+  // The uploader's name is the contributor, and first-person events are credited to it. When that character is linked
+  // to someone else's Discord account the upload is still kept for the OTHER players in the log, but nothing is
+  // attributed to that name (no first-person damage, no contributor row under it).
+  if (character && !(identity.scope === 'guest' || identity.hub_guild)) {
+    try {
+      if (await _characterBelongsToAnotherMember(identity, character)) {
+        const k = `${identity.discord_id}|${String(character).toLowerCase()}`;
+        if (!_foreignUploadLogged.has(k)) {
+          _foreignUploadLogged.add(k);
+          console.log(`[agent] upload names a character linked to another member; not attributed (session ${String(identity.discord_id).slice(-4)})`);
+        }
+        character = null;
+      }
+    } catch { /* a failed check keeps today's behaviour */ }
+  }
   // A GUEST link (an officer-approved raider from another guild, 2026-10-30) contributes the parse and nothing
   // else: recordParse below still persists it, but it is treated like a replay for every live side effect (no
   // Discord card, no session totals, no auto-kill or timer, no live review), and the member-keyed writes (/who
