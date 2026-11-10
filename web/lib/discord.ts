@@ -35,7 +35,30 @@ export async function fetchGuildMember(accessToken: string): Promise<GuildMember
 // servers a page; five pages is 1,000, far past what Discord lets an account join.
 // null = the token was refused (expired, or the scope was not granted).
 export async function fetchUserGuilds(accessToken: string): Promise<string[] | null> {
-  const ids: string[] = [];
+  const rows = await fetchGuildRows(accessToken);
+  return rows ? rows.map(r => r.id) : null;
+}
+
+// The ids of the Discord servers the token's owner can MANAGE: owner, or the MANAGE_GUILD permission bit (0x20). This is
+// what proves a person may register a server as a guild (web/lib/hubManage.ts). Ids only, like fetchUserGuilds.
+export async function fetchManagedGuildIds(accessToken: string): Promise<string[] | null> {
+  const rows = await fetchGuildRows(accessToken);
+  return rows ? rows.filter(r => managesServer(r)).map(r => r.id) : null;
+}
+
+const MANAGE_GUILD_BIT = BigInt(0x20);
+
+/** Owner, or MANAGE_GUILD in the `permissions` string Discord returns (a decimal bitfield, too large for a number). */
+export function managesServer(g: { owner?: unknown; permissions?: unknown }): boolean {
+  if (g.owner === true) return true;
+  if (typeof g.permissions !== 'string' || !/^\d{1,20}$/.test(g.permissions)) return false;
+  return (BigInt(g.permissions) & MANAGE_GUILD_BIT) !== BigInt(0);
+}
+
+type GuildRow = { id: string; owner?: unknown; permissions?: unknown };
+
+async function fetchGuildRows(accessToken: string): Promise<GuildRow[] | null> {
+  const out: GuildRow[] = [];
   let after = '';
   for (let page = 0; page < 5; page++) {
     const res = await fetch(
@@ -44,13 +67,13 @@ export async function fetchUserGuilds(accessToken: string): Promise<string[] | n
     );
     if (res.status === 401 || res.status === 403) return null;
     if (!res.ok) throw new Error(`Discord API error ${res.status}`);
-    const rows = (await res.json()) as { id?: unknown }[];
-    for (const r of rows) if (typeof r?.id === 'string') ids.push(r.id);
+    const rows = (await res.json()) as { id?: unknown; owner?: unknown; permissions?: unknown }[];
+    for (const r of rows) if (typeof r?.id === 'string') out.push({ id: r.id, owner: r.owner, permissions: r.permissions });
     if (rows.length < 200) break;
     after = String(rows[rows.length - 1]?.id ?? '');
     if (!after) break;
   }
-  return ids;
+  return out;
 }
 
 // Build a usable avatar URL from a member object — preferring the

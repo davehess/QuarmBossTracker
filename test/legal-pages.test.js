@@ -364,12 +364,13 @@ describe('both sign-in callbacks record it, after the session is good, and never
     }));
     vi.doMock('@/lib/discord', () => ({
       fetchGuildMember: async () => ({ nick: 'Aldenmar', user: { id: 'd-100', global_name: 'Ald' }, roles: ['r-pack'], joined_at: '2026-01-01T00:00:00Z' }),
-      memberAvatarUrl: () => null, memberDisplayName: (m) => m.nick, fetchUserGuilds: async () => [],
+      memberAvatarUrl: () => null, memberDisplayName: (m) => m.nick, fetchUserGuilds: async () => [], fetchManagedGuildIds: async () => [],
     }));
     vi.doMock('@/lib/lockout', () => ({ isLockedOut: async () => false }));
     vi.doMock('@/lib/request-origin', async () => await import('../web/lib/request-origin.ts'));
     vi.doMock('@/lib/raidmimicHost', async () => await import('../web/lib/raidmimicHost.ts'));
     vi.doMock('@/lib/hubRegistry', async () => await import('../web/lib/hubRegistry.ts'));
+    vi.doMock('@/lib/hubManage', async () => await import('../web/lib/hubManage.ts'));
     vi.doMock('@/lib/openSignIn', async () => await import('../web/lib/openSignIn.ts'));
     vi.doMock('@/lib/landing', async () => await import('../web/lib/landing.ts'));
     return { GET: (await import('../web/app/auth/callback/route.ts')).GET, calls };

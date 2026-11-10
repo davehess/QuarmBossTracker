@@ -14,11 +14,13 @@ export const SCOPES_WOLFPACK = 'identify guilds.members.read';
 export const SCOPES_OPEN = 'identify';
 export const SCOPES_FIND_GUILDS = 'identify guilds';
 export const FLOW_GUILDS = 'guilds';
+// "Confirm my server" on /guilds/new: the same `guilds` consent, used to prove the person manages the server they register.
+export const FLOW_MANAGE = 'manage';
 
 /** `host` is a Host header or window.location.host. `flow` is the `flow` the sign-in button was given. */
 export function signInScopes(host: string | null | undefined, flow?: string | null): string {
   if (!isRaidmimicHost(host)) return SCOPES_WOLFPACK;
-  return flow === FLOW_GUILDS ? SCOPES_FIND_GUILDS : SCOPES_OPEN;
+  return flow === FLOW_GUILDS || flow === FLOW_MANAGE ? SCOPES_FIND_GUILDS : SCOPES_OPEN;
 }
 
 /** Where the open path sends a player when the caller asked for no page in particular: their guilds, not the landing page. */
@@ -79,12 +81,24 @@ export async function closedMatchesFor(
 }
 
 // ── Invite codes ────────────────────────────────────────────────────────────────────────────────────────────
-// Six characters, no 0 O 1 I L (the hub_invites check constraint).
-export const INVITE_CODE_RX = /^[A-HJKMNP-Z2-9]{6}$/;
+// Eight characters for new codes, six for the ones made before 2026-11-10 (they stay valid until they expire); no 0 O 1 I L
+// (the hub_invites check constraint).
+export const INVITE_CODE_RX = /^(?:[A-HJKMNP-Z2-9]{6}|[A-HJKMNP-Z2-9]{8})$/;
 
 /** Upper-case, drop the spaces and dashes a person types around a code. */
 export function normaliseInviteCode(raw: unknown): string {
   return String(raw ?? '').toUpperCase().replace(/[\s\-_]/g, '');
+}
+
+// Failed redeems that are counted in hub_invite_attempts (security hardening, 2026-11-10): per player and per network
+// address (an HMAC of it), over the window. The in-memory limiter in app/guilds/actions.ts stays as the cheap first layer.
+export const INVITE_ATTEMPT_WINDOW_MS = 10 * 60_000;
+export const INVITE_ATTEMPTS_PER_PLAYER = 8;
+export const INVITE_ATTEMPTS_PER_IP = 20;
+
+/** Which redeem answers count as a guess. A fault on our side (`error`) or a lost race (`busy`) is not the player's miss. */
+export function countsAsFailedAttempt(reason: string): boolean {
+  return reason !== 'error' && reason !== 'busy';
 }
 
 export type InviteRow = { code: string; guild_id: string; expires_at: string; max_uses: number; uses: number };
@@ -109,7 +123,7 @@ export type RedeemResult =
 const NO = (reason: Extract<RedeemResult, { ok: false }>['reason'], message: string): RedeemResult => ({ ok: false, reason, message });
 
 export const REDEEM_MESSAGES = {
-  bad_code: 'An invite code is six letters and numbers, like K7M2QP.',
+  bad_code: 'An invite code is eight letters and numbers, like K7M2QP4X (older codes have six).',
   unknown: 'No guild has that invite code. Check it with whoever sent it.',
   expired: 'That invite code has expired. Ask the guild for a new one.',
   used_up: 'That invite code has been used as many times as it allows. Ask the guild for a new one.',

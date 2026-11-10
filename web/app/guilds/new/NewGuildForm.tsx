@@ -3,6 +3,7 @@
 // from the name while the player has not typed their own, sends the fields, and shows the answer. On success the
 // action redirects to the new guild's page, so there is nothing to do here but wait.
 import { useState, useTransition } from 'react';
+import SignInButton from '@/components/SignInButton';
 import { createGuild, type CreateGuildResult } from './actions';
 import { slugFromName, NAME_MAX, SLUG_MAX } from '@/lib/hubGuilds';
 
@@ -72,6 +73,12 @@ export default function NewGuildForm() {
         />
         <p className="mt-1 text-xs text-dim">Lets members who are in that Discord server find the guild with &ldquo;Find my guilds&rdquo;. You can leave it empty and use invite codes.</p>
         {errors.discordGuildId && <p role="alert" className={ERR}>{errors.discordGuildId}</p>}
+        {result?.confirmServer && (
+          <div className="mt-2">
+            <SignInButton next="/guilds/new" flow="manage" label="Confirm my server" />
+            <p className="mt-1 text-xs text-dim">Asks Discord once which servers you manage. The list is not stored.</p>
+          </div>
+        )}
       </div>
 
       <div>
