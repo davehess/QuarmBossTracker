@@ -795,12 +795,23 @@ async function recordParse({
   }).catch(err => console.warn('[supabase] raid-night link failed:', err?.message));
 
   const hasAbilityDetail = !!(rollupByChar && Object.keys(rollupByChar).length);
+  // Plausibility ceilings (utils/parsePlausibility.js): an out-of-range row stays out of the merge input and is
+  // recorded under raw_parse.flags. A failed HP read falls back to the absolute ceilings.
+  let rawParse = parsed;
+  try {
+    const hpRows = await select('eqemu_npc_types', `id=eq.${npcId}&select=hp&limit=1`).catch(() => null);
+    const { kept, flagged } = require('./parsePlausibility').splitImplausible(parsed.players, Array.isArray(hpRows) ? hpRows[0]?.hp : null);
+    if (flagged.length) {
+      rawParse = { ...parsed, players: kept, flags: flagged };
+      console.log(`[supabase] ${flagged.length} implausible parse row(s) held out of encounter ${encounterId}`);
+    }
+  } catch { /* the check never blocks a parse */ }
   const contributionId = await recordContribution({
     encounterId,
     contributorDiscordId,
     contributorCharacter,
     source,
-    rawParse: parsed,
+    rawParse,
     agentVersion,
     hasAbilityDetail,
     uploadedByDiscordId,

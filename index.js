@@ -6523,6 +6523,7 @@ async function _handleAgentBossKill(req, res) {
   for (const kill of kills) {
     const { character, guild, boss: bossName, zone, ts } = kill || {};
     if (!bossName) continue;
+    if (!_relayTsInBounds(ts)) { _logRelayTsDropped('bosskill'); continue; }
 
     // Dead → off the Extended Target board, before anything else can `continue`
     // past it. Deliberately ABOVE the PoP lock check below: that gate is about
@@ -7070,6 +7071,30 @@ async function _callerMayActAs(identity, characterName) {
   if (_uploadedAsCache.size > 5000) _uploadedAsCache.clear();
   _uploadedAsCache.set(memoKey, Date.now());
   return true;
+}
+// True only when the character is linked to a Discord account OUTSIDE the caller's household. The fight upload uses
+// this instead of _callerMayActAs: an unlinked or brand-new alt, and a failed lookup, must still upload as before.
+async function _characterBelongsToAnotherMember(identity, characterName) {
+  const callerId = identity && identity.discord_id ? String(identity.discord_id) : '';
+  const name = String(characterName || '').trim();
+  if (!callerId || !_CHAR_NAME_RX.test(name)) return false;
+  const owner = await _characterOwnerDiscordId(name);
+  if (!owner) return false;
+  return !(await _householdDiscordIds(callerId)).has(owner);
+}
+// A kill relay's client clock must sit between 48 h ago and 5 min ahead; no ts means "now" (as before). 48 h, not 6:
+// Mimic's durable upload queue holds a kill through a bot outage, and a raid's kills must survive a long one.
+// The window is the agent's live tail: it sends a kill within seconds, and a queued retry outlives an outage by hours.
+function _relayTsInBounds(ts, now = Date.now()) {
+  if (ts === undefined || ts === null || ts === '') return true;
+  const ms = typeof ts === 'number' ? ts : Date.parse(ts);
+  return Number.isFinite(ms) && ms >= now - 48 * 3600000 && ms <= now + 5 * 60000;
+}
+let _relayTsDropLogAt = 0;
+function _logRelayTsDropped(kind) {
+  if (Date.now() - _relayTsDropLogAt < 10 * 60000) return;   // once per 10 min, stdout only
+  _relayTsDropLogAt = Date.now();
+  console.log(`[${kind}] dropped relay entry with an out-of-range time`);
 }
 // The names in `names` the caller may act as (case-preserving, de-duplicated, order kept).
 async function _callerOwnNames(identity, names) {
@@ -10997,6 +11022,9 @@ async function _handleAgentLockout(req, res) {
   for (const entry of entries) {
     const { bossName, remainingMs, character } = entry || {};
     if (!bossName || typeof remainingMs !== 'number') continue;
+    // The entry has no clock of its own, only a remaining time: it must be positive and no longer than the longest
+    // boss timer (162 h on the board) with a day of slack.
+    if (!Number.isFinite(remainingMs) || remainingMs < 0 || remainingMs > 8 * 24 * 3600000) { _logRelayTsDropped('lockout'); continue; }
 
     // /sll names a mob → the server gives loot lockouts for it → card-worthy.
     // Promote its bosses_local row if it was auto-registered (fire-and-forget;
@@ -23519,6 +23547,7 @@ async function _recordKillLockouts({
     + (foreign ? `, ${foreign} not from our raid` : ''));
 }
 
+const _foreignUploadLogged = new Set();
 async function _handleAgentUpload(req, res) {
   // Auth: per-user session token (wpms_...), checked by requireAgentAuth.
   const identity = await mimicLink.requireAgentAuth(req, res);
@@ -23563,7 +23592,23 @@ async function _handleAgentUpload(req, res) {
   // AUTOPARSE_TEST_THREAD, no session damage accumulation, no auto-kill /
   // timer reset. Otherwise importing weeks of old combat would spam Discord
   // and stomp every active boss timer.
-  const { character, encounter } = payload || {};
+  let { character } = payload || {};
+  const { encounter } = payload || {};
+  // The uploader's name is the contributor, and first-person events are credited to it. When that character is linked
+  // to someone else's Discord account the upload is still kept for the OTHER players in the log, but nothing is
+  // attributed to that name (no first-person damage, no contributor row under it).
+  if (character && !(identity.scope === 'guest' || identity.hub_guild)) {
+    try {
+      if (await _characterBelongsToAnotherMember(identity, character)) {
+        const k = `${identity.discord_id}|${String(character).toLowerCase()}`;
+        if (!_foreignUploadLogged.has(k)) {
+          _foreignUploadLogged.add(k);
+          console.log(`[agent] upload names a character linked to another member; not attributed (session ${String(identity.discord_id).slice(-4)})`);
+        }
+        character = null;
+      }
+    } catch { /* a failed check keeps today's behaviour */ }
+  }
   // A GUEST link (an officer-approved raider from another guild, 2026-10-30) contributes the parse and nothing
   // else: recordParse below still persists it, but it is treated like a replay for every live side effect (no
   // Discord card, no session totals, no auto-kill or timer, no live review), and the member-keyed writes (/who
