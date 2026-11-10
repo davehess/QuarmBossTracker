@@ -156,6 +156,8 @@ let _saltWarned = false;
 function anonSalt() {
   const s = process.env.DEMO_OBFUSCATE_SALT;
   if (s) return s;
+  // Production fails closed (the caller answers 503): the fallback is public, so labels from it are reproducible.
+  if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) throw new Error('DEMO_OBFUSCATE_SALT is not set');
   if (!_saltWarned) {
     _saltWarned = true;
     console.warn('[replay-window] DEMO_OBFUSCATE_SALT is not set on the bot — opted-out raiders are still labelled, but with the fallback salt, so their numbers may not match the website\'s');
