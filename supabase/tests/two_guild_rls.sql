@@ -1,6 +1,7 @@
 -- Two-guild read-policy check for 20261110120000_guild_scoped_reads.sql.
--- Run in the SQL editor / psql as a privileged role. Everything happens inside one transaction that ROLLS BACK;
--- any failed assertion raises, so the script errors instead of finishing.
+-- This file has NO begin/rollback of its own, so it can be pasted between yours. Dry run, one transaction:
+--   begin; <migration file>; <this file>; rollback;
+-- Run as a privileged role (postgres). Any failed assertion raises, so the script errors instead of finishing.
 --
 -- Assumptions:
 --   * the migration is applied (is_member_of / home_guild_id exist);
@@ -11,7 +12,6 @@
 --     to 'wolfpack' everywhere, so test rows set it explicitly). A BEFORE INSERT trigger or a unique key not
 --     listed here will surface as an error: adjust the fixture, not the assertions.
 --   * all fixtures are synthetic: a fake wolfpack_members login and a fake hub-guild login, so no real member is read.
-begin;
 
 -- Fixtures: two logins, one hub guild, one hub membership.
 insert into auth.users (id, aud, role, email)
@@ -96,7 +96,7 @@ do $$ begin
 end $$;
 reset role;
 
--- 4. Signed out: anon cannot call is_member_of.
+-- 4. Signed out: anon cannot call my_guild_ids or is_member_of.
 set local role anon;
 do $$
 begin
@@ -105,8 +105,12 @@ begin
     raise exception 'FAIL: anon can execute is_member_of';
   exception when insufficient_privilege then null;
   end;
+  begin
+    perform * from public.my_guild_ids();
+    raise exception 'FAIL: anon can execute my_guild_ids';
+  exception when insufficient_privilege then null;
+  end;
 end $$;
 reset role;
 
 select 'two_guild_rls: all assertions passed' as result;
-rollback;

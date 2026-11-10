@@ -32,8 +32,8 @@ const LEFT_ALONE = ['overlay_design_feedback', 'overlay_design_votes', 'ui_windo
 
 const policiesOn = (t) => policies.filter((p) => new RegExp(`\\son public\\.${t}\\s`, 'i').test(p));
 
-describe('is_member_of', () => {
-  const fn = stmts.find((s) => /^create or replace function public\.is_member_of/i.test(s));
+describe.each([['my_guild_ids', '\\(\\)'], ['is_member_of', '\\(text\\)']])('%s', (name, sig) => {
+  const fn = stmts.find((s) => new RegExp(`^create or replace function public\\.${name}`, 'i').test(s));
   it('exists as a stable security definer with a pinned search_path', () => {
     expect(fn).toBeTruthy();
     expect(fn).toMatch(/security definer/i);
@@ -41,14 +41,21 @@ describe('is_member_of', () => {
     expect(fn).toMatch(/\bstable\b/i);
   });
   it('is executable by authenticated only', () => {
-    expect(SQL).toMatch(/revoke all on function public\.is_member_of\(text\) from public, anon/i);
-    expect(SQL).toMatch(/grant execute on function public\.is_member_of\(text\) to authenticated;/i);
-    expect(SQL).not.toMatch(/grant execute on function public\.is_member_of\(text\) to [^;]*(anon|public)/i);
+    expect(SQL).toMatch(new RegExp(`revoke all on function public\\.${name}${sig} from public, anon`, 'i'));
+    expect(SQL).toMatch(new RegExp(`grant execute on function public\\.${name}${sig} to authenticated;`, 'i'));
+    expect(SQL).not.toMatch(new RegExp(`grant execute on function public\\.${name}${sig} to [^;]*(anon|public)`, 'i'));
   });
+});
+
+describe('my_guild_ids / is_member_of', () => {
+  const fn = stmts.find((s) => /^create or replace function public\.my_guild_ids/i.test(s));
   it('checks hub membership: not left, player not deleted, guild not suspended', () => {
     expect(fn).toMatch(/hm\.left_at is null/);
     expect(fn).toMatch(/hp\.deleted_at is null/);
     expect(fn).toMatch(/g\.suspended_at is null/);
+  });
+  it('is_member_of delegates to my_guild_ids', () => {
+    expect(SQL).toMatch(/function public\.is_member_of[\s\S]*select p_guild in \(select public\.my_guild_ids\(\)\)/i);
   });
   it('home guild id lives in one function and is_guild_member delegates', () => {
     expect(SQL.match(/'wolfpack'/g)).toHaveLength(1);
@@ -57,11 +64,12 @@ describe('is_member_of', () => {
 });
 
 describe('member-only read policies', () => {
-  it.each(MEMBER_TABLES)('%s uses is_member_of(guild_id) and not is_guild_member()', (t) => {
+  it.each(MEMBER_TABLES)('%s uses guild_id in (select my_guild_ids()) and not is_guild_member()', (t) => {
     const ps = policiesOn(t).filter((p) => /to authenticated\s+using/i.test(p));
     expect(ps.length).toBeGreaterThan(0);
     for (const p of ps) {
-      expect(p).toMatch(/public\.is_member_of\(guild_id\)/);
+      expect(p).toMatch(/using \(guild_id in \(select public\.my_guild_ids\(\)\)\)/);
+      expect(p).not.toMatch(/is_member_of/);
       expect(p).not.toMatch(/is_guild_member/);
     }
   });
