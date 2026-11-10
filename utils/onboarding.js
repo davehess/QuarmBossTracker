@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.68': [
+    'Behind the scenes: officer-only controls now work only inside the Wolf Pack Discord server, and other guilds\' uploads are refused rather than retried if their sign-in is rejected.',
+  ],
   '4.0.67': [
     'Behind the scenes: uploaded fights are sanity-checked, so an impossible damage number or a wrong kill time can no longer land on a parse or a boss timer.',
   ],

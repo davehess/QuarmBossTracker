@@ -17,7 +17,11 @@
 // AsyncLocalStorage, not a parameter on every helper: select/insert/update/upsert/rpc all funnel through `_request`.
 const { AsyncLocalStorage } = require('node:async_hooks');
 const _scopeStore = new AsyncLocalStorage();
-function runScoped(token, fn) { return _scopeStore.run({ token }, fn); }
+// The guild is read back from the token's own claim, so every caller of runScoped carries it without a signature change.
+function _tokenGuild(token) {
+  try { return String(JSON.parse(Buffer.from(String(token).split('.')[1], 'base64url').toString()).guild_id || '') || null; } catch { return null; }
+}
+function runScoped(token, fn) { return _scopeStore.run({ token, guildId: _tokenGuild(token) }, fn); }
 // Run one call as the guild a utils/guildScoped.js client names; a null client runs it plainly (the flag-off path). The
 // call stays written in place, so scripts/guild-scope-audit.js still reads it.
 function _asGuild(client, fn) { return client && client.token ? runScoped(client.token, fn) : fn(); }
@@ -165,8 +169,16 @@ async function _request(path, opts = {}) {
     if (!res.ok && scope && res.status === 401) {
       _scopedStats.rejected++;
       _scopedStats.lastRejectedAt = Date.now();
+      // Fail closed for any guild but the home one: a rejected token must never fall through to the service key on
+      // another guild's behalf. The home guild keeps the fallback, which is what keeps it running on a misconfigured key.
+      if (scope.guildId && scope.guildId !== _guildId()) {
+        _scopedEvent();
+        if (opts.errorOut) { opts.errorOut.status = 401; opts.errorOut.body = parsed; }
+        if (_scopedStats.rejected === 1 || _scopedStats.rejected % 100 === 0) console.warn(`[guild-rls] the database rejected the guild token (401) for a non-home guild on ${opts.method || 'GET'} ${path} — refused, no service-key retry`);
+        return null;
+      }
       if (_scopedStats.rejected === 1 || _scopedStats.rejected % 100 === 0) {
-        console.warn(`[guild-rls] the database rejected the guild token (401) on ${opts.method || 'GET'} ${path} — retrying with the service key. Check SUPABASE_JWT_SIGNING_JWK and the signing key in Supabase (rejected so far: ${_scopedStats.rejected})`);
+        console.log(`[guild-rls] the database rejected the home guild token (401) on ${opts.method || 'GET'} ${path} — retrying with the service key. Check SUPABASE_JWT_SIGNING_JWK and the signing key in Supabase (rejected so far: ${_scopedStats.rejected})`);
       }
       _scopedEvent();
       return _request(path, { ...opts, unscoped: true });
