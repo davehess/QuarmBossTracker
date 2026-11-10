@@ -159,8 +159,8 @@ describe('no function reaches into an overlay window without checking it is aliv
     units.push(cur);
   }
 
-  it('sees all twenty-one overlay bindings', () => {
-    expect(overlayVars).toHaveLength(21);
+  it('sees all twenty-three overlay bindings', () => {
+    expect(overlayVars).toHaveLength(23);
   });
 
   it('every member access outside a creator is guarded', () => {
