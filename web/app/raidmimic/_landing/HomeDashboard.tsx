@@ -6,6 +6,7 @@ import type { CharacterView } from '@/lib/hubCharactersView';
 import { GUILDS_STAY_PATH } from '@/lib/guildSites';
 import { DASH_WORDS as W, comingLine, type HomeGuild } from '@/lib/raidmimicHome';
 import { BTN, CARD, LINK, MAX_SHOWN, charactersHref } from './HomeParts';
+import ProfileAvatar from './ProfileAvatar';
 
 export default function HomeDashboard({ name, avatarUrl, mine, guilds, downloadUrl }: {
   name: string | null; avatarUrl: string | null; mine: CharacterView[]; guilds: HomeGuild[]; downloadUrl: string;
@@ -13,9 +14,7 @@ export default function HomeDashboard({ name, avatarUrl, mine, guilds, downloadU
   return (
     <section id="your-raidmimic" aria-label="Your Raid Mimic" data-home-panel className="mx-auto max-w-5xl px-1 pb-4">
       <div className="flex items-center gap-3">
-        {avatarUrl
-          ? <img src={avatarUrl} alt="" width={48} height={48} className="h-12 w-12 rounded-full border border-border" />
-          : <span aria-hidden className="h-12 w-12 rounded-full border border-border bg-panel" />}
+        <ProfileAvatar src={avatarUrl} name={name} />
         <div>
           <p className="m-0 text-xs uppercase tracking-wider text-dim">{W.welcome}</p>
           <h1 className="m-0 text-2xl text-gold">{name ?? 'Player'}</h1>
