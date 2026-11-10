@@ -5,7 +5,7 @@ import path from 'node:path';
 import { readSource, stripJs, ROOT } from './_source-slice.js';
 
 const dir = path.join(ROOT, 'web', 'app', 'raidmimic', '_landing');
-const avatar = stripJs(readSource(path.join(dir, 'ProfileAvatar.tsx')));
+const avatar = stripJs(readSource(path.join(ROOT, 'web', 'components', 'ProfileAvatar.tsx')));
 const dash = stripJs(readSource(path.join(dir, 'HomeDashboard.tsx')));
 
 describe('the welcome card picture', () => {

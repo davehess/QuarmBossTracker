@@ -6,7 +6,7 @@ import type { CharacterView } from '@/lib/hubCharactersView';
 import { GUILDS_STAY_PATH } from '@/lib/guildSites';
 import { DASH_WORDS as W, comingLine, type HomeGuild } from '@/lib/raidmimicHome';
 import { BTN, CARD, LINK, MAX_SHOWN, charactersHref } from './HomeParts';
-import ProfileAvatar from './ProfileAvatar';
+import ProfileAvatar from '@/components/ProfileAvatar';
 
 export default function HomeDashboard({ name, avatarUrl, mine, guilds, downloadUrl }: {
   name: string | null; avatarUrl: string | null; mine: CharacterView[]; guilds: HomeGuild[]; downloadUrl: string;
