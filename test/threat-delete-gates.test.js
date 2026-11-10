@@ -49,7 +49,7 @@ describe('the midnight job uses the gate on BOTH deletion paths', () => {
   const i = (s) => { const n = clean.indexOf(s); expect(n, s).toBeGreaterThan(-1); return n; };
 
   it('builds the graphs before the sweep and the thinning', () => {
-    const build = i("supabase.rpc('build_encounter_threat_graphs'");
+    const build = i('await _buildThreatGraphs(supabase)');
     expect(build).toBeLessThan(i('await _sweepThreatSnapshots(supabase, cutoff'));
     expect(build).toBeLessThan(i("supabase.rpc('thin_threat_snapshots'"));
   });

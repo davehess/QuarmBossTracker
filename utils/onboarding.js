@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.64': [
+    'Behind the scenes: nightly cleanup of old raid telemetry now works in small steps and reports how it went, so the database stays small.',
+  ],
   '4.0.63': [
     'The Mimic beta\'s weave timer can now work out your attack speed from your buffs and your hasted gear, so it knows the new swing time the moment a haste lands or fades. Needs the Mimic beta that pairs with it.',
   ],
