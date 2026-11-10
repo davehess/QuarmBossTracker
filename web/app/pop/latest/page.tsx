@@ -18,6 +18,7 @@ import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { loadRoster } from '@/lib/roster';
 import { loadLevels, LIST_MIN_LEVEL } from '@/lib/listableChars';
 import { loadLatestFlagRows } from '@/lib/popLatestFlags';
@@ -44,6 +45,7 @@ export default async function LatestFlagsPage({ searchParams }: { searchParams: 
   const sp = await searchParams;
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=${encodeURIComponent('/pop/latest?' + new URLSearchParams(sp as Record<string, string>))}`);
+  await requireMember(user.id);
   const view = parseView(sp);
 
   const sb = supabaseAdmin();

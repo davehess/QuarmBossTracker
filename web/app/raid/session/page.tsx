@@ -21,6 +21,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
 import { selectAll } from '@/lib/selectAll';
@@ -57,6 +58,7 @@ export default async function RaidSessionPage({ searchParams }: { searchParams: 
   const wanted = groupKey(parseGroupIds(one(searchParams.group))) || null;
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=' + encodeURIComponent('/raid/session' + (from && to ? `?from=${from}&to=${to}${wanted ? `&group=${wanted}` : ''}` : '')));
+  await requireMember(user.id);
 
   const win = from && to ? makeWindow(Date.parse(from), Date.parse(to)) : null;
   // `gf`/`gt`: the larger window the raids were counted in, when this one is a part of it (lib/sessionGroups.ts groupQuery).

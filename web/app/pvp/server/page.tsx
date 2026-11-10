@@ -15,6 +15,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { userTz, fmtDateOnly } from '@/lib/timezone';
 import VengeanceList from './VengeanceList';
@@ -163,6 +164,7 @@ async function loadServerLeaderboard() {
 export default async function ServerPvpPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/pvp/server');
+  await requireMember(user.id);
 
   const tz = await userTz();
   const { rows, vengeance, totals, error } = await loadServerLeaderboard();

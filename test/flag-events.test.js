@@ -281,12 +281,11 @@ describe('the page', () => {
 
   it('gates on sign-in and on membership before reading anything', () => {
     const signin = PAGE.indexOf("redirect('/auth/signin?next=/pop/flag-events')");
-    const member = PAGE.search(/from\('wolfpack_members'\)\.select\('is_member'\)\.eq\('user_id', user\.id\)/);
+    const member = PAGE.indexOf('await requireMember(user.id)');   // lib/member.ts: wolfpack_members.is_member = true, on every request
     const read = PAGE.indexOf('loadBoard(now');
     expect(signin).toBeGreaterThan(0);
     expect(member).toBeGreaterThan(signin);
     expect(read).toBeGreaterThan(member);
-    expect(PAGE).toMatch(/is_member === false/);
   });
 
   it('shows the post form only to officers and carries the [beta] marker', () => {

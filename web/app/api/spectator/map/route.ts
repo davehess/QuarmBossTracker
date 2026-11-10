@@ -20,6 +20,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { isGuildMember } from '@/lib/member';
 import { fetchBrewallLayer, fetchEqemuLayer } from '@/lib/zoneMap/load';
 import { isZoneShort, MAP_LICENSE, MAP_SOURCES } from '@/lib/zoneMap/source';
 
@@ -38,6 +39,7 @@ const fail = (error: string, status: number, headers?: Record<string, string>) =
 export async function GET(req: Request) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) return fail('sign in first', 401);
+  if (!(await isGuildMember(user.id))) return fail('members only', 403);
 
   const zone = new URL(req.url).searchParams.get('zone');
   if (!isZoneShort(zone)) return fail('bad zone', 400);

@@ -11,6 +11,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { userTz, fmtAbs } from '@/lib/timezone';
 import { fmtDmg, fmtDuration, cleanBossName } from '@/lib/format';
@@ -114,6 +115,7 @@ async function loadEncountersForNpc(sb: ReturnType<typeof supabaseAdmin>, q: str
 export default async function SearchPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/search');
+  await requireMember(user.id);
   const { q: qRaw } = await searchParams;
   const q = (qRaw || '').trim();
   const tz = await userTz();

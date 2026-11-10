@@ -21,6 +21,7 @@
 
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase-server';
+import { isGuildMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { GUILD_TAG } from '@/lib/guild';
 
@@ -46,6 +47,7 @@ export async function GET(req: Request) {
   // Members-only — same gate as the rest of the site.
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  if (!(await isGuildMember(user.id))) return NextResponse.json({ error: 'members only' }, { status: 403 });
 
   const q = (new URL(req.url).searchParams.get('q') || '').trim();
   if (q.length < 2) {

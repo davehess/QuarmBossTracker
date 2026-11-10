@@ -14,6 +14,7 @@ import { PlatformMap, PlatformStats } from '@/components/PlatformMap';
 import DepartedMemberNotice from '@/components/DepartedMemberNotice';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { isGuildMember } from '@/lib/member';
 import { curatedNpcIds } from '@/lib/bossFilter';
 import { fmtDmg, fmtTime, dayKey, dayLabel, cleanBossName } from '@/lib/format';
 import { userTz } from '@/lib/timezone';
@@ -63,7 +64,7 @@ const SURFACES = [
 
 export default async function HomePage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
-  const recent = user ? await loadRecent() : [] as RecentRow[];
+  const recent = user && await isGuildMember(user.id) ? await loadRecent() : [] as RecentRow[];
   const tz = await userTz();   // viewer's chosen zone (wp_tz cookie) → all times below
 
   return (

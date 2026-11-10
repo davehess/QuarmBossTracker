@@ -11,6 +11,7 @@
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { loadRoster } from '@/lib/roster';
 import {
   categorizeBuff, classToRole, analyzeHpSlots, CATEGORY_ORDER, isCorpse,
@@ -57,6 +58,7 @@ export default async function BuffsPage(
   const { data: { user } } = await supabaseServer().auth.getUser();
   // Keep the variant through sign-in, so a shared ?v=b link still opens what it names.
   if (!user) redirect(layout ? '/auth/signin?next=' + encodeURIComponent('/buffs?v=' + layout) : '/auth/signin?next=/buffs');
+  await requireMember(user.id);
 
   // Raid members refreshed within this window count as "currently in the raid".
   // The agent re-uploads the roster on change + a 60s heartbeat, so 15 min

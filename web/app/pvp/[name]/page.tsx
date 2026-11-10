@@ -18,6 +18,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
 import { fmtTime, dayKey, dayLabel } from '@/lib/format';
@@ -246,6 +247,7 @@ export default async function PvpPlayerPage({ params }: { params: Promise<{ name
   const { name } = await params;
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/pvp/${encodeURIComponent(name)}`);
+  await requireMember(user.id);
 
   const { kills, deaths, assists, displayName } = await load(name);
   const tz = await userTz();

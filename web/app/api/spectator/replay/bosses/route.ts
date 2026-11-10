@@ -14,6 +14,7 @@
 // curated-boss read asks for at most one chunk's worth of rows.
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase-server';
+import { isGuildMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { selectAll } from '@/lib/selectAll';
 import { GUILD_TAG } from '@/lib/guild';
@@ -39,6 +40,7 @@ type EncRaw = {
 export async function GET(req: Request) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) return fail(401, 'unauthorized');
+  if (!(await isGuildMember(user.id))) return fail(403, 'members only');
 
   const night = new URL(req.url).searchParams.get('night') ?? '';
   if (!NIGHT_KEY.test(night)) return fail(400, 'bad request');

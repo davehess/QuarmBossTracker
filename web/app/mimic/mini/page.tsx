@@ -10,6 +10,7 @@
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { getSessionUser } from '@/lib/session';
+import { requireMember } from '@/lib/member';
 import type { FeedbackRow, VoteRow } from '@/lib/miniReview';
 import MiniReview from './MiniReview';
 
@@ -23,6 +24,7 @@ export const dynamic = 'force-dynamic';
 export default async function MiniModePage() {
   const user = await getSessionUser();
   if (!user) redirect('/auth/signin?next=/mimic/mini');
+  await requireMember(user.id);
 
   const admin = supabaseAdmin();
   const [{ data: pack }, { data: votes }, { data: feedback }] = await Promise.all([

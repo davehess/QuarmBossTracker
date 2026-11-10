@@ -21,6 +21,7 @@
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { fmtDmg, fmtDuration, fmtTime, dayKey, dayLabel, fmtDkp } from '@/lib/format';
 import { userTz } from '@/lib/timezone';
@@ -142,6 +143,7 @@ export default async function BossGuide({ params }: { params: Promise<{ bossId: 
   const { bossId } = await params;
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/guide/${encodeURIComponent(bossId)}`);
+  await requireMember(user.id);
 
   const d = await load(bossId);
   if (!d) notFound();

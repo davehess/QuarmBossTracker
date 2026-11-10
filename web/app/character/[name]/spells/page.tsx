@@ -23,6 +23,7 @@ import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { isOfficer } from '@/lib/officer';
 import { classBit, normalizeClass } from '@/lib/class-titles';
 import { groupSources, vendorSpots, type ItemSources, type VendorSpots } from '@/lib/spellSources';
@@ -67,6 +68,7 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
 
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/character/${encodeURIComponent(name)}/spells`);
+  await requireMember(user.id);
 
   const sb = supabaseAdmin();
   const { data: charRows } = await sb

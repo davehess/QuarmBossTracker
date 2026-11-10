@@ -17,6 +17,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
 import { cleanBossName } from '@/lib/format';
@@ -44,6 +45,7 @@ const SUMMARY_CLS: Record<string, string> = {
 export default async function RaidPlanPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/raid/plan');
+  await requireMember(user.id);
   const officer = await isOfficer(user.id);
 
   const sb = supabaseAdmin();

@@ -12,6 +12,7 @@
 // The cache sits AFTER the auth check.
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase-server';
+import { isGuildMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { loadTimelineKills, type TimelineKill } from '@/lib/raidTimelineLoad';
 import { loadLiveTimeline } from '@/lib/liveRaidLoad';
@@ -30,6 +31,7 @@ let memo: { at: number; body: Body } | null = null;
 export async function GET(req: Request) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) return fail(401, 'unauthorized');
+  if (!(await isGuildMember(user.id))) return fail(403, 'members only');
 
   const t0 = Date.now();
   // ?v=newraid (beta preview): the window starts at the CURRENT raid, not six hours back (lib/liveRaidWindow.ts), and the

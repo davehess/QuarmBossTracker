@@ -26,6 +26,7 @@
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { fmtDmg, fmtDuration, fmtTime, dayLabel, cleanBossName, RAID_TZ } from '@/lib/format';
 import { userTz } from '@/lib/timezone';
@@ -261,6 +262,7 @@ export default async function RaidNightReview({ params }: { params: Promise<{ da
 
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/raid/review/${encodeURIComponent(date)}`);
+  await requireMember(user.id);
 
   const tz = await userTz();
   const data = await load(date);
