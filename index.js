@@ -3227,6 +3227,41 @@ async function _sweepThreatSnapshots(supabase, cutoffIso, {
   return { deleted, batches, stop };
 }
 
+// Build the per-fight threat graphs in small batches. The graph watermark
+// (threat_graph_built_through) is the start of the OLDEST fight still lacking a graph, and
+// the sweep may delete nothing at or after it, so one fight whose graph never gets built
+// pins the whole sweep. A single 5000-fight call overran the client's 10s abort and left
+// the same oldest fight pending night after night. Stops when a call builds fewer than a
+// batch ('done'), the time budget is spent ('budget'), or a call fails ('error'). Never throws.
+async function _buildThreatGraphs(supabase, {
+  batch = 25, budgetMs = 60000, now = Date.now,   // 5 fights measured 0.4 s (2026-11-10): 25 stays well inside the 10 s abort
+} = {}) {
+  const startedAt = now();
+  let built = 0, calls = 0, stop = 'budget';
+  try {
+    while (now() - startedAt < budgetMs) {
+      const n = await supabase.rpc('build_encounter_threat_graphs', { p_limit: batch });
+      calls++;
+      if (typeof n !== 'number') { stop = 'error'; break; }
+      built += n;
+      if (n < batch) { stop = 'done'; break; }
+    }
+  } catch (err) {
+    stop = 'error';
+  }
+  return { built, calls, stop };
+}
+
+// Leave the last sweep's outcome where an officer can read it (bot_kv, not state.json — that
+// does not survive a deploy). Never throws.
+async function _recordThreatSweep(supabase, guildId, record) {
+  try {
+    await supabase.upsert('bot_kv',
+      [{ guild_id: guildId, key: 'threat_sweep_status', value: record, updated_at: new Date().toISOString() }],
+      'guild_id,key');
+  } catch (_) { /* visibility only */ }
+}
+
 // ── Midnight tasks ─────────────────────────────────────────────────────────
 function scheduleMidnightSummary(readyClient) {
   const historyThreadId = process.env.HISTORIC_KILLS_THREAD_ID;
@@ -3429,7 +3464,7 @@ function scheduleMidnightSummary(readyClient) {
         let graphThrough = null;
         if (supabase.isEnabled()) {
           try {
-            const built = await supabase.rpc('build_encounter_threat_graphs', { p_limit: 5000 });
+            const built = (await _buildThreatGraphs(supabase)).built;
             if (built) console.log(`[midnight] stored ${built} fight threat graph(s)`);
             const through = await supabase.rpc('threat_graph_built_through', {});
             const t = through ? Date.parse(through) : NaN;
@@ -3442,9 +3477,10 @@ function scheduleMidnightSummary(readyClient) {
           const cutoffDate = _threatDeleteCutoff({ archivedThrough, graphThrough,
             retentionCutoff: new Date(Date.now() - keep * 24 * 60 * 60 * 1000) });
           if (!cutoffDate) {
-            console.warn('[midnight] threat sweep SKIPPED — '
-              + (!archivedThrough ? 'no on-prem archive watermark (bot_kv archive_watermark_threat_snapshots)'
-                                  : 'no threat-graph watermark')
+            const why = !archivedThrough ? 'no on-prem archive watermark (bot_kv archive_watermark_threat_snapshots)'
+                                         : 'no threat-graph watermark';
+            await _recordThreatSweep(supabase, guildId, { at: new Date().toISOString(), cutoff: null, deleted: 0, stop: 'skipped', reason: why });
+            console.log('[midnight] threat sweep SKIPPED — ' + why
               + '. Nothing deleted; the table will grow until both report in. Deliberate: see the header above.');
           } else {
             const cutoff = cutoffDate.toISOString();
@@ -3455,6 +3491,12 @@ function scheduleMidnightSummary(readyClient) {
             const batch = parseInt(process.env.THREAT_SWEEP_BATCH, 10) || 2000;
             const budgetSec = parseInt(process.env.THREAT_SWEEP_BUDGET_SEC, 10) || 120;
             const swept = await _sweepThreatSnapshots(supabase, cutoff, { batch, budgetMs: budgetSec * 1000 });
+            const limits = { retention: Date.now() - keep * 24 * 60 * 60 * 1000,
+                             archive: archivedThrough.getTime(), graphs: graphThrough.getTime() };
+            await _recordThreatSweep(supabase, guildId, {
+              at: new Date().toISOString(), cutoff, deleted: swept.deleted, batches: swept.batches,
+              stop: swept.stop, limited_by: Object.keys(limits).sort((a, b) => limits[a] - limits[b])[0],
+            });
             console.log(`[midnight] swept ${swept.deleted} encounter_threat_snapshots older than ${cutoff} `
               + `in ${swept.batches} batch(es), stopped: ${swept.stop} `
               + `(retention ${keep}d; archived through ${archivedThrough.toISOString()}; `

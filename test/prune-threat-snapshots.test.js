@@ -114,3 +114,45 @@ describe('midnight job wiring', () => {
     expect(clean).not.toMatch(/supabase\.del\(\s*'encounter_threat_snapshots'/);
   });
 });
+
+// ── Graph build in batches + sweep outcome record (hardening, 2026-11-10) ──
+const { _buildThreatGraphs, _recordThreatSweep } = evalBlock(
+  sliceBlock(src, 'async function _buildThreatGraphs(supabase, {', '// ── Midnight tasks'),
+  ['_buildThreatGraphs', '_recordThreatSweep'],
+);
+
+describe('_buildThreatGraphs — bounded batches', () => {
+  it('loops until a call builds fewer than a batch', async () => {
+    const h = harness([100, 100, 40, 7]);
+    const r = await _buildThreatGraphs(h.supabase, { batch: 100, budgetMs: 1e9, now: h.opts.now });
+    expect(r).toEqual({ built: 240, calls: 3, stop: 'done' });
+    expect(h.calls[0]).toEqual({ fn: 'build_encounter_threat_graphs', params: { p_limit: 100 } });
+  });
+  it('stops at the time budget', async () => {
+    const h = harness(Array(100).fill(100), { rpcMs: 1000 });
+    const r = await _buildThreatGraphs(h.supabase, { batch: 100, budgetMs: 5000, now: h.opts.now });
+    expect(r.stop).toBe('budget');
+    expect(r.calls).toBe(5);
+  });
+  it('a failed or thrown call stops without throwing', async () => {
+    expect((await _buildThreatGraphs(harness([100, null]).supabase, { batch: 100 })).stop).toBe('error');
+    expect((await _buildThreatGraphs(harness([new Error('x')]).supabase, { batch: 100 })).stop).toBe('error');
+  });
+});
+
+describe('_recordThreatSweep — outcome lands in bot_kv', () => {
+  it('upserts one row keyed threat_sweep_status and never throws', async () => {
+    const seen = [];
+    await _recordThreatSweep({ upsert: async (...a) => { seen.push(a); } }, 'wolfpack', { stop: 'done', deleted: 5 });
+    expect(seen[0][0]).toBe('bot_kv');
+    expect(seen[0][1][0]).toMatchObject({ guild_id: 'wolfpack', key: 'threat_sweep_status', value: { stop: 'done', deleted: 5 } });
+    expect(seen[0][2]).toBe('guild_id,key');
+    await expect(_recordThreatSweep({ upsert: async () => { throw new Error('down'); } }, 'g', {})).resolves.toBeUndefined();
+  });
+  it('the midnight job records both the run and the skip, and a skip is a stdout line, not a warning', () => {
+    const clean = stripJs(src);
+    expect(clean).toMatch(/await _recordThreatSweep\(supabase, guildId, \{\s*at: new Date\(\)\.toISOString\(\), cutoff, deleted: swept\.deleted/);
+    expect(clean).toMatch(/stop: 'skipped'/);
+    expect(clean).not.toMatch(/console\.warn\('\[midnight\] threat sweep SKIPPED/);
+  });
+});
