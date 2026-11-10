@@ -252,7 +252,14 @@ describe('rankCharmPets — filter by the spell, then rank', () => {
   });
 
   it('then the higher level breaks an exact tie', () => {
-    expect(ranked([npc(1, 'low', { level: 20 }), npc(2, 'high', { level: 40 })], any(60))).toEqual(['high', 'low']);
+    expect(ranked([npc(1, 'low', { level: 32 }), npc(2, 'high', { level: 40 })], any(60))).toEqual(['high', 'low']);
+  });
+
+  // 2026-11-10, the guild lead: "mobs that ... are SUPER low level" should not be listed (a level 2 and a level 10 showed
+  // under Boltran's Agacerie, cap 53). Under half the cap is left out; exactly half stays.
+  it('leaves out a pet under half the spell cap', () => {
+    expect(ranked([npc(1, 'level 2', { level: 2 }), npc(2, 'level 10', { level: 10 }), npc(3, 'level 25', { level: 25 }),
+      npc(4, 'level 26', { level: 26 }), npc(5, 'level 46', { level: 46 })], any(53))).toEqual(['level 46', 'level 26']);
   });
 
   it('shows one row per name (the best of them)', () => {
@@ -349,7 +356,8 @@ describe('the list for a zone (disk first, the bot second)', () => {
     const done = c.charmBestState(null, T0 + 1000);
     expect(done.status).toBe('ok');
     expect(done.zone).toEqual({ id: 27, short: 'lavastorm', long: 'Lavastorm Mountains' });
-    expect(done.pets.map(p => p.name)).toEqual(['Brackwyn Vale', 'Tisiana', 'a firescale crocodile', 'a warbone monk']);   // Command of Druzzil: cap 64, any mob
+    // Command of Druzzil: cap 64, any mob. The crocodile (26) and the monk (12) are under half the cap (32): left out (2026-11-10).
+    expect(done.pets.map(p => p.name)).toEqual(['Brackwyn Vale', 'Tisiana']);
     expect(net.calls).toHaveLength(1);
   });
 
