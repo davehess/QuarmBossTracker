@@ -8,6 +8,7 @@
 // member name is in the answer. The maths and the reads are in web/lib/fewestKills.ts.
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase-server';
+import { isGuildMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isZoneShort } from '@/lib/zoneMap/source';
 import { fewestKills, MAX_NPCS, type FewestBoss } from '@/lib/fewestKills';
@@ -27,6 +28,7 @@ const held = new Map<string, { at: number; p: Promise<FewestBoss[]> }>();
 export async function GET(req: Request) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) return fail(401, 'unauthorized');
+  if (!(await isGuildMember(user.id))) return fail(403, 'members only');
 
   const q = new URL(req.url).searchParams;
   const zone = q.get('zone');

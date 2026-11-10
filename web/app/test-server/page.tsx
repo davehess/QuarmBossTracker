@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin }  from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { isOfficer }      from '@/lib/officer';
 import InterestButton, { type InterestRow }  from './InterestButton';
 import Comments,        { type CommentRow }  from './Comments';
@@ -97,6 +98,7 @@ async function load() {
 export default async function TestServerPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/test-server');
+  await requireMember(user.id);
   const canModerate = await isOfficer(user.id);
 
   const { interests, comments, nameFor } = await load();

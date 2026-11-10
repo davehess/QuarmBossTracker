@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { deUnderscore } from '@/lib/npcDecode';
 
 // Per-page metadata so a link pasted into Discord unfurls as what it IS.
@@ -38,6 +39,7 @@ export default async function DbHubPage({ searchParams }: { searchParams: Promis
 
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/db${term ? `?q=${encodeURIComponent(term)}` : ''}`);
+  await requireMember(user.id);
 
   let items: ItemRow[] = [];
   let spells: SpellRow[] = [];

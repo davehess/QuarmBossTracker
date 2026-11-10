@@ -10,6 +10,7 @@
 // the reads.
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase-server';
+import { isGuildMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { inWindow, makeWindow, windowIso } from '@/lib/raidShare';
 import { loadSpawnBosses } from '@/lib/replayBossesLoad';
@@ -22,6 +23,7 @@ const fail = (status: number, error: string) => NextResponse.json({ error }, { s
 export async function GET(req: Request) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) return fail(401, 'unauthorized');
+  if (!(await isGuildMember(user.id))) return fail(403, 'members only');
   try {
     const q = new URL(req.url).searchParams;
     const win = makeWindow(Date.parse(q.get('from') ?? ''), Date.parse(q.get('to') ?? ''));

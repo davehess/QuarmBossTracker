@@ -36,6 +36,7 @@ import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { isOfficer } from '@/lib/officer';
 import { QuestActionButtons, QuestUnhideButton, TurninControls } from './QuestPrefsControls';
 import { EPIC_COMPONENTS, EPIC_ROOT, EPIC_CLASSES_BY_ITEM } from '@/lib/eq-epics';
@@ -281,6 +282,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
 
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/character/${encodeURIComponent(name)}/quests`);
+  await requireMember(user.id);
 
   const data = await load(decoded);
   if (!data) notFound();

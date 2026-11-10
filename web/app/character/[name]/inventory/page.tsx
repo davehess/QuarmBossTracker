@@ -27,6 +27,7 @@ import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { isOfficer } from '@/lib/officer';
 import { GUILD_TAG } from '@/lib/guild';
 import { type ItemCard } from './ItemHover';
@@ -71,6 +72,7 @@ export default async function CharacterInventoryPage({ params }: { params: Promi
 
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/character/${encodeURIComponent(name)}/inventory`);
+  await requireMember(user.id);
 
   const sb = supabaseAdmin();
   const { data: charRows } = await sb

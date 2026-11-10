@@ -10,6 +10,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { fmtDuration } from '@/lib/format';
 import { loadGuideKillRollup } from '@/lib/fullReads';
@@ -98,6 +99,7 @@ async function load(): Promise<{ rows: GuideIndexRow[]; error: string | null }> 
 export default async function GuideIndex() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/guide');
+  await requireMember(user.id);
 
   const { rows, error } = await load();
   if (error) {

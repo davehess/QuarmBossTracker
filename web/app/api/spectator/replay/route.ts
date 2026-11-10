@@ -19,6 +19,7 @@
 // 15 rows with an explicit limit, and the night list pages through selectAll ordered on the primary key.
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase-server';
+import { isGuildMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { selectAll } from '@/lib/selectAll';
 import { GUILD_TAG } from '@/lib/guild';
@@ -39,6 +40,7 @@ const NIGHT_KEY = /^\d{2}\/\d{2}\/\d{4}$/;
 export async function GET(req: Request) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) return fail(401, 'unauthorized');
+  if (!(await isGuildMember(user.id))) return fail(403, 'members only');
 
   const q = new URL(req.url).searchParams;
   try {

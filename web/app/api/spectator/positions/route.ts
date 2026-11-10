@@ -14,6 +14,7 @@
 // character_live_state (over 1,000 rows) is read only for those names with an explicit range.
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase-server';
+import { isGuildMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { GUILD_TAG } from '@/lib/guild';
 import {
@@ -28,6 +29,7 @@ const fail = (status: number, error: string) => NextResponse.json({ error }, { s
 export async function GET() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) return fail(401, 'unauthorized');
+  if (!(await isGuildMember(user.id))) return fail(403, 'members only');
 
   try {
     const admin = supabaseAdmin();

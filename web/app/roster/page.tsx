@@ -22,6 +22,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import MoreInfo from '@/components/MoreInfo';
 import { loadRoster } from '@/lib/roster';
 import { selectAll } from '@/lib/selectAll';
@@ -65,6 +66,7 @@ export default async function RosterPage(
 ) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/roster');
+  await requireMember(user.id);
   const { min, raids: raidsParam } = await searchParams;
   const minRa = Math.max(0, Math.min(100, parseInt(min ?? '', 10) || DEFAULT_MIN_RA));
   const altView = raidsParam === 'alt';

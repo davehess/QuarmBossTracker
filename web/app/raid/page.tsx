@@ -21,6 +21,7 @@
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import {
   categorizeBuff, classToRole, analyzeHpSlots, ROLE_TARGETS, isCorpse,
   resistTypesFor, isSongBuff, secondaryCategoriesFor, UPGRADE_CHAINS, chainPosition,
@@ -127,6 +128,7 @@ function colorTier(
 export default async function RaidHubPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/raid');
+  await requireMember(user.id);
 
   const ROSTER_FRESH_MS = 15 * 60 * 1000;
   const rosterSince = new Date(Date.now() - ROSTER_FRESH_MS).toISOString();

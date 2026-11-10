@@ -11,6 +11,7 @@ import type { Metadata } from 'next';
 import WpDbLink from '@/components/WpDbLink';
 import { notFound, redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
 import { fmtDmg, fmtDuration, fmtTime, dayKey, dayLabel, cleanBossName } from '@/lib/format';
@@ -448,6 +449,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
   const { id } = await params;
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/parses/${encodeURIComponent(id)}`);
+  await requireMember(user.id);
 
   const data = await load(id);
   if (data.error || !data.enc) {

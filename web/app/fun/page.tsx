@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { unstable_cache } from 'next/cache';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { selectAll } from '@/lib/selectAll';
 import { userTz, fmtAbs } from '@/lib/timezone';
@@ -834,6 +835,7 @@ async function loadCounters(ctx: Ctx) {
 export default async function FunPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/fun');
+  await requireMember(user.id);
 
   const tz = await userTz();
   const { counters, kyinen } = await loadCounters({ canMarkQuit: viewerMayMarkQuit(user) });

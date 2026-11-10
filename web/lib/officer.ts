@@ -47,10 +47,11 @@ export const isOfficer = cache(async (userId: string | null | undefined): Promis
   try {
     const { data } = await admin
       .from('wolfpack_members')
-      .select('role_names')
+      .select('role_names, is_member')
       .eq('user_id', userId)
       .maybeSingle();
-    if (!data) return false;
+    // An officer is a member first: a row that is not a current member never passes, whatever roles it still lists.
+    if (!data || (data as { is_member?: boolean | null }).is_member !== true) return false;
     const names: string[] = Array.isArray(data.role_names) ? data.role_names : [];
     const allow = new Set(_officerNames());
     return names.some(n => allow.has(n));

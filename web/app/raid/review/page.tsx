@@ -14,6 +14,7 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { dayKey, dayLabel, fmtDmg, cleanBossName } from '@/lib/format';
 import { guildShare, isAutoForeign } from '@/lib/anomalies';
@@ -181,6 +182,7 @@ export default async function RaidReviewIndex(
 ) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/raid/review');
+  await requireMember(user.id);
 
   const { w: wParam } = await searchParams;
   const w = resolveWindow(wParam, '60d');

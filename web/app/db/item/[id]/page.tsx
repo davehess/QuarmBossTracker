@@ -14,6 +14,7 @@ import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { loadDropperCounts, loadItemDrops } from '@/lib/fullReads';
 import {
   type ItemCard, decodeMask, decodeSlots, fmtPrice, fmtWeight,
@@ -72,6 +73,7 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
 
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/db/item/${itemId}`);
+  await requireMember(user.id);
 
   const sb = supabaseAdmin();
 

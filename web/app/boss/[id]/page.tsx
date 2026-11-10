@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { fmtDmg, fmtDuration, fmtTime, dayKey, dayLabel } from '@/lib/format';
 import { userTz } from '@/lib/timezone';
 
@@ -71,6 +72,7 @@ export default async function BossPage({ params }: { params: Promise<{ id: strin
   const { id } = await params;
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/boss/${encodeURIComponent(id)}`);
+  await requireMember(user.id);
 
   const data = await load(id);
   const tz = await userTz();
