@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.71': [
+    'Loot is now recorded when your group sees someone else take it, not only when the looter runs Mimic, so items handed out without a bid (like a queued Essence) show up in the Essences queue and loot lists. Needs the Mimic beta that pairs with it.',
+  ],
   '4.0.70': [
     'Officers: `/opendkplevels` previews and applies OpenDKP level updates from the levels we have seen in /who. Levels only go up, and nothing changes until you press Apply.',
   ],

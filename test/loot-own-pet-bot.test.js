@@ -73,9 +73,11 @@ describe('migration 20261009050000', () => {
 
 // ── ingest: _handleAgentLooted ──────────────────────────────────────────────────────────────────────────────
 function makeIngest({ columnMissing = false } = {}) {
-  const block = sliceBlock(src, 'async function _handleAgentLooted', '\n}\n');
+  // From the already-reported helper above the handler (2026-11-10, witnessed loot), so both are in the slice.
+  const block = sliceBlock(src, 'const _LOOT_SAME_MS = 20000;', '\nasync function _handleAgentLooted(req, res) {').replace(/async function _handleAgentLooted\(req, res\) \{$/, '')
+    + sliceBlock(src, 'async function _handleAgentLooted', '\n}\n');
   const upserts = [];
-  const sb = { isEnabled: () => true, upsert: async (table, rows, key) => {
+  const sb = { isEnabled: () => true, select: async () => [], upsert: async (table, rows, key) => {
     upserts.push({ table, rows, key });
     if (columnMissing && rows.some(r => 'from_own_pet' in r)) return null;   // PostgREST 400 -> the helper answers null
     return rows;

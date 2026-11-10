@@ -21259,6 +21259,20 @@ async function _handleAgentRolls(req, res) {
 // honestly reuse loot_observations). Upsert by (guild, looter, item, looted_at)
 // so a restart re-read collapses. The site links a looted item to its roll
 // session at read; nothing here needs the roll data.
+// The same loot reported twice: since agent 4.0.84 every group member's Mimic reports "--<Name> has looted ...--"
+// (the guild lead, 2026-11-10: "it should also capture X has looted lines"), and the looter's own Mimic reports
+// "You have looted". Their PC clocks differ by seconds, so the exact-second upsert key does not collapse them. A row
+// is dropped when an EXISTING row from a DIFFERENT uploader has the same looter and item within _LOOT_SAME_MS. The
+// same uploader's own repeats keep the exact-second rule (a raider can really loot the same stackable twice).
+const _LOOT_SAME_MS = 20000;
+function _dropAlreadyReportedLoot(rows, existing) {
+  const ex = Array.isArray(existing) ? existing : [];
+  return rows.filter(r => !ex.some(x =>
+    x.looter_lower === r.looter_lower && x.item_name === r.item_name
+    && x.uploaded_by_discord_id !== r.uploaded_by_discord_id
+    && Math.abs(Date.parse(x.looted_at) - Date.parse(r.looted_at)) <= _LOOT_SAME_MS));
+}
+
 async function _handleAgentLooted(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -21304,11 +21318,26 @@ async function _handleAgentLooted(req, res) {
       zone:                   e?.zone ? String(e.zone).slice(0, 64) : null,
       looted_at:              atIso,
       uploaded_by_discord_id: identity.discord_id,
-      source:                 'local_agent_v1',
+      source:                 e?.witnessed === true ? 'local_agent_witnessed' : 'local_agent_v1',
       created_at:             nowIso,
       ...(fromOwnPet ? { from_own_pet: true } : {}),
     });
     seen.set(key, rows[rows.length - 1]);
+  }
+  if (rows.length > 0) {
+    // Already reported by someone else (see _dropAlreadyReportedLoot). Looter names are one word of letters (the agent's
+    // own pattern), so they are safe in the in.() filter; items are compared here, not in the query.
+    const names = [...new Set(rows.map(r => r.looter_lower))].filter(n => /^[a-z]+$/.test(n));
+    const times = rows.map(r => Date.parse(r.looted_at));
+    if (names.length) {
+      const lo = new Date(Math.min(...times) - _LOOT_SAME_MS).toISOString();
+      const hi = new Date(Math.max(...times) + _LOOT_SAME_MS).toISOString();
+      const existing = await supabase.select('looted_items',
+        `select=looter_lower,item_name,looted_at,uploaded_by_discord_id&guild_id=eq.${guildId}`
+        + `&looter_lower=in.(${names.join(',')})&looted_at=gte.${encodeURIComponent(lo)}&looted_at=lte.${encodeURIComponent(hi)}&limit=500`);
+      const kept = _dropAlreadyReportedLoot(rows, existing);
+      rows.length = 0; rows.push(...kept);
+    }
   }
   if (rows.length === 0) { res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored: 0 })); }
   try {
