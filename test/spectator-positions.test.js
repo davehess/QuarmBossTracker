@@ -487,6 +487,8 @@ vi.mock('@/lib/supabase', () => ({
     },
   }),
 }));
+// lib/member.ts reads wolfpack_members.is_member; every signed-in id is a member except the 'outsider-' ones.
+vi.mock('@/lib/member', () => ({ isGuildMember: async (id) => !!id && !String(id).startsWith('outsider-') }));
 vi.mock('@/lib/spectator', async () => await import('../web/lib/spectator.ts'));
 vi.mock('@/lib/guild', async () => await import('../web/lib/guild.ts'));
 // CI's test job installs the root packages only, so `next/server` (web/node_modules) does not
@@ -502,6 +504,13 @@ vi.mock('next/server', () => ({
 
 describe('GET /api/spectator/positions', () => {
   beforeEach(() => { db.user = null; db.tables = {}; db.calls = []; });
+
+  it('a signed-in account that is not a current member gets 403 and the database is never read', async () => {
+    db.user = { id: 'outsider-1' };
+    const { GET } = await import('../web/app/api/spectator/positions/route.ts');
+    expect((await GET()).status).toBe(403);
+    expect(db.calls).toEqual([]);
+  });
 
   it('is members only: no session, 401, and the database is never read', async () => {
     const { GET } = await import('../web/app/api/spectator/positions/route.ts');

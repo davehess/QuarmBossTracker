@@ -21,6 +21,7 @@
 // not forty.
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase-server';
+import { isGuildMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { curatedNpcIds } from '@/lib/bossFilter';
 import { cleanBossName } from '@/lib/format';
@@ -119,6 +120,7 @@ async function loadSpawns(db: Db, nowMs: number): Promise<FeedSpawn[]> {
 export async function GET() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) return fail(401, 'unauthorized');
+  if (!(await isGuildMember(user.id))) return fail(403, 'members only');
 
   const nowMs = Date.now();
   if (cache && nowMs - cache.at < FEED_CACHE_MS) return NextResponse.json(cache.body, { headers: NO_STORE });

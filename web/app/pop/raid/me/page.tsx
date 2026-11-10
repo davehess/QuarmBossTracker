@@ -16,6 +16,7 @@ import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { ownedCharacters } from '@/lib/ownedCharacters';
 import { loadLevels } from '@/lib/listableChars';
 import NewPageTag from '@/components/NewPageTag';
@@ -57,6 +58,7 @@ export default async function RaidMePage({ searchParams }: { searchParams: Promi
   const { steps: stepsParam } = await searchParams;
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/pop/raid/me');
+  await requireMember(user.id);
 
   const owned = await ownedCharacters(user.id);
   const [levels, night] = await Promise.all([

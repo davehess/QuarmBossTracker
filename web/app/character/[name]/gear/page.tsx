@@ -16,6 +16,7 @@ import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { isMustEquipClicky, usableByClass, pickSlot, buildClickyMacro } from '@/lib/clicky-macros';
 import { computeRaidKit, MR_FLOOR, UTILITY_KEYS, UTILITY_LABEL, type RaidKitResult } from '@/lib/raidKit';
 import { GUILD_TAG } from '@/lib/guild';
@@ -306,6 +307,7 @@ export default async function CharacterGearPage({ params, searchParams }: {
 
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/character/${encodeURIComponent(name)}/gear`);
+  await requireMember(user.id);
 
   const { char, gear, aas, items, spellNames, spellFx, aaCatalog, scribedSpells } = await load(decoded);
 

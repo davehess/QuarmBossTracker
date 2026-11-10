@@ -12,6 +12,7 @@ import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import {
   type RecipePart, splitParts, partLabel, containerLabel, isWorldContainer, tradeskillName, isQuestCombine,
 } from '@/lib/tradeskills';
@@ -40,6 +41,7 @@ export default async function DbRecipePage({ params }: { params: Promise<{ id: s
 
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/db/recipe/${recipeId}`);
+  await requireMember(user.id);
 
   const sb = supabaseAdmin();
   const [recRes, entRes] = await Promise.all([

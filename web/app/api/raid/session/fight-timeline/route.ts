@@ -7,6 +7,7 @@
 // they decide only who counts as a bid winner (shown by name), never what is read.
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase-server';
+import { isGuildMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { GUILD_TAG } from '@/lib/guild';
 import { makeWindow } from '@/lib/raidShare';
@@ -20,6 +21,7 @@ const fail = (status: number, error: string) => NextResponse.json({ error }, { s
 export async function GET(req: Request) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) return fail(401, 'unauthorized');
+  if (!(await isGuildMember(user.id))) return fail(403, 'members only');
   try {
     const q = new URL(req.url).searchParams;
     const win = makeWindow(Date.parse(q.get('from') ?? ''), Date.parse(q.get('to') ?? '')) ?? undefined;

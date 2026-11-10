@@ -9,6 +9,7 @@
 
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { userTz, fmtAbs } from '@/lib/timezone';
 import ExpansionSection from './ExpansionSection';
@@ -84,6 +85,7 @@ async function loadZoneTimers(): Promise<ZoneTimers> {
 export default async function BoardsPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/boards');
+  await requireMember(user.id);
 
   // The zone-timers panel is on /boards itself (the guild lead, 2026-10-09, looking at a stampede that was running:
   // "why isn't this stampede showing? in /boards"). It started as a ?v=b preview and nobody opens that by hand.

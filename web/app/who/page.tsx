@@ -8,6 +8,7 @@
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { isOfficer } from '@/lib/officer';
 import { loadRoster } from '@/lib/roster';
 import WhoTable, { type WhoRow } from './WhoTable';
@@ -178,6 +179,7 @@ export default async function WhoPage() {
   // Members-only (same gate as /parses, /buffs, /me).
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/who');
+  await requireMember(user.id);
   const canEdit = await isOfficer(user.id);
 
   const { rows, totalInDb } = await loadRows();

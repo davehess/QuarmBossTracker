@@ -9,6 +9,7 @@
 // Nothing here is cached: the page polls it every few seconds and must see the leader's last click.
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase-server';
+import { isGuildMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
 import { SCREEN_GUILD, parseStateInput } from '@/lib/raidScreen';
@@ -22,6 +23,7 @@ const fail = (status: number, error: string) => NextResponse.json({ error }, { s
 export async function GET() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) return fail(401, 'unauthorized');
+  if (!(await isGuildMember(user.id))) return fail(403, 'members only');
   try {
     return NextResponse.json(await loadScreenState(supabaseAdmin()), { headers: NO_STORE });
   } catch {

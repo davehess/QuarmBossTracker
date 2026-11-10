@@ -16,8 +16,8 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
-import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { isOfficer } from '@/lib/officer';
 import NewPageTag from '@/components/NewPageTag';
 import { eventWhen } from '@/lib/raidPlan';
@@ -177,16 +177,7 @@ export default async function FlagEventsPage({ searchParams }: { searchParams: P
   if (!user) redirect('/auth/signin?next=/pop/flag-events');
 
   // Signed in is not enough: the page lists guild members' characters, so it needs a Wolf Pack member.
-  const { data: member } = await supabaseAdmin().from('wolfpack_members').select('is_member').eq('user_id', user.id).maybeSingle();
-  if (!member || (member as { is_member: boolean | null }).is_member === false) {
-    return (
-      <div className="mx-auto max-w-4xl py-2">
-        <NewPageTag note="New page: the flag events officers have posted, and who still needs each one." />
-        <h1 className="text-2xl text-gold">Flag events</h1>
-        <p className="mt-3 rounded border border-border bg-panel p-3 text-sm text-dim">This page is for Wolf Pack members.</p>
-      </div>
-    );
-  }
+  await requireMember(user.id);
 
   const officer = await isOfficer(user.id);
   const now = new Date();

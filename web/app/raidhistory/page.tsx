@@ -28,6 +28,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { selectAll } from '@/lib/selectAll';
 import { dayKey, dayLabel, RAID_TZ } from '@/lib/format';
@@ -101,6 +102,7 @@ function clampInt(raw: string | undefined, lo: number, hi: number, dflt: number)
 export default async function RaidHistoryPage({ searchParams }: { searchParams: Promise<{ weeks?: string; full?: string; layout?: string }> }) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/raidhistory');
+  await requireMember(user.id);
 
   const sp = await searchParams;
   const weeksN = clampInt(sp.weeks, MIN_WEEKS, MAX_WEEKS, DEFAULT_WEEKS);

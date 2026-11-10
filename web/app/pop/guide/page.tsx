@@ -15,6 +15,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { ownedCharacters } from '@/lib/ownedCharacters';
 import { LIST_MIN_LEVEL, loadLevels, partitionTiers } from '@/lib/listableChars';
 import { guideItemIds } from '@/lib/popGuide';
@@ -43,6 +44,7 @@ export default async function PopGuidePage(
   const { c, v, all, nx, gate } = await searchParams;
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/pop/guide');
+  await requireMember(user.id);
 
   // Traders, characters under level 46 and characters their owner hid stay out of the character picker
   // unless ?all=1 (the guild lead, 2026-10-03: "low level characters do not need to show up on the pop

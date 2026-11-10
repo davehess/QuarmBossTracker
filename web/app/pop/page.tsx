@@ -74,6 +74,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { selectAll } from '@/lib/selectAll';
 import {
   POP_ZONES, POP_ZONE_BY_KEY, POP_FLAGS, POP_FLAG_DEFS, TIER_LABELS, TIER_COLORS, JUSTICE_MARKS, MARK_OF_JUSTICE,
@@ -194,6 +195,7 @@ export default async function PopFlagsPage(
   const { data: { user } } = await supabaseServer().auth.getUser();
   // Keep the query through sign-in, so a shared ?demo=1 or ?zone= link still opens what it names.
   if (!user) redirect(`/auth/signin?next=${encodeURIComponent('/pop?' + new URLSearchParams(await searchParams as Record<string, string>))}`);
+  await requireMember(user.id);
   // 💠 The Essences of Power queue, laid out by essence (the guild lead picked "By essence" on the Decision
   // Desk, 2026-10-19; DECISIONS §96, §383). ?demo=1 swaps in labelled sample data, to see it before any drop.
   const essDemo = demo === '1';

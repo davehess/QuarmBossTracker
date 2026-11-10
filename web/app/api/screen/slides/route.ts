@@ -17,6 +17,7 @@
 // text, never HTML: the page splits it into paragraphs and bullets and renders text nodes.
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase-server';
+import { isGuildMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
 import { SCREEN_GUILD, SLIDES_MAX, isUuid, moveId, parseSlideInput } from '@/lib/raidScreen';
@@ -30,6 +31,7 @@ const fail = (status: number, error: string) => NextResponse.json({ error }, { s
 export async function GET() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) return fail(401, 'unauthorized');
+  if (!(await isGuildMember(user.id))) return fail(403, 'members only');
   try {
     return NextResponse.json({ slides: await listSlides(supabaseAdmin()) }, { headers: NO_STORE });
   } catch {

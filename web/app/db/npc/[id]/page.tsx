@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { loadSpawn2 } from '@/lib/fullReads';
 import { MOB_CLASS_NAMES, decodeMobSpecialChips, sortMobSpecialChips, deUnderscore } from '@/lib/npcDecode';
 import { ERA_LABEL } from '@/lib/itemDecode';
@@ -54,6 +55,7 @@ export default async function DbNpcPage({ params }: { params: Promise<{ id: stri
 
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/db/npc/${npcId}`);
+  await requireMember(user.id);
 
   const sb = supabaseAdmin();
   const { data: npcData } = await sb.from('eqemu_npc_types').select(NPC_COLS).eq('id', npcId).maybeSingle();

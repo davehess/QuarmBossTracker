@@ -12,6 +12,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { userTz, fmtDateOnly } from '@/lib/timezone';
 import QuakeBanner from './QuakeBanner';
@@ -322,6 +323,7 @@ export default async function PvpPage({
 }) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/pvp');
+  await requireMember(user.id);
 
   const sp = await searchParams;
   const sortKey: SortKey = (

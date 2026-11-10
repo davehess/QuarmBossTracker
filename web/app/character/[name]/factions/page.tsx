@@ -22,6 +22,7 @@ import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { groupFactions } from '@/lib/factionGroups';
 import ConsTable from './ConsTable';
 import { selectAll } from '@/lib/selectAll';
@@ -383,6 +384,7 @@ export default async function CharacterFactionsPage(
 
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/character/${encodeURIComponent(name)}/factions`);
+  await requireMember(user.id);
 
   const { standings, cons, race, cls, deityId, baseline , repairByFaction, consByFaction } = await load(decoded);
   // Name-keyed lookup so the standings table (keyed by faction NAME, not id)

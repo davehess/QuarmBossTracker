@@ -13,6 +13,7 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import MoreInfo from '@/components/MoreInfo';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
 import { selectAll } from '@/lib/selectAll';
@@ -43,6 +44,7 @@ type FunRow = { event_type: string; caster: string | null; event_ts: string; raw
 export default async function RollsPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/rolls');
+  await requireMember(user.id);
 
   const tz = await userTz();
   const sb = supabaseAdmin();

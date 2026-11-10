@@ -640,7 +640,11 @@ describe('/auth/mimic-link on a raidmimic host', () => {
     expect(action).toContain(guard);
     // Re-pinned on purpose (web 2.1.89): the form is never filled from the address, the page shows when the request started,
     // and the action refuses a typed code that differs from the one the page was opened for (test/caller-owns-character.test.js).
-    expect(sha(action.replace(guard, ''))).toBe('f9391444bcc27084');
+    // The one other permitted difference (web 2.1.125): the member gate, exactly this import and this call, right after the signed-in check.
+    const gateLine = "  await requireMember(user!.id);\n";
+    expect(action).toContain(gateLine);
+    expect(page).toContain("import { requireMember } from '@/lib/member';");
+    expect(sha(action.replace(guard, '').replace(gateLine, ''))).toBe('f9391444bcc27084');
 
     const main = page.slice(page.indexOf('export default async function MimicLinkPage'));
     const p0 = main.indexOf('if (!user) {');

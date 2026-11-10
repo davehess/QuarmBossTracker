@@ -12,6 +12,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { fmtDmg, fmtDuration, fmtDkp, cleanBossName } from '@/lib/format';
 import WindowPicker from '@/components/WindowPicker';
 import { resolveWindow, windowCaveat, type ResolvedWindow } from '@/lib/timeWindow';
@@ -114,6 +115,7 @@ export default async function LeaderboardsPage(
 ) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/leaderboards');
+  await requireMember(user.id);
 
   const { w: wParam, legacy: legacyParam } = await searchParams;
   const w = resolveWindow(wParam, '30d');

@@ -8,6 +8,7 @@
 // per-night loot block from OpenDKP + attendance summary.
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
 import KillCard, { type KillCardData } from '@/components/KillCard';
@@ -394,6 +395,7 @@ export default async function ParsesPage(
 ) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/parses');
+  await requireMember(user.id);
   const officer = await isOfficer(user.id);
 
   const { w: wParam } = await searchParams;
