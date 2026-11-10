@@ -288,11 +288,10 @@ describe('the shared pieces (Parts.tsx)', () => {
     for (const f of ['Parts.tsx', 'StoryParts.tsx', 'StoryBits.tsx', 'FeatureIcons.tsx']) expect(read(L + f), f).not.toMatch(/['"]use client['"]/);
     expect(read('web/app/raidmimic/page.tsx')).not.toMatch(/['"]use client['"]/);
     for (const f of ['HomeDashboard.tsx', 'HomeParts.tsx']) expect(read(L + f), f).not.toMatch(/['"]use client['"]/);
-    for (const f of ['StoryStage.tsx', 'StoryVideo.tsx', 'HomePanelGate.tsx', 'ProfileAvatar.tsx']) expect(read(L + f), f).toMatch(/^(?:\/\/[^\n]*\n)*'use client';|^'use client';/);
+    for (const f of ['StoryStage.tsx', 'StoryVideo.tsx', 'HomePanelGate.tsx']) expect(read(L + f), f).toMatch(/^(?:\/\/[^\n]*\n)*'use client';|^'use client';/);
     expect(fs.readdirSync(path.join(ROOT, L)).sort()).toEqual([
-      'FeatureIcons.tsx', 'HomeDashboard.tsx', 'HomePanelGate.tsx', 'HomeParts.tsx', 'Parts.tsx', 'ProfileAvatar.tsx', 'StoryBits.tsx', 'StoryParts.tsx', 'StoryStage.tsx', 'StoryVideo.tsx',
-    ]);   // HomeDashboard + HomeParts (server) and HomePanelGate (client): the signed-in top (Dashboard, picked 2026-11-09);
-          // ProfileAvatar (client): the Discord picture falls back to an initial when it fails to load (2026-11-10)
+      'FeatureIcons.tsx', 'HomeDashboard.tsx', 'HomePanelGate.tsx', 'HomeParts.tsx', 'Parts.tsx', 'StoryBits.tsx', 'StoryParts.tsx', 'StoryStage.tsx', 'StoryVideo.tsx',
+    ]);   // HomeDashboard + HomeParts (server) and HomePanelGate (client): the signed-in top (Dashboard, picked 2026-11-09)
   });
   it('fetches and embeds nothing external; every outbound link is one we name', () => {
     const urls = new Set();
