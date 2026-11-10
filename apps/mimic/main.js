@@ -11918,15 +11918,15 @@ async function checkAgentUpdate(opts) {
 // of beta pushes would push an alpha out of it (the 2026-07-30 Linux lesson).
 // Same two inputs as beta: an alpha build stays on alpha until the raider
 // leaves it (cfg.alphaChannel === false), and anyone can opt in.
-const _ALPHA_FEED  = { provider: 'generic', url: 'https://github.com/davehess/QuarmBossTracker/releases/download/mimic-alpha/', channel: 'alpha' };
-const _GITHUB_FEED = { provider: 'github', owner: 'davehess', repo: 'QuarmBossTracker' };
+const _ALPHA_FEED  = { provider: 'generic', url: 'https://github.com/davehess/raidmimic/releases/download/mimic-alpha/', channel: 'alpha' };
+const _GITHUB_FEED = { provider: 'github', owner: 'davehess', repo: 'raidmimic' };   // renamed from QuarmBossTracker 2026-11-10 (GitHub redirects the old name)
 let _alphaFeedSet = false;
 // The Windows 7 build (the guild lead, 2026-11-04: "a beta release for Windows 7 specifically"). It is built on
 // Electron 22, the last Electron that starts on Windows 7, so it must NEVER take a normal update: every other build is
 // Electron 31 and would not open there. It follows the beta line as <version>-win7.<run> on ONE rolling release, tag
 // `mimic-win7` (build-mimic-win7.yml), read from its fixed address like the alpha, and ignores every channel toggle.
 const _IS_WIN7_BUILD = Number(String(process.versions.electron || '99').split('.')[0]) < 23;
-const _WIN7_FEED     = { provider: 'generic', url: 'https://github.com/davehess/QuarmBossTracker/releases/download/mimic-win7/', channel: 'win7' };
+const _WIN7_FEED     = { provider: 'generic', url: 'https://github.com/davehess/raidmimic/releases/download/mimic-win7/', channel: 'win7' };
 let _win7FeedSet = false;
 // → 'alpha' | 'beta' | 'stable'
 function _updateTrack(cfg, version) {
@@ -15306,7 +15306,8 @@ ipcMain.handle('char-profile-forget', (_e, name) => {
 // guild lead, 2026-10-08): only that one page, text rides in the # so it never reaches a server log.
 ipcMain.handle('open-external', (_e, url) => {
   if (typeof url !== 'string') return false;
-  const ALLOW = /^https:\/\/(wolfpack\.quest|github\.com\/davehess\/QuarmBossTracker|(www\.)?eqprogression\.com\/|(www\.)?pqdi\.cc\/|(www\.)?youtube\.com\/watch|youtu\.be\/|eqmimic\.quest\/feedback(#|$))/i;
+  // The repo was renamed QuarmBossTracker -> raidmimic (2026-11-10): links already in this app may use either name.
+  const ALLOW = /^https:\/\/(wolfpack\.quest|github\.com\/davehess\/(?:raidmimic|QuarmBossTracker)(?:[/?#]|$)|(www\.)?eqprogression\.com\/|(www\.)?pqdi\.cc\/|(www\.)?youtube\.com\/watch|youtu\.be\/|eqmimic\.quest\/feedback(#|$))/i;
   // The page being linked to right now (the code-prefilled address the guild's server gave, already checked as https) and
   // the chosen guild's own site open too: a guild's website is not on the list above, and the "Open page" retry needs it.
   const linkNow = _linkInFlight && (_linkInFlight._pub.verification_url_complete || _linkInFlight._pub.verification_url);

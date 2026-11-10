@@ -50,7 +50,7 @@ The Wolf Pack Quarm Bot has a working OpenDKP integration for raids, ticks, and 
 This document was originally for capturing the bidding/auction endpoints (now done) but
 remains useful as a reference for the capture format if anything else needs updating.
 
-Repo: davehess/QuarmBossTracker
+Repo: davehess/raidmimic
 Implementation file: utils/opendkp.js
 Consumer: commands/loot.js (auction creation block is commented out, line 202)
 

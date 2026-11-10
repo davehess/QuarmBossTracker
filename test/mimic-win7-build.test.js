@@ -32,7 +32,7 @@ describe('the Windows 7 build updates only from its own release', () => {
     for (const cfg of [{}, { forceStable: true }, { alphaChannel: true }, { betaChannel: true }]) {
       const { au, api } = updater(cfg, '3.0.7-win7.4', '22.3.27');
       api._applyUpdaterChannel();
-      expect(au.feeds).toEqual([{ provider: 'generic', url: 'https://github.com/davehess/QuarmBossTracker/releases/download/mimic-win7/', channel: 'win7' }]);
+      expect(au.feeds).toEqual([{ provider: 'generic', url: 'https://github.com/davehess/raidmimic/releases/download/mimic-win7/', channel: 'win7' }]);
       expect(au.channel).toBe('win7');
       expect(au.allowDowngrade).toBe(false);
     }

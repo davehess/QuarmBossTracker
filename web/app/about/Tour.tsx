@@ -261,7 +261,7 @@ function Close() {
             <Link href="/mimic" className="px-5 py-2.5 rounded-lg border border-blue bg-[#1f6feb33] text-blue text-sm hover:bg-[#1f6feb66] transition-colors no-underline">Get Mimic</Link>
             <Link href="/roadmap" className="px-5 py-2.5 rounded-lg border border-border bg-bg/40 text-text text-sm hover:border-blue transition-colors no-underline">What shipped lately</Link>
             <Link href="/platform/architecture" className="px-5 py-2.5 rounded-lg border border-border bg-bg/40 text-text text-sm hover:border-blue transition-colors no-underline">How it fits together</Link>
-            <a href="https://github.com/davehess/QuarmBossTracker" target="_blank" rel="noreferrer" className="px-5 py-2.5 rounded-lg border border-border bg-bg/40 text-dim text-sm hover:text-text transition-colors no-underline">Read the code ↗</a>
+            <a href="https://github.com/davehess/raidmimic" target="_blank" rel="noreferrer" className="px-5 py-2.5 rounded-lg border border-border bg-bg/40 text-dim text-sm hover:text-text transition-colors no-underline">Read the code ↗</a>
           </div>
         </div>
       </Reveal>

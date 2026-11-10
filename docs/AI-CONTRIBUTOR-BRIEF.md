@@ -24,7 +24,7 @@ wolfpack.quest/roadmap. The guardrails below are stable.*
 
 Wolf Pack is a guild platform for the EverQuest emulator **Project Quarm**,
 now also productizing as **raidmimic.com** for other guilds. Five components
-in one public monorepo (github.com/davehess/QuarmBossTracker):
+in one public monorepo (github.com/davehess/raidmimic):
 
 | Component | Path | Language | Branch |
 |---|---|---|---|

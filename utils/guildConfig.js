@@ -284,7 +284,7 @@ function botApiBase(ctx) { const v = _str(null, 'sites.botApiBase', null, ctx); 
 /** {owner, name, slug, url, api, rawBase} from GITHUB_REPO or config `repo` ('owner/name'). */
 function repo(ctx) {
   let slug = String(get('GITHUB_REPO', 'repo', '', ctx) || '').trim();
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(slug)) slug = 'davehess/QuarmBossTracker';
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(slug)) slug = 'davehess/raidmimic';
   const [owner, name] = slug.split('/');
   return {
     owner, name, slug,

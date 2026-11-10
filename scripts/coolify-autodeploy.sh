@@ -29,7 +29,7 @@
 #   4. Write /etc/coolify-autodeploy.conf (chmod 600):
 #        DEPLOY_URL="http://localhost:8000/api/v1/deploy?uuid=xxxxxxxx&force=false"
 #        API_TOKEN="1|xxxxxxxxxxxxxxxx"
-#        REPO="git@github.com:davehess/QuarmBossTracker.git"
+#        REPO="git@github.com:davehess/raidmimic.git"
 #        BRANCH="main"
 #   5. Install the timer:
 #        cp scripts/systemd/coolify-autodeploy.* /etc/systemd/system/

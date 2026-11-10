@@ -84,7 +84,7 @@ re-application is safe.
 ## First-time setup
 
 1. Project was created via the Supabase dashboard with the GitHub integration
-   pointing at `davehess/QuarmBossTracker`.
+   pointing at `davehess/raidmimic`.
 2. After this PR merges to `main`, Supabase applies the migration automatically.
 3. Add the env vars listed above to Railway.
 4. Restart the bot. Existing `/parse` calls begin writing to Supabase in

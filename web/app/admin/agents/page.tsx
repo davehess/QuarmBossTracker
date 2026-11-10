@@ -132,7 +132,7 @@ type MimicRelease = {
 async function loadMimicReleases(): Promise<MimicRelease[]> {
   try {
     const res = await fetch(
-      'https://api.github.com/repos/davehess/QuarmBossTracker/releases?per_page=20',
+      'https://api.github.com/repos/davehess/raidmimic/releases?per_page=20',
       { headers: { Accept: 'application/vnd.github+json' }, next: { revalidate: 300 } },
     );
     if (!res.ok) return [];
