@@ -26415,6 +26415,11 @@ httpServer.listen(process.env.PORT || 3000, () =>
 );
 // One `[mem]` stdout line at boot and every 10 minutes, so the memory curve can be read from the deploy logs.
 try { require('./utils/memStats').startMemLog(); } catch (e) { void e; }
+// Hardening: in production the guild tag should be named, not defaulted. Wolf Pack runs on the default today, so this
+// says so once on stdout and does not stop the boot.
+if (process.env.RAILWAY_ENVIRONMENT && !process.env.SUPABASE_GUILD_ID) {
+  console.log("[boot] SUPABASE_GUILD_ID is unset in production; rows are tagged with the default guild 'wolfpack'. Set it explicitly so a new deployment cannot inherit that tag.");
+}
 
 // #58 graceful shutdown — Railway sends SIGTERM before replacing a container.
 // Stop accepting new connections, give in-flight handlers ~10s to drain, then
