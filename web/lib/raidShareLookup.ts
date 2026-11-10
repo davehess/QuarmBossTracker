@@ -101,7 +101,13 @@ const OPT_TTL_MS = 60_000;
 let optCache: { at: number; guild: string; map: AnonMap } | null = null;
 
 /** The salt behind the label order and the bids handles. The demo-mode salt, so one secret covers both. */
-export const anonSalt = (): string => process.env.DEMO_OBFUSCATE_SALT || 'raid-anon';
+export const anonSalt = (): string => {
+  const s = process.env.DEMO_OBFUSCATE_SALT;
+  if (s) return s;
+  // Production fails closed: the fallback is public, so labels built from it would be reproducible by anyone.
+  if (process.env.NODE_ENV === 'production') throw new Error('DEMO_OBFUSCATE_SALT is not set');
+  return 'raid-anon';
+};
 
 /** Forgets the held opt-out labels (tests). */
 export function clearOptedOutCache() {

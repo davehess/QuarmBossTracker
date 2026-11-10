@@ -72,8 +72,8 @@ describe('server action', () => {
     expect(act).toMatch(/Date\.now\(\) - 60 \* 60 \* 1000/);
     expect(act).toMatch(/\(count \?\? 0\) >= PER_HOUR/);
   });
-  it('ip hash: sha256 of the first x-forwarded-for address plus a server secret, falling back to the demo salt', () => {
-    expect(act).toMatch(/createHash\('sha256'\)/);
+  it('ip hash: HMAC-SHA256 (keyed by the server secret) of the first x-forwarded-for address plus a server secret, falling back to the demo salt', () => {
+    expect(act).toMatch(/createHmac\('sha256', salt\)/);
     expect(act).toMatch(/h\.get\('x-forwarded-for'\) \|\| ''\)\.split\(','\)\[0\]/);
     expect(act).toMatch(/process\.env\.ANON_FEEDBACK_SALT \|\| process\.env\.DEMO_OBFUSCATE_SALT/);
   });

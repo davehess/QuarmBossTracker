@@ -185,7 +185,7 @@ describe('the server action, run', () => {
     expect(act).toMatch(/Date\.now\(\) - 60 \* 60 \* 1000/);
     expect(act).toMatch(/\(count \?\? 0\) >= INTEREST_PER_HOUR/);
     expect(act).toMatch(/update\(\{ ip_hash: null \}\)/);
-    expect(act).toMatch(/createHash\('sha256'\)/);
+    expect(act).toMatch(/createHmac\('sha256', salt\)/);
     expect(act).toMatch(/process\.env\.ANON_FEEDBACK_SALT \|\| process\.env\.DEMO_OBFUSCATE_SALT/);
   });
   it('the sanitizer is the anonymous-feedback cleaner, imported rather than rewritten', () => {
