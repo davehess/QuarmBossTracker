@@ -366,6 +366,23 @@ async function createCharacter(payload) {
   }, body);
 }
 
+// POST /clients/{name}/characters/{id} — update a character. OpenDKP wants the
+// character's WHOLE record back (read-modify-write), so callers pass the full
+// row from getCharacters() with only the intended field changed. Guarded by
+// the same halt/governor as every write via _post.
+async function updateCharacter(characterId, record) {
+  if (!record || record.CharacterId !== characterId) {
+    throw new Error('updateCharacter: record.CharacterId must equal characterId');
+  }
+  const headers = await _bearerHeaders(true);
+  const body    = JSON.stringify(record);
+  return _post({
+    ..._clientUrl(`/characters/${encodeURIComponent(characterId)}`),
+    method: 'POST',
+    headers: { ...headers, 'Content-Length': Buffer.byteLength(body) },
+  }, body);
+}
+
 // Resolve the internal ClientId HASH the /characters/links endpoint wants in
 // its body (e.g. "8fa8662b40c12"). This is NOT the "wolfpack" URL slug nor the
 // OPENDKP_CLIENT_ID read token — it's the client's internal id, constant per
@@ -839,7 +856,7 @@ module.exports = {
   getStandings, _pickCurrentRaid, _raidLooksStale, _listRows,
   opendkpHalted, setRuntimeHalt, noteCall, flushCallStats, _normalizeEndpoint,
   getRaids, getRaid, createRaid, updateRaid, updateRaidById, getMostRecentRaid,
-  getCharacters, createCharacter, linkCharacter,
+  getCharacters, createCharacter, updateCharacter, linkCharacter,
   createAuctions, getAuctions, getActiveAuctions, getAuction, restoreAuction, deleteAuction,
   submitBid, cancelBid, extendAuctions, endAuctions,
   getAudits, getAdjustments,
