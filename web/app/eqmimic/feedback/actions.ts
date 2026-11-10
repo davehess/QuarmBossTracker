@@ -11,7 +11,7 @@
 // this file: a PostgREST error can echo the failing row, and the whole point of the cleaner is that
 // the raw text goes nowhere. A failure is reported to the caller as a plain sentence only.
 
-import { createHash } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import { headers } from 'next/headers';
 import { supabaseAdmin } from '@/lib/supabase';
 import { cleanAnonMessage, cleanDiscordContact } from '@/lib/anonFeedbackClean';
@@ -43,7 +43,7 @@ function ipHash(): string | null {
   if (!salt) return null;
   const h = headers();
   const ip = (h.get('x-forwarded-for') || '').split(',')[0].trim() || h.get('x-real-ip') || 'unknown';
-  return createHash('sha256').update(`${ip}|${salt}`).digest('hex');
+  return createHmac('sha256', salt).update(ip).digest('hex');
 }
 
 export async function submitAnonFeedback(input: AnonFeedbackInput): Promise<AnonFeedbackResult> {

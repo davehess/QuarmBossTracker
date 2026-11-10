@@ -14,7 +14,14 @@
 
 import { cookies } from 'next/headers';
 
-const SALT = process.env.DEMO_OBFUSCATE_SALT || 'wolfpack';
+// Read per call. In production an unset salt throws instead of falling back to a public constant, which would make
+// the fake-name mapping reproducible by anyone; outside production the old fallback keeps dev and tests working.
+function demoSalt(): string {
+  const s = process.env.DEMO_OBFUSCATE_SALT;
+  if (s) return s;
+  if (process.env.NODE_ENV === 'production') throw new Error('DEMO_OBFUSCATE_SALT is not set');
+  return 'wolfpack';
+}
 
 // Class → ordered pool of fictional character names. Pools deliberately
 // thematic so an obfuscated screenshot still reads as the right archetype
@@ -133,7 +140,7 @@ export function getDemoMode(): DemoMode {
 //
 // Falls back to "Adventurer N" when the class is unknown or pool is empty.
 export function fakeNameFor(realName: string, className: string | null | undefined): string {
-  const key = `${SALT}|${(realName || '').toLowerCase()}`;
+  const key = `${demoSalt()}|${(realName || '').toLowerCase()}`;
   const pool = (className && NAMES[className]) || FALLBACK_POOL;
   const idx = fnv1a(key) % pool.length;
   return pool[idx];

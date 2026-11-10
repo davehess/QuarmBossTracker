@@ -12,7 +12,7 @@
 // ANON_FEEDBACK_SALT as the feedback form, so no second secret to set). The helper is a copy of that file's ipHash():
 // it is a private function inside a 'use server' module, which cannot export a non-action.
 
-import { createHash } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import { headers } from 'next/headers';
 import { supabaseAdmin } from '@/lib/supabase';
 import { INTEREST_PER_HOUR, validateInterest, type InterestInput } from '@/lib/guildInterest';
@@ -24,7 +24,7 @@ function ipHash(): string | null {
   if (!salt) return null;
   const h = headers();
   const ip = (h.get('x-forwarded-for') || '').split(',')[0].trim() || h.get('x-real-ip') || 'unknown';
-  return createHash('sha256').update(`${ip}|${salt}`).digest('hex');
+  return createHmac('sha256', salt).update(ip).digest('hex');
 }
 
 export async function submitGuildInterest(input: InterestInput): Promise<InterestSubmitResult> {
