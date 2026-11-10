@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.65': [
+    'Behind-the-scenes security hardening: the bot can no longer ping @everyone or @here by accident, and its health page shows details only to signed-in Mimic installs.',
+  ],
   '4.0.64': [
     'Behind the scenes: nightly cleanup of old raid telemetry now works in small steps and reports how it went, so the database stays small.',
   ],

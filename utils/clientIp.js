@@ -1,6 +1,8 @@
 // utils/clientIp.js — the one place the bot decides "which IP is this request from".
 //
-// Railway's edge sets X-Real-IP to the client's remote IP (documented), and appends the client to X-Forwarded-For.
+// Railway documents X-Real-IP as the client's remote IP header
+// (https://docs.railway.com/networking/public-networking/specs-and-limits, "Technical specifications"; the page says
+// nothing about X-Forwarded-For). Railway's edge sets X-Real-IP to the client's remote IP, and appends the client to X-Forwarded-For.
 // A caller can PREPEND anything it likes to X-Forwarded-For, so the FIRST hop (what the code used before) is
 // attacker-chosen: one rotating header value gave every request a fresh rate-limit bucket. The LAST hop is the one
 // our own edge wrote. Order: x-real-ip → last x-forwarded-for hop → the socket.

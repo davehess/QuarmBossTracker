@@ -47,7 +47,7 @@ async function main() {
 
   const store = new lib.ConsentStore(lib.consentPath(cfg.recordingsDir)).load();
   if (store.error) console.warn(`[consent] ${store.error} — recording nobody until it is fixed`);
-  const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
+  const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates], allowedMentions: { parse: [] } });
   client.on('error', (err) => console.error('[discord] client error:', err.message));
   process.on('unhandledRejection', (err) => console.error('[boot] unhandled rejection:', err));
 
