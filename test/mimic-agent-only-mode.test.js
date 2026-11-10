@@ -84,6 +84,9 @@ describe('no overlay window can be created in agent only — the trigger window 
   // Windows that are not overlays: the dashboard, Settings, Resource use, UI Studio. Anything else that
   // opens a BrowserWindow is an overlay (or a new kind of window) and must decide.
   const NOT_OVERLAYS = ['createMainWindow', 'openSettings', 'openResources', 'openUiStudio', 'createTriggerOverlay'];
+  // Ordinary windows the member opens on purpose from a menu; they have no overlay behaviour to withhold.
+  // openFeedback and openLocalSite show the agent's own pages, so they need the agent (agentPort), not an overlay.
+  NOT_OVERLAYS.push('_openSetupWindow', 'openFeedback', 'openLocalSite');
   it('every other window creator opens with the agent-only guard', () => {
     for (const f of creators) {
       if (NOT_OVERLAYS.includes(f.name)) continue;
@@ -404,7 +407,9 @@ describe('the setup walkthrough asks the question', () => {
     expect(mount('full').agentNote()).toBe('');
     expect(mount().agentNote()).toBe('');
     const code = stripJs(script);
-    expect(code).toMatch(/function bOverlays\(el\) \{\n\s*S\.visited\.add\('overlays'\);\n\s*el\.innerHTML = agentNote\(\) \+/);
+    // The Overlays step is a tour step now: tourBody(id) builds it (and the other tour steps) behind the note.
+    expect(code).toMatch(/function tourBody\(id\) \{\s*return function \(el\) \{\s*S\.visited\.add\(id\);[\s\S]{0,120}el\.innerHTML = agentNote\(\) \+/);
+    expect(code).toMatch(/TOUR_GROUPS\s*=\s*\{[\s\S]{0,400}overlays:/);
     expect(code).toMatch(/function bScreen\(el\) \{[\s\S]{0,120}el\.innerHTML = agentNote\(\) \+/);
   });
   it('the preview bridge has the call so the page still draws outside Mimic', () => {
