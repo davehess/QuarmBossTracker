@@ -28,7 +28,16 @@ const CONTAINERS = ['Settings', 'Updates', 'Open', 'Help', '🗂 Overlay sets'];
 // ... and the setup walkthrough: one plain item on every build (the trail was picked, 2026-10-19, DECISIONS §383).
 // ... and "Take the tour again" beside it (the guild lead, 2026-10-21), the same call as the dashboard's button.
 // ... and the EQ file-date repair beside them (the guild lead, 2026-11-03), the tray door to Settings' card.
-const NEW_ITEMS = [/^ {2}↳ Span all screens/, /^✨ Setup walkthrough$/, /^🧭 Take the tour again$/, /^Fix EQ file dates \(time-zone crash\)…$/];
+// ... and the local-site doors under Open and the raid-code join (the local site and raid codes shipped with Mimic 3.0).
+const NEW_ITEMS = [/^ {2}↳ Span all screens/, /^✨ Setup walkthrough$/, /^🧭 Take the tour again$/, /^Fix EQ file dates \(time-zone crash\)…$/,
+  /^🎒 Inventory \(on this PC\)$/, /^📊 My fights \(on this PC\)$/, /^🎬 My replay \(on this PC\)$/, /^🎟 Join a raid with a code…$/];
+// Items still in the menu, same label, whose handler or state was changed on purpose after the snapshot was taken (the
+// snapshot is left as it was). They are compared by label only, so each must still exist; every other item is compared whole.
+//   Arrange the canvas: enabled follows hideOverlays, and it asks first when the Canvas is off;
+//   Send feedback: opens the in-app feedback window first, the browser route is the fallback;
+//   Revert to stable: visible only while on a beta/alpha track.
+const EVOLVED = ['  ↳ Arrange the canvas…', 'Send feedback — bug or idea', '↩ Revert to stable…'];
+const EVOLVED_NORM = (s) => { const l = JSON.parse(s).label; return EVOLVED.includes(l) ? JSON.stringify({ label: l, evolved: true }) : s; };
 // Items the snapshot has that were removed on purpose: the beta-only A / B layout submenu for that walkthrough.
 const REMOVED = [
   '{"label":"A · one step at a time","click":"() => openWelcome(\'a\')"}',
@@ -183,6 +192,10 @@ describe('the groups behind the submenus', () => {
   it('Open ›', () => {
     expect(labelsOf(sub(top('win32 full, stable, flags on'), 'Open'))).toEqual([
       '📈 My parses',
+      '🎒 Inventory (on this PC)',
+      '📊 My fights (on this PC)',
+      '🎬 My replay (on this PC)',
+      '🎟 Join a raid with a code…',
       'Open wolfpack.quest ↗',
       'Open dashboard in browser',
       'Open my sounds folder (add your own trigger sounds)',
@@ -219,8 +232,8 @@ describe('the groups behind the submenus', () => {
 describe('nothing lost, nothing changed, nothing sneaked in', () => {
   for (const name of Object.keys(SCENARIOS)) {
     it(name, () => {
-      const now = flatten(top(name));
-      const before = BEFORE[name].items.map(RENAMED);
+      const now = flatten(top(name)).map(EVOLVED_NORM);
+      const before = BEFORE[name].items.map(RENAMED).map(EVOLVED_NORM);
       // every old item (same type / checked / enabled / visible / handler) is still there ...
       const missing = before.filter((x) => !now.includes(x) && !REMOVED.includes(x));
       expect(missing).toEqual([]);

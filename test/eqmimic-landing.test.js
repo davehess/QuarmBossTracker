@@ -258,17 +258,17 @@ describe('the content module', () => {
   it('hive mind: seven ordered steps, the honest list, the costs and the doc links', () => {
     expect(C.HIVE_STEPS).toHaveLength(7);
     const steps = C.HIVE_STEPS.map(s => s.title + ' ' + s.body + ' ' + (s.code || '')).join('\n');
-    for (const needle of ['https://github.com/davehess/QuarmBossTracker', 'selfhost-bootstrap-db.sh', 'Discord application', '.env.example', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_GUILD_ID', 'WOLFPACK_AGENT_TOKEN', 'DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'DISCORD_GUILD_ID', 'guild/config.json', 'Never commit secrets', 'docker compose up -d', 'GUILD_PROVISION=auto', 'Vercel or Coolify', 'redirect URLs', 'sign in with Discord']) expect(steps).toContain(needle);
+    for (const needle of ['https://github.com/davehess/raidmimic', 'selfhost-bootstrap-db.sh', 'Discord application', '.env.example', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_GUILD_ID','DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'DISCORD_GUILD_ID', 'guild/config.json', 'Never commit secrets', 'docker compose up -d', 'GUILD_PROVISION=auto', 'Vercel or Coolify', 'redirect URLs', 'sign in with Discord']) expect(steps).toContain(needle);
     const honest = C.NOT_FINISHED.items.join(' ');
     for (const needle of ['wizard is only designed', 'hard-coded to wolfpack.quest', 'about a day of work', '.env.example still holds Wolf Pack defaults', '100 MB', 'doctor']) expect(honest).toContain(needle);
     expect(C.NOT_FINISHED.title).toBe('Not finished yet (honest list)');
     const costs = JSON.stringify(C.COSTS);
     for (const needle of ['$25', '$5', '$2', '$0', '$30', 'Railway Free cannot run the bot', 'Supabase Free', 'electricity', 'September 2026']) expect(costs).toContain(needle);
     expect(C.DOC_LINKS.map(d => d.href)).toEqual([
-      'https://github.com/davehess/QuarmBossTracker/blob/main/docs/SELFHOSTING.md',
-      'https://github.com/davehess/QuarmBossTracker/blob/main/docs/DESIGN-guild-kit.md',
-      'https://github.com/davehess/QuarmBossTracker/blob/main/guild/README.md',
-      'https://github.com/davehess/QuarmBossTracker/blob/main/docs/COSTS.md',
+      'https://github.com/davehess/raidmimic/blob/main/docs/SELFHOSTING.md',
+      'https://github.com/davehess/raidmimic/blob/main/docs/DESIGN-guild-kit.md',
+      'https://github.com/davehess/raidmimic/blob/main/guild/README.md',
+      'https://github.com/davehess/raidmimic/blob/main/docs/COSTS.md',
     ]);
     expect(C.HELP_LINE).toBe('Questions or want help standing it up?');
   });

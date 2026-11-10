@@ -26,7 +26,9 @@ describe('the Raid Mimic frame', () => {
     // the landing page takes the same bar under its stage, on a raidmimic host only
     const landing = code('web/app/raidmimic/page.tsx');
     expect(landing).toMatch(/import \{ HostBar \} from '@\/components\/RaidmimicFrame';/);
-    expect(landing).toMatch(/\{onHost && <HostBar \/>\}\s*<FeatureBlocks \/>/);
+    // Signed out the bar sits under the stage; signed in it comes first, above the Dashboard (2026-11-09). Once either way.
+    expect(landing).toMatch(/\{!signedIn && onHost && <HostBar \/>\}\s*<FeatureBlocks \/>/);
+    expect(landing).toMatch(/\{signedIn && onHost && <div className="mx-auto max-w-5xl"><HostBar \/><\/div>\}/);
     expect(frame).toMatch(/if \(!onHost\) return <>\{children\}<\/>;/);
     expect(frame).not.toMatch(/['"]use client['"]/);
   });
@@ -53,6 +55,8 @@ describe('the Raid Mimic frame', () => {
     expect(page).toMatch(/Open the guild&rsquo;s site &rarr;<\/a>[\s\S]*Open the guild &rarr;<\/a>/);
     expect(page).not.toMatch(/Open my page/);
     expect(page).toMatch(/findNote\(searchParams\.find, searchParams\.found, closed\.length, !!wolf \|\| hub\.length > 0\)/);
-    expect(page).toMatch(/\$\{listed \? 'No other' : 'None'\} of your Discord servers is a guild on Raid Mimic yet/);
+    // Wording from the guild lead, 2026-11-09: "No other guilds of yours have opted into Raid Mimic yet."
+    expect(page).toMatch(/listed \? 'No other guilds of yours have opted into Raid Mimic yet\.' : 'None of your guilds have opted into Raid Mimic yet\.'/);
+    expect(page).not.toMatch(/of your Discord servers is a guild/);
   });
 });

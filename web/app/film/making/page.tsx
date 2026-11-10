@@ -8,6 +8,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { parseFilm } from '@/lib/film';
 import { clock, type FilmMaking } from '@/lib/guildMedia';
@@ -89,6 +90,7 @@ function Pronunciations({ fm, youtube }: { fm: FilmMaking; youtube: Record<strin
 export default async function MakingPage({ searchParams }: { searchParams: { raider?: string } }) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/film/making');
+  await requireMember(user.id);
 
   const [fm, youtube, firsts] = await Promise.all([
     loadFilmMaking(), youtubeIds(), loadMedia({ collection: SET, section: 'first-still' }, { limit: 200 }),

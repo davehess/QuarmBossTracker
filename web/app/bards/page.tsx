@@ -133,7 +133,7 @@ export default async function BardsPage() {
               Get Mimic →
             </a>
             <a
-              href="https://github.com/davehess/QuarmBossTracker/tree/main/apps/mimic/pvp-sets"
+              href="https://github.com/davehess/raidmimic/tree/main/apps/mimic/pvp-sets"
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-border bg-bg/40 text-dim hover:bg-bg/70 hover:text-fg transition-colors no-underline"

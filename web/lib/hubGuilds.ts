@@ -105,7 +105,7 @@ export function guildAccess(guild: GuildPageGuild | null | undefined, membership
 // ── Invite codes ────────────────────────────────────────────────────────────────────────────────────────────
 // The hub_invites check constraint is ^[A-HJKMNP-Z2-9]{6}$: no 0 O 1 I L. 8 + 1 + 1 + 1 + 1 + 11 + 8 = 31 characters.
 export const INVITE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-export const INVITE_LENGTH = 6;
+export const INVITE_LENGTH = 8;   // was 6 until 2026-11-10; six-character codes already issued stay valid
 export const INVITE_MAX_USES = 25;
 export const INVITE_TTL_MS = 7 * 24 * 60 * 60_000;
 // A guild keeps this many live codes at once, so the table cannot be filled by a button held down.

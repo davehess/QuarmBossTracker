@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import {
   type SpellRow, decodeSpellEffects, fmtDuration, fmtSeconds, RESIST_NAME, TARGET_NAME,
 } from '@/lib/spellDecode';
@@ -34,6 +35,7 @@ export default async function DbSpellPage({ params }: { params: Promise<{ id: st
 
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/db/spell/${spellId}`);
+  await requireMember(user.id);
 
   const sb = supabaseAdmin();
   const { data: spellData } = await sb.from('eqemu_spells').select(SPELL_COLS).eq('id', spellId).maybeSingle();

@@ -31,6 +31,16 @@ const row = (extra = {}) => ({
 });
 
 describe('isCharmCandidate — who no charm spell can ever take', () => {
+  // 2026-11-10, the guild lead: "PusEventStarter and You Hear shouldn't be on this list. same with teleporters and other
+  // mobs that cannot be targetted". The rows below are the mirror's own (Crypt of Decay, a PoK translocator).
+  it('drops event controllers, voices and translocators', () => {
+    const starter = row({ name: 'PusEventStarter', level: 10, bodytype: 67, special_abilities: '10,1' });
+    const voice = row({ name: 'You_hear', level: 2, bodytype: 67, special_abilities: '35,1^39,1' });
+    const voiceBody1 = row({ name: 'You_hear', level: 2, bodytype: 1, special_abilities: '35,1^39,1' });   // 35 alone drops it
+    const translocator = row({ name: 'Translocator_Deela', level: 1, bodytype: 1, special_abilities: '19,1^20,1^24,1^35,1' });
+    for (const r of [starter, voice, voiceBody1, translocator]) expect(cp.isCharmCandidate(r, 'testzone'), r.name).toBe(false);
+    expect(cp.isCharmCandidate(row({ name: 'a_scrounging_rat', level: 46, bodytype: 21 }), 'testzone')).toBe(true);
+  });
   it('keeps an ordinary mob', () => {
     expect(cp.isCharmCandidate(row(), 'testzone')).toBe(true);
   });
@@ -56,7 +66,7 @@ describe('isCharmCandidate — who no charm spell can ever take', () => {
     expect(cp.isCharmCandidate(row({ special_abilities: '19,1' }), 'testzone')).toBe(true);
   });
   it('drops the untargetable and swarm-pet body types, keeps animal / undead / summoned', () => {
-    for (const bt of [11, 60, 64, 66]) expect(cp.isCharmCandidate(row({ bodytype: bt }), 'testzone')).toBe(false);
+    for (const bt of [11, 60, 64, 65, 66, 67]) expect(cp.isCharmCandidate(row({ bodytype: bt }), 'testzone')).toBe(false);
     for (const bt of [3, 21, 24, 25, 27, 28]) expect(cp.isCharmCandidate(row({ bodytype: bt }), 'testzone')).toBe(true);
   });
   it('drops a raid target', () => {

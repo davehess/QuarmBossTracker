@@ -24,8 +24,8 @@ screenshots from §3.
 >
 > It's **AGPL — genuinely open source.** Run it for your guild free, fork it, change whatever you like. The only obligation is the licence's: if you modify it and run it for people over a network, you share your source back.
 >
-> Setup is honest work — budget an evening or two. Guide: <https://github.com/davehess/QuarmBossTracker/blob/main/docs/SELFHOSTING.md>
-> Repo: <https://github.com/davehess/QuarmBossTracker>
+> Setup is honest work — budget an evening or two. Guide: <https://github.com/davehess/raidmimic/blob/main/docs/SELFHOSTING.md>
+> Repo: <https://github.com/davehess/raidmimic>
 >
 > Happy to answer questions or walk anyone through setup. Not selling anything.
 

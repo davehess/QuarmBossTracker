@@ -10,6 +10,7 @@ import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { selectAll } from '@/lib/selectAll';
 import NewPageTag from '@/components/NewPageTag';
 import { PLAN, PREFLAGS, RAID_DATE_LINE, TRAVEL_BASICS, bossAnchor, loc } from '@/lib/raidPlan';
@@ -103,6 +104,7 @@ const H = ({ children }: { children: React.ReactNode }) => (
 export default async function RaidPlanPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/pop/raid');
+  await requireMember(user.id);
 
   const [data, walls, saved, loot] = await Promise.all([
     load(), Promise.all(PLAN.map(s => loadWalls(s.zone))),

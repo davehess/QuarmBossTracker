@@ -28,7 +28,7 @@ enough."
 Each of these was checked against the code on the date above.
 
 - **Open source.** Every line of Mimic, the bot and this website is public on
-  GitHub (github.com/davehess/QuarmBossTracker). You, or a friend who codes,
+  GitHub (github.com/davehess/raidmimic). You, or a friend who codes,
   can check anything on this page.
 - **Private chat is filtered on your own PC first.** Officer chat, group chat,
   custom channels, `/say`, OOC, shouts and auctions are dropped on your machine

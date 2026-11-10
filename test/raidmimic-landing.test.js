@@ -225,7 +225,7 @@ describe('the page', () => {
     expect(page).not.toMatch(/robots:/);                                          // no pinned noindex any more …
     expect(page).toMatch(/\.\.\.raidmimicSeo\(headers\(\)\.get\('host'\), '\/'\)/);   // … the Host header decides (tests above)
     expect(page).toMatch(/export function generateMetadata\(\): Metadata/);
-    expect(page).not.toMatch(/getSessionUser|supabase/i);
+    expect(page).not.toMatch(/getSessionUser/i);   // 2026-11-09: public, but a signed-in visitor gets the Home panel via supabaseServer (raidmimic-skip-video.test.js)
   });
   it('renders ONE page, the story stage (the guild lead’s pick C, 2026-11-01), and reads no query: no `?v=` branches, no beta tag, no old layouts', () => {
     expect(page).toMatch(/<StoryStage downloadUrl=\{DOWNLOAD_URL\} onHost=\{onHost\} \/>/);
@@ -284,13 +284,14 @@ describe('the shared pieces (Parts.tsx)', () => {
     expect(footer).toMatch(/\{FAN_PROJECT_LINE\}/);
     expect(footer).not.toMatch(/text-\[(?:9|10|11)px\]/);
   });
-  it('server components except the two that play: only StoryStage and StoryVideo are client files, and the directory holds exactly the graduated page’s files', () => {
+  it('server components except the two that play: only the stage, its video and the panel gate are client files, and the directory holds exactly the graduated page’s files', () => {
     for (const f of ['Parts.tsx', 'StoryParts.tsx', 'StoryBits.tsx', 'FeatureIcons.tsx']) expect(read(L + f), f).not.toMatch(/['"]use client['"]/);
     expect(read('web/app/raidmimic/page.tsx')).not.toMatch(/['"]use client['"]/);
-    for (const f of ['StoryStage.tsx', 'StoryVideo.tsx']) expect(read(L + f), f).toMatch(/^(?:\/\/[^\n]*\n)*'use client';|^'use client';/);
+    for (const f of ['HomeDashboard.tsx', 'HomeParts.tsx']) expect(read(L + f), f).not.toMatch(/['"]use client['"]/);
+    for (const f of ['StoryStage.tsx', 'StoryVideo.tsx', 'HomePanelGate.tsx']) expect(read(L + f), f).toMatch(/^(?:\/\/[^\n]*\n)*'use client';|^'use client';/);
     expect(fs.readdirSync(path.join(ROOT, L)).sort()).toEqual([
-      'FeatureIcons.tsx', 'Parts.tsx', 'StoryBits.tsx', 'StoryParts.tsx', 'StoryStage.tsx', 'StoryVideo.tsx',
-    ]);
+      'FeatureIcons.tsx', 'HomeDashboard.tsx', 'HomePanelGate.tsx', 'HomeParts.tsx', 'Parts.tsx', 'StoryBits.tsx', 'StoryParts.tsx', 'StoryStage.tsx', 'StoryVideo.tsx',
+    ]);   // HomeDashboard + HomeParts (server) and HomePanelGate (client): the signed-in top (Dashboard, picked 2026-11-09)
   });
   it('fetches and embeds nothing external; every outbound link is one we name', () => {
     const urls = new Set();

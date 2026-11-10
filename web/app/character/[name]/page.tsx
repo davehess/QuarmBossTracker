@@ -10,6 +10,7 @@ import type { Metadata } from 'next';
 import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { fmtDmg, fmtDuration, fmtTime, fmtDkp, dayKey, dayLabel, cleanBossName } from '@/lib/format';
 import { userTz } from '@/lib/timezone';
 import { eraForTimestamp } from '@/lib/eras';
@@ -206,6 +207,7 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
 
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/character/${encodeURIComponent(name)}`);
+  await requireMember(user.id);
 
   const data = await load(name);
   const tz = await userTz();
@@ -320,6 +322,12 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
           <span>
             <Link href={`/character/${encodeURIComponent(displayName)}/inventory`} className="text-blue hover:underline">
               🎒 Inventory
+            </Link>
+            <span className="ml-1 text-[9px] tracking-widest font-bold px-1.5 py-0.5 rounded bg-orange/20 border border-orange/60 text-orange uppercase">Beta</span>
+          </span>
+          <span>
+            <Link href={`/character/${encodeURIComponent(displayName)}/spells`} className="text-blue hover:underline">
+              📜 Spells
             </Link>
             <span className="ml-1 text-[9px] tracking-widest font-bold px-1.5 py-0.5 rounded bg-orange/20 border border-orange/60 text-orange uppercase">Beta</span>
           </span>

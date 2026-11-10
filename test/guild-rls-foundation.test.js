@@ -308,11 +308,21 @@ describe('recordParse under a stubbed PostgREST', () => {
   it('a token the database rejects (401) is retried once with the service key, so a mis-set secret loses no parse', async () => {
     const { calls, fetchStub } = fakeRest({ rejectScoped: true });
     vi.stubGlobal('fetch', fetchStub);
-    const out = await runRecordParse(guildScoped.scopedClient('acme', { jwk: OTHER_JWK }));
+    const out = await runRecordParse(guildScoped.scopedClient('wolfpack', { jwk: OTHER_JWK }));
     expect(out).toMatchObject({ encounterId: 'enc-uuid-1', contributionId: 'contrib-1' });
     expect(supabase.scopedStats().rejected).toBe(6);
     const posts = calls.filter((c) => c.path === '/contributions');
     expect(posts.map((c) => c.bearer === SERVICE_KEY)).toEqual([false, true]);
+  });
+
+  it('fails closed for a non-home guild: a rejected token is never retried with the service key', async () => {
+    const { calls, fetchStub } = fakeRest({ rejectScoped: true });
+    vi.stubGlobal('fetch', fetchStub);
+    const client = guildScoped.scopedClient('acme', { jwk: OTHER_JWK });
+    const out = await supabase.runScoped(client.token, () => supabase.select('bosses_local', 'internal_id=eq.x'));
+    expect(out).toBeNull();
+    expect(calls.length).toBe(1);
+    expect(calls.some((c) => c.bearer === SERVICE_KEY)).toBe(false);
   });
 
   it('a request made outside a scope is unaffected by one running at the same time', async () => {

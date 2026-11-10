@@ -14,9 +14,11 @@
 // curated-boss read asks for at most one chunk's worth of rows.
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase-server';
+import { isGuildMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { selectAll } from '@/lib/selectAll';
 import { GUILD_TAG } from '@/lib/guild';
+import { isEventNpcId } from '@/lib/eventNpcIds';
 import {
   buildSpawnBosses, chunk, type EncounterRow, type Spawn2Row, type SpawnEntryRow,
 } from '@/lib/replayBosses';
@@ -38,6 +40,7 @@ type EncRaw = {
 export async function GET(req: Request) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) return fail(401, 'unauthorized');
+  if (!(await isGuildMember(user.id))) return fail(403, 'members only');
 
   const night = new URL(req.url).searchParams.get('night') ?? '';
   if (!NIGHT_KEY.test(night)) return fail(400, 'bad request');
@@ -83,7 +86,7 @@ export async function GET(req: Request) {
       if (error) throw error;
       for (const r of (data ?? []) as { npc_id: number }[]) curated.add(r.npc_id);
     }
-    const encounters: EncounterRow[] = raw.filter(r => curated.has(r.npc_id)).map(r => {
+    const encounters: EncounterRow[] = raw.filter(r => curated.has(r.npc_id) || isEventNpcId(r.npc_id)).map(r => {
       const t = Array.isArray(r.eqemu_npc_types) ? r.eqemu_npc_types[0] : r.eqemu_npc_types;
       return { npc_id: r.npc_id, name: t?.name ?? null, zone_short: r.zone_short, started_at: r.started_at, ended_at: r.ended_at };
     });

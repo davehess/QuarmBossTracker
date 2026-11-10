@@ -103,15 +103,122 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **Bot HA stage 1: the Discord login lease (2026-11-10, bot 4.0.74, §562)**: only the lease holder logs in, so a deploy no longer runs two bots posting side by side (~14 s overlap measured that morning). The new process waits as a standby until the old one lets go at shutdown, then logs in (handover gap ≈ the 10 s drain + up to 3 s poll + login). Agent uploads during the gap get a retryable 503. Migration `20261110200000_bot_lease.sql` applied before the push. The first deploy of 4.0.74 still overlaps once (the 4.0.73 bot holds no lease); the handover is first exercised by the deploy after it. Cost: after a crash (no release), the restarted bot waits out the dead process's lease, up to 30 s, before logging in. **Stage 2 (warm standby that also takes over on a crash within ~30 s and serves uploads) is open:** it needs `utils/liveMemory.js` reads moved to Supabase and the module-level poster timers guarded, see DECISIONS §562.
+
+- **OpenDKP levels from /who (2026-11-10, bot 4.0.70)**: officer-only `/opendkplevels` previews raises (`Name 58 → 60 (seen 3 days ago)`) and applies them on a button; read-modify-write via `updateCharacter` (POST `/characters/<id>`, whole row, only `Level` changed). Planner `utils/opendkpLevels.js`: latest non-null /who level within 180 days (via `who_directory_lookup`), raise only, lower reported never written, deleted/out-of-1..65 skipped. Honours `OPENDKP_HALT`; stops on 401/403; one `audit_log` row per change (`opendkp_level_update`, old level in payload; no Undo button, the audit revert is boss-state only). Caveat: `last_seen` is the newest /who sighting of any kind, so the 180-day window can pass a level older than that. Untested against live OpenDKP (no credentials in the build session).
+
+- **Security hardening (2026-11-10) — guild registry: server ownership + invite-guess cap** (bot 4.0.67, web 2.1.127): `createGuild` binds a Discord server only when a signed 15-minute cookie, written by a "Confirm my server" sign-in that read the person's own server list (`web/lib/hubManage.ts`, `openSignIn.ts`), lists it as owner / MANAGE_GUILD; otherwise it asks for a fresh sign-in (a guild with no server needs none). Invite redeem counts failed tries in `hub_invite_attempts` (8 per player, 20 per address HMAC, per 10 min; in-memory limiter kept as first layer); new codes are 8 characters, 6-character ones stay valid; the bot's midnight chain prunes the table at 1 day. **Migration `20261110140000_hub_invite_attempts.sql` must be applied BEFORE the web deploy** (new constraint + table). Tests: `test/hub-hardening.test.js`.
+
+- **Security hardening (2026-11-10) — small bot/web/CI items** (bot 4.0.65, web 2.1.125): Discord clients default `allowedMentions` to no @everyone/@here; bot `GET /health` serves breaker/budget/memory detail only to a valid session token (anonymous callers get readiness + version; pre-raid drill sends its token); `utils/clientIp.js` documents Railway's X-Real-IP; stale shared `WOLFPACK_AGENT_TOKEN` references removed (the bot never reads it); workflow inputs/tag names reach shell steps via `env:` (quest-import, Mimic and Parser release); `DEMO_OBFUSCATE_SALT` fallbacks throw in production (web obfuscate/raidShareLookup, bot replay window answers 503) and the anon-feedback/interest IP hash is HMAC-SHA256 keyed by the salt (existing hourly-limit hashes simply stop matching).
+
+- **Security hardening (2026-11-10) — upload data integrity** (bot 4.0.67): the fight upload no longer attributes first-person damage or a contributor row to a character linked to another member's account (unlinked/new alts unchanged); parse rows over a damage ceiling (max of 10x catalog HP, 2.5M) or 25k DPS are held out of the merge and recorded in `raw_parse.flags` (`utils/parsePlausibility.js`); bosskill relay times must be within 48 h back / 5 min ahead (48 h so a long bot outage keeps the agent's queued kills) and lockout remaining time within 0-8 days, else the entry is dropped with one stdout line. PvP relay timestamps (backfill-capable) deliberately untouched.
+
+- **Security hardening (2026-11-10) — bot scope (bot 4.0.67)**: a rejected guild token is retried with the service key for the home guild only (other guilds fail closed); `test/route-allowlist.test.js` pins the guest/hub allowlists as deny-by-default against the router; `hasOfficerRole` requires the member to be in `DISCORD_GUILD_ID`; a boot line names an unset `SUPABASE_GUILD_ID` in production (the ~166 `|| 'wolfpack'` fallback sites are untouched).
+- **Security hardening (2026-11-10) — phase 2: guild-scoped read policies** (migration `20261110120000_guild_scoped_reads.sql`, APPLIED 2026-11-10 after a dry run of the whole migration plus `supabase/tests/two_guild_rls.sql` in one rolled-back transaction passed): `public.my_guild_ids()` (the caller's guilds, once per query) + `public.is_member_of(guild)` + `public.home_guild_id()`; the 46 member-only read policies on guild_id tables check the row's own guild, and the 9 public read policies on guild_id tables serve home-guild rows only. `supabase/tests/two_guild_rls.sql` (run by hand, rolls back) + `test/guild-scoped-reads.test.js` guard it. After applying: a real Wolf Pack login still reads 45,410 encounters and 621 characters; a 7-day /who read of 17,104 rows takes 66 ms with the guild set computed once (`loops=1`).
+- **Security hardening (2026-11-10) — standard browser security headers on every route** (`web/next.config.js` `headers()`, web 2.1.124): nosniff, strict-origin-when-cross-origin referrer, HSTS (1 year, no preload), a Permissions-Policy denying camera/microphone/geolocation/payment, same-origin framing only, and a report-only CSP to be tightened from what it flags. `test/security-headers.test.js` guards the set.
+
+- **2026-11-09 — raidmimic.com pricing copy = analytics (on beta, awaiting promotion to main).** One paid plan, Pro · Guild $25/month; the Pro · Individual tier, `INDIVIDUAL_PRICE` and the "costs us money" / storage reasons are gone from `raidmimicStory.ts`, `raidmimicStartFree.ts`, `StartFree.tsx` and the terms and refunds pages (DECISIONS §552; guild lead's picks on the Decision Desk). Nothing is charged today; no copy added for the unbuilt 7-day retention, free week page or grace period. Test: `test/raidmimic-landing-variants.test.js`. No web version bump on beta.
+
+
+- **🧪 raidmimic landing: big "Skip video" + signed-in home, two previews on beta awaiting the guild lead's pick (2026-11-09).**
+  The guild lead: *"a big skip video button at the top of raidmimic.com and also have users log into it and have their
+  information come up on the homepage or redirect instead of hitting the video ... a link 'rewatch the video' up top."*
+  `https://b.wolfpack.quest/raidmimic?v=b` (Doorway: a signed-in visitor is redirected to /characters, which carries the
+  Rewatch link) and `?v=c` (Home panel: "Your Raid Mimic" panel in place of the video, four coordination placeholders
+  labelled coming). Both: big Skip at the top, remembered per viewer. The default (no `?v=`) is unchanged. Rewatch uses the
+  `#video` hash because a raidmimic host drops queries. `test/raidmimic-skip-video.test.js`. Picked one: graduate it and
+  delete the other.
+
+- **🧾 2026-11-08 — Settings → Zeal: Stable, Zeal 1.5.0, Ours on 1.5 (Mimic beta).** The guild lead: "should be stable, then
+  1.5.0, then ours that are updated off of 1.5". `zealUpdater.js` gains source `zeal15` (CoastalRedwood's newest v1.5.x from
+  the release list, alpha included, since /releases/latest skips prereleases); the `test` source (the fork's test-all, rebased
+  on v1.5.0-alpha0) is labelled "Ours on 1.5". The Wolf Pack 1.4.x build is no longer offered; a Mimic already set to it keeps
+  it and Settings says so. Test: `test/zeal-source.test.js`.
+- **🧪 Gold splits for every scripted PoP event (web 2.1.116 on main, [beta], 2026-11-09, §555).** The guild lead: *"yes make gold
+  splits a site feature for every event, linked for replays and parses"*. https://wolfpack.quest/pop/events/splits (index) and
+  https://wolfpack.quest/pop/events/<slug>/splits (one event): attempts found in `encounters` (`web/lib/eventAttemptsLoad.ts`,
+  grouped by a start match, raid night or a 30-minute gap), stacked timelines first and largest with click-to-align on a key
+  moment and time-to-next, the splits table with gold for each segment's best ever, sum of best and each attempt's possible
+  save; every split links its parse, every attempt its replay window. Hand-written moments for the five elemental events
+  (`web/lib/eventSplitsDefs.ts`), a generic default for the other 98. "Play these attempts together" links to the replay
+  overlay, labelled "coming" until it ships. Tests `test/gold-splits.test.js` (gold comparison mutation-checked).
+
+- **🧾 raidmimic.com front door: C "Home panel" graduated, b deleted (web 2.1.114 on main, 2026-11-09).** Picked on the Decision
+  Desk 2026-11-09 (DECISIONS §546). Signed out: the story stage with a big "Skip video" at the top, remembered per viewer, and
+  "Rewatch the video" (`#video`) on the collapsed bar. Signed in: "Your Raid Mimic" (their characters, what each needs next, the
+  coordination tools marked coming) instead of the video, with "Rewatch the video" revealing the stage in place. The Doorway
+  redirect, the `?v=` reading and `/characters`' rewatch link are gone; the page reads no query. `loadMine` now lives in
+  `web/lib/hubMine.ts`, shared by the page and `/characters`. `test/raidmimic-skip-video.test.js`.
+
+- **🧾 Hail board: the four elemental Essences (bot 4.0.60 · web 2.1.111 on main, 2026-11-09).** The guild lead: *"hails on
+  Essence of Water will give you but not say anything it seems. we should include those hails on the command center for each of
+  the elemental planes"*. Coirnav, Fennin Ro, Xegony and the Avatar of Earth open `Essence of Water / Fire / Air / Earth` on the
+  board (`utils/hailBoard.js` HAIL_BOSSES, the Flag lab copy in `web/lib/hailBoardView.ts`). The Essence puts its item on the
+  cursor with no line (`lua_modules/projection_eligibility.lua`, 20 minutes, the killing raid or group), so a witnessed hail or a
+  tap marks a raider; `done` is the guide's hail step or `time_1`. Tests `test/hail-board.test.js`. Agent unchanged: a window's
+  `npc_name` is what `_hailNpcWanted` matches.
+
 - **🧾 2026-11-08 — Web 2.1.110: all of beta's website promoted to main.** The guild lead: "you can push the pets website
   too", then "All of beta's website" when asked which. Every beta-only web file, its tests, `scripts/raidmimic-shots`, the
   guild-scope baseline and the raid_share_groups migration file (already applied in production). The ?v= previews still
   awaiting a pick (admin ?v=b, raidmimic ?v=b..d, /about ?v=b/c, /spectator ?v=b/c, /me ?v=b) are now reachable on
   wolfpack.quest with their ?v= as well; the default pages are what beta showed.
 
+- **🧪 Guest characters: read here, nothing sent (agent 4.0.81 beta, 2026-11-09; first draft, not yet routed).** The guild lead:
+  *"make sure that when a friend is going to take his files and play as a guest on my machine, he's able to do so."* A guest's
+  character files sit in the host's EQ folder and every upload is attributed to the signed-in account, so his combat, chat, raid
+  roster, buffs and PoP flags would all post as the host. A guest character is still TAILED (overlays, triggers, timers, the map,
+  the Command Center and Target Info keep working locally) but nothing attributable to it leaves the PC. Unlike **Hide
+  completely** (`WOLFPACK_EXCLUDED_CHARS`, the log is never opened) it does not stop the log being read.
+  - **One predicate.** `_isGuestChar(name)` in the agent, seeded from `WOLFPACK_GUEST_CHARS` (comma-separated, any case) and
+    changed live by `POST /api/guest-character {character, on}` (no restart; adding a name also empties what is already queued
+    for it). `shouldUploadForCharacter` returns false for a guest, which feeds the existing per-log `_sourceExcluded` consumers,
+    the PoP / Quarmy / spellbook / inventory file scans, the encounter and historical-chat paths, and the rebuild.
+  - **Last line of defence.** `enqueueUpload` runs `_guestScrub` before anything is queued: a payload naming a guest is dropped,
+    a batch loses only the guest's rows (casting, looted, rolls, chat, PoP flags, faction, fun events, xp, lockouts, boss kills,
+    buff casts, trigger votes, crash reports, raid roster members). `_primaryCharacter()` never returns a guest, so the
+    operator-level streams are never attributed to one.
+  - **The tail loop splits the two questions.** `_sourceExcluded` (local trackers) stays the `exclude_from_stats` answer only;
+    `_noSend` (= excluded or guest) gates every line that leaves the PC. Tells stay in the local ring and the Chat overlay and are
+    never put in the upload buffer. Buff landings still feed Target Info and the Pet tracker; only the `buff_casts` push is skipped.
+  - **Direct posts.** Live-state skips a guest's Zeal state (and `_postLiveState` strips a guest row whichever caller built it);
+    the raid roster is not posted while a guest's client is live (the type-5 sample names no character, so it may be the guest's own
+    raid view); a trigger fired from a guest's line is not posted to Discord or fanned out to other Mimics; map sightings and
+    watch marks stay on the local map; requests to the bot never carry a guest's name (prefs, backfill, ui edits, the multiplexed
+    poll, mob-info, target buffs and casts, extended target, my-parses); the reporter heartbeat's `live_character` and the
+    feedback log excerpt never name one; the threat snapshot picks a non-guest uploader.
+  - **Mimic.** `cfg.guestCharacters` (default `[]`) → `WOLFPACK_GUEST_CHARS` at launch; `save-config` keeps plain names only and
+    tells the running agent the difference. The dashboard's Me card ("How each character shows") has a **Guest** switch on each
+    row, saved through the same `window.mimic.saveConfig` (a plain browser posts `/api/guest-character`, which holds until the
+    engine restarts). The tray has no per-character modes, so there is nothing to mirror there. The setup walkthrough
+    (`welcome.html`) is untouched: a guest is set up after onboarding.
+  - **The friend's own flags.** He loads them at https://raidmimic.com/characters from his PoPFlags files (that page shipped
+    2026-11-09); the agent never uploads them for him. His names must NOT be linked to the host's account
+    (`characters.discord_id`), or raidmimic.com refuses his claim.
+  - **Known gaps (say so, don't hide them).** The Zeal type-5 raid sample and the Area Rampage fan-out carry no character, so the
+    raid roster is withheld while any guest client is live and a rampage callout derived from a guest's combat line is not
+    attributable here; the local PoP status overlay reads no guest PoPFlags file; `/api/server/*` dashboard passthroughs and a
+    manual UI Studio capture/upload are the host's explicit actions and are not gated. Not yet run against a real second client.
+  - **Tests:** `test/guest-characters.test.js` (the real `enqueueUpload` per kind, the direct posts, the boot filter keeping the
+    log, Mimic's list and launch env, the dashboard switch); existing harnesses that slice the agent gained an `_isGuestChar` stub.
+
+- **🧪 "Vision restored" waits for the real end of a blind (agent 4.0.80 beta, 2026-11-09).** The guild lead, on Azobian the
+  Darklord: *"vision restored hits too early"*. Infernal Darkness (spell 3049) is 2 ticks with no fade line, so the catalog
+  timer (12 s from the landing) was the only end and fired while the screen was still black (a buff runs to the server tick).
+  Now a catalog blind remembers its spell, and `_expireStaleBlinds` holds it while Zeal's buff window still lists it and ends
+  it the moment the window drops it; no fresh Zeal, or a spell Zeal never listed, keeps the old timer. Tests
+  `test/blind-catalog.test.js` (mutation-checked).
+
 - **🧾 Enrage calls earlier: warnings ahead of each mob's own enrage %, and ENRAGED straight off the Zeal pipe (agent 4.0.77 beta · bot 4.0.59 on main, 2026-11-07).** The guild lead: "enrage calls have all been late lately" -> picked option C (A + the pipe).
   The old non-boss warning sat at 9%, the server's own default enrage point, so it spoke ~3 s AFTER the ENRAGED line (two "earlier" votes). Now: warn a boss 3 points and any other mob 2 points ahead of the mob's own enrage %, taken from (a) what this PC has seen it enrage at (median of the last 5, once two are known; `enrage_observed.json` beside the stats file, local only), (b) the catalog `enrage_pct` the bot's mob-info now carries (ability 2 param0; null = the server default), (c) 9. Defaults are unchanged for a boss (12) and 11 for others. The HUD's enrage zone and the Tank card's threshold follow the same point. And the two server lines (`<mob> has become ENRAGED.` / `is no longer enraged.`) go from Mimic's Zeal pipe reader (colour 306 = `USERCOLOR_NPC_ENRAGE`, matched on text) to `POST /api/zeal-fast-line`, are run through `evaluateTriggersAgainstLine` and `_meNoteRawLine` at once, and the log tail's later copy (within 6 s, per character, one pipe copy cancels one log copy) skips trigger evaluation only (`_tailTriggerEval`). Each start line for the active character's own target records its HP % and journals "Enrage (observed)". Needs the Mimic beta pairing this agent for the fast path; the warning change is agent-only and takes `enrage_pct` once bot 4.0.59 is live. Tests: `test/enrage-warn-threshold.test.js`, `test/enrage-fast-line.test.js`, `test/mob-enrage-pct.test.js` (bot). Unverified: Quarm's own `StartEnrageValue` (the catalog states a % for few mobs; the observed value corrects the rest after two enrages). Graduation to stable repeats this entry with the stable version.
+  **Default moved to 10% (agent 4.0.78 beta, 2026-11-09)** after the guild lead's report that a non-boss enraged with no early call: EQMacEmu's `StartEnrageValue` defaults to 10 (`common/ruletypes.h:496`), not 9, so a mob with no catalog or observed % now warns at 13 (boss) / 12 (other). The same report showed the real cause of that one: the mob sat at 4% for about two minutes and enraged only when damage resumed, because the server checks enrage on damage (`attack.cpp:3599`).
 
+- **🧪 Map: the map file's points show (Mimic beta, 2026-11-09; the guild lead: "we're missing POK books and other points on
+  our map").** The agent already parsed the P lines (`_mapParseLocalFiles`); `map.html` drew them as the lowest-ranked names,
+  and thirty live "lizard man broodling" labels won every collision. Now a way out (zone lines "to …", Plane of Knowledge
+  books / stones, translocators, rings, spires: `isTravelPoint`) ranks above every name in the file's own colour, every point
+  draws a small + marker, and one mob name labels at most its two nearest mobs (`LABEL_SAME_MAX`; your target always).
+  Test `test/map-travel-points.test.js`.
 - **🧾 Weave timer: a slim lane on the HUD ring and Box, and a Weaving timer Canvas piece (Mimic beta draft, 2026-11-07).** The guild lead, for a
   monk's kick + two `/bandolier load` weave: "A on HUD but slim ... right side of the HUD circle where Mana or Stamina would be, scroll
   vertically ... also add it to the box HUD ... a canvas element can also exist as Weaving timer ... it needs to be local". New
@@ -124,7 +231,103 @@ next touch one rather than assuming a missing row means a missing doc.
   "Weave timer". Tests `test/weave-engine.test.js`. **Curved on the ring (2026-11-07,** *"please curve the line to match the arc
   for the circle"***):** the ring's canvas covers the ring square and `weaveDraw.js` `drawArc` strokes the lane along the right arc
   (R 172, 56°-124°, `data-wp-weave="arc"`); the Box keeps the straight column (its height spelled out: a canvas with top + bottom
-  and `height:auto` keeps its pixel height).
+  and `height:auto` keeps its pixel height). **The ring lane stayed grey mid-fight (2026-11-09,** *"need the weaving to work"***):**
+  that fight's own log shows 20 crush and 6 punch rounds (the default words) and the engine lights up on a replay of it, so the break
+  is after the engine. Three fixes on beta: the HUD and Timers canvas windows run with `backgroundThrottling:false` (Chromium stops
+  animation frames for a window it counts as hidden or occluded, and the lane painted only on frames); `weaveDraw.js` paints on a
+  50 ms timer when a frame does not come; a lane whose own character is not live draws the character off the pipe that IS (the HUD
+  names the character from the log file, Zeal from the game). The ring now also says why it is idle ("weave: needs Zeal", or the
+  swing word it did not know). If it still sits grey, the next screenshot names the cause. **It did (same day):** the guild lead's
+  chat shows Zeal timestamps and the SHORT melee form, `[11:53:53] crush a potameid wildling for 256`, and the hub's gate only took a
+  line starting "You ". `weave.js` now drops a leading `[HH:MM(:SS)( AM|PM)]` and reads the short form (lowercase first word,
+  ends at the number, only a 2H / fist word counts, `miss` alone is skipped); `zealPipe.js` `enrageLineOf` drops the stamp too,
+  so the instant enrage call fires for anyone with chat timestamps on. **Working live the same afternoon; then "when i'm not attacking
+  can we turn off the weaving timer?":** idle with nothing to report, `weaveDraw.js` paints nothing and sets `data-wp-idle` on the
+  canvas; `me.html` reads it in `layoutWeave` (`_weaveIdle`) and gives the monk's endurance arc back until the next swing; the
+  Timers canvas treats a `.wvidle` piece like an empty panel (no plate, no label, ✥ kept). A reason (needs Zeal, an unknown
+  swing word) still shows. Dual one-handers log only `punch` (fist), so with no 2H swing there is nothing to weave and the piece
+  stays off. **More formats ("arc, thin vertical line, etc."):** the Canvas piece adds `warc` Arc (a horseshoe, `data-wp-arc`
+  "165 -125 125 22", the 4th number the band width) and `wbar` Thin bar (`drawBar`: the windows, a white "now" mark, orange swing
+  ticks, a red edge on a fresh clip, no text) beside the Timing highway and Upright lane. **Attempts captured, `/pipe weave`,
+  failed swaps voided (2026-11-09):** every attempt (landed, clip, miss, void) is a record (`_record`: press, window open/close and
+  phase at the press, fist, expected / actual 2H, interval, outcome, reason) appended to `<userData>/weave-attempts.ndjson`
+  (5 MB rotation). Zeal's `/pipe weave` (custom pipe object, type 4) marks a press and joins the loads within 1.2 s. A bandolier
+  FAILURE (colour 1012, or the words: "canceling set load", "You cannot swap items when", "You are too busy to …") within
+  2.5 s of the press voids it: out of presses / ✓ / ✕ / ·, counted as ⊘. "Already swapping" and "already equipped" are not
+  failures (ordinary channel; an overlapping second load prints them). **Reconciled with Basketweaver (2026-11-09):** the
+  epic checkbox is gone: agent 4.0.82 `/api/me` carries `gear` (`_meGear`: Hands item, weapons, /who race, from the parsed
+  inventory export) and the HUD sends `epic` only for Celestial Fists (10652) in Hands, the server's own test (EQMacEmu
+  `Client::GetHandToHandDelay`); Dark Hand Wraps (28949) are armour, so a monk in them is on bare fists (2.0 s at 65 human).
+  The swap time (press to 2H back) defaults to 400 ms under a new key `weaveSwapMs` (was `weaveMargin` 150): Basketweaver's
+  measured "Weave Off Delay", and the 150 left the last quarter second of green clipping (0 ✓ / 10 ✕ in the guild lead's
+  screenshot). Basketweaver's own "Offhand: Epic Fists 1.6 s" did not match the guild lead's gear. **Side-by-side video
+  (same day; Basketweaver "B 26/33 rounds weaved | Bonus attacks: 52 attempts 38 landed | Added DPS: 33 | Avg reaction:
+  334ms", ours 3✓ 5✕ 6· at the frame its count read 12):** the short form prints every miss as a bare `miss`, so a missed 2H
+  round vanished (the next weave read as a clip) and a missed fist read as no fist. `weave.js` now places a bare miss by time
+  (after a press = the fist; within 300 ms of the predicted 2H = that round), treats lateness of a whole number of swings as
+  unseen rounds (`onBeat`), and re-locks the swing speed when haste changes (two agreeing gaps outside the band, or three
+  "exact doubles", replace the samples; the old band refused a 1.65 s → 3.65 s change forever, so ours showed red where
+  Basketweaver said swing). Tally adds Basketweaver's terms (`rounds`, `fistTried` / `fistHit`, `weaveDmg`, `addedDps`,
+  `reactAvg`); a landed weave flashes green with "WEAVE +damage"; the highway and Thin bar show four swings ahead (were two;
+  ours scrolled twice as fast); the HUD lane can run bottom to top (`weaveDir`). **/mystats calibrates (same day,** *"running
+  /mystats will sync up the basketweaver apparently"***):** EQMacEmu `Mob::ShowStats` prints `Haste: N (cap M)` with N = 100 +
+  haste (`Mob::GetHaste`; under 100 = slowed) and `Client::SetAttackTimer` times a swing as delay × 10000 / N. The hub reads
+  that line (your class only: a targeted pet prints its own), and `mystats()` / `_calibrate()` turn N and the measured interval
+  into the 2H's real delay (`statsDelay`), which then sets the haste at any later interval, so the fist window no longer leans
+  on the "2H weapon delay" setting. The guild lead's numbers fit: 3000 / 1.82 = 1648 ms hasted, 3000 / 0.82 = 3659 ms
+  slowed (Basketweaver's 3.65 s). **Re-syncs are said out loud (same day: "it jumps and doesn't say anything"):** the engine
+  keeps `notice` { kind, text, at }: `SYNC ±N ms` when a 2H swing lands ≥ 150 ms off the prediction, `SPEED a → b s` on a
+  re-lock, `/mystats: 2H delay D, haste H%` on a calibration; the highway's header and the ring (beside the arc's end) show it
+  for 2 s, fading. **Haste from buffs and gear (same day: "We should be figuring out haste based on buffs too"; agent 4.0.83,
+  beta):** the agent adds up the live Zeal buff list and the worn items the way the server's `Mob::GetHaste` does (EQMacEmu
+  c2cd265: `zone/mob.cpp:2887`, cap `zone/client.cpp:5789`, SPA 11/98/119 `zone/bonuses.cpp:1136-1182`) and serves it as
+  `gear.haste` = `{ value: N, spell, v2, item, v3, cap, from: 'buffs' }` on `/api/me` (null when buffs, catalog or gear are
+  unread). Best-of spell haste, type 2 from level 50 up to 10, worn haste (best item, 10 at level 25 or less), cut to the cap
+  (200 from 60), then overhaste up to 25 over it; a slow ends the sum at 100 + the slow. Data: spell catalog v10 carries `hs`
+  = [11, 98, 119] values per spell; the item-clickies payload v3 carries `worn_haste` (view `item_worn_haste`, migration
+  `20261109120000`, the worn-effect SPA 11 minus 100, worn type 2 only; ⚠ 105 of the 115 items are spell 998 "Haste", base 101
+  + the item's worn level (formula 102), so a level formula reads the item's own `haste` figure, not the base: the first draft
+  read them all as 1%. Applied 2026-11-09, 114 items). The HUD sends `hasteN`; the engine uses it as the prior
+  (`delay * 10000 / N`) and a CHANGE re-locks at once with `HASTE 170% → 125% (buffs)`; three agreeing swings still win, and a
+  `/mystats` newer than the last buff change still wins the prior and keeps its calibrated delay. ⚠ Needs the BOT part on
+  `main` (catalog `hs`, `worn_haste`) and the migration applied; until then `gear.haste` is null and nothing changes.
+  Tests `test/weave-haste.test.js`. **Reconciled on the guild lead's own data (same day; our `weave-attempts.ndjson` and Basketweaver's
+  `%APPDATA%\Basketweaver` folder):** for a blood raven Basketweaver recorded 43 of 48 rounds weaved, 76 fist attempts / 46
+  landed, 2,930 fist damage, +37.9 dps, 287 ms average reaction (its `leaderboard.json`); our current build landed 40 of 50
+  presses, 4 clips, 6 with no fist line. Across the day's builds: before beta.13 21 of 151 landed, beta.13 260 of 994, beta.14+
+  108 of 129. Two of the four clips were scoring artefacts: a re-press before the 2H line arrived (now `open`, outside ✓ ✕ ·)
+  and two swings + 302 ms late (the on-beat tolerance now widens 100 ms a swing). Basketweaver's settings name the real fist
+  weapon, Primal Velium Fist Wraps, delay 20 (a hand-to-hand weapon the fist set puts in the secondary slot; the same 20 as a
+  level 65 human's bare fists, so our fist timing held). Its Zeal log shows why the lines are short: the client's "My Hits"
+  mode 1 prints "verb target for N" (mode 2: the number alone, which no word reader can use), and Zeal moves strike, kick and
+  backstab to channel 1004 (Zeal `chatfilter.cpp` HandleMyHitsMode). **Sounds and a crushing offhand (same day,** *"lets add
+  some sounds into ours"*, *"I'm about to try a ribcracker"***):** four Freesound files in `apps/mimic/sounds`
+  (`weave-punch` / `weave-thud` / `weave-smash` CC0, `weave-slash` CC BY 4.0, credited in `sounds/CREDITS.md`; trimmed, mono,
+  levelled to the set's −10 dB peaks); the hub's `onSound` fires once per new outcome (landed, a big fist hit ≥ `bigHit`, clip)
+  and main hands it to the trigger window (`weave-sound`), which plays it by library name and honours mute; the HUD ⚙ picks each
+  sound and the volume. **Off by default** (same day: *"need to be able to turn on the sounds (off by default)"*): the HUD ⚙
+  "Weave sounds" tick (`weaveSnd` → `cfg.sound`) is the master switch. Ribcracker (item 28808, secondary only, 1H blunt, delay 25) prints "crush", the staff's word: a 2H word
+  straight after a press, more than CLIP_MS before the 2H is due, is the offhand round; `offDelay` (HUD "Offhand in the weave
+  set") sets the window from the offhand weapon's delay, 0 = fists. **Three sets compared (same day:** *"/pipe weave, /pipe
+  weave1hb, /pipe weave2hb"*, *"the 2hb hit should just be an empty offhand slot"*, *"for comparison"***):** `/pipe weave<set>` (a
+  short word, type 4) marks the press, tags its attempt record (`tag`) and the per-set tally (`tally.bySet`), and times the NEXT
+  window for that set (`offDelayFor`: `1hb` = `offDelay1hb`, default 25, Ribcracker; `2hb` = the empty slot, bare fists by the
+  table; plain = `offDelay`, the fist wraps). The weave macro's set names in the guild lead's log are `1` and `2`.
+  **STABLE in Mimic 3.0.9 / agent 4.0.83 (2026-11-09, the guild lead: *"update main mimic with the fistweaving stuff and the new
+  pipe commands. We should start recommending those"*):** everything in this entry, plus a note at the top of the HUD's Weave
+  timer settings recommending the `/pipe weave` macro ending (and `weave1hb` / `weave2hb` for comparing offhands); a `'note'`
+  row in `HUD_PARTS` is text with no setting. Release notes and https://wolfpack.quest/roadmap say the same.
+  **First comparison, and false clips (same day, beta):** three minutes alternating the sets: fist wraps 27 of 30 landed,
+  ~51 weave damage a press; Ribcracker 46 of 59, ~38 a press (half its offhand rounds missed, and its swap takes ~880 ms
+  against ~440 for the wraps, so its 2 real clips were late swaps); empty slot 22 of 29, ~28 a press. 8 Ribcracker "clips"
+  and the 4:27 pm run were the engine's prediction off (1159 / 846 ms for a real ~1.5 / ~1.34 s), and a clip kept that swing out
+  of the re-lock, so it never recovered. A clip now needs the swap back loaded no earlier than `SWAP_IN_MS` (150) before the 2H
+  was due; of 424 clips recorded that day, 235 had swapped back earlier than that.
+  **First live report (2026-11-09, agent 4.0.78 beta):** *"WEAVING IS WAITING FOR A FIGHT BUT I'M IN ONE"*. The hub only fed
+  the engine lines on colours 265 / 267 (the unverified guess above), so a client whose melee lines arrive on any other colour
+  never started a swing. Now it takes any line that starts `You ` on any colour (other people's hits and non-melee are still
+  refused by the engine's own parse), keeps a `diag` (melee lines seen / matched / last unmatched verb), and when it sees your
+  swings but no verb matches, the lane says `your swings say "<verb>" (add it in the HUD ⚙)` instead of waiting.
 - **🧾 Target info: an overwritten debuff drops off (agent 4.0.74 beta · bot 4.0.58 on main, 2026-11-06).** The guild lead saw Malo and Malosinia listed together; on the
   server Malosinia overwrites Malo and a Malo cast after it is blocked, and both print the same landing line. One generic rule,
   ported from EQMacEmu `zone/buffstacking.cpp` (`Mob::FindAffectSlot`, NPC target; lines ported are named in the comment above
@@ -207,6 +410,19 @@ next touch one rather than assuming a missing row means a missing doc.
   lead: *"Do we have a fiend counter for the 75 for command center?"* … *"wave soon when we're at 20 and 45"*. Modelled on the
   Relv counter. Quarm's waves come on the clock only (3:00, 5:00), so "wave soon" is the last 30 s of the countdown, and at 20/45
   kills the row says the next wave still waits for the clock. Emote substrings come from the script; check on the first attempt.
+  **The three minis (agent 4.0.79 beta, 2026-11-09).** The guild lead, from a live attempt: *"we should also include the three minis
+  after the 3 waves. We don't need the section that says 15:00 clock from the Guardian"*. After the 75 the row reads
+  `75 down · minis N/3 · M:SS left` with `Pwelon · Nrinda · Vamuil` (✓ the dead), then `minis down · burn Coirnav`. A mini's death
+  counts only once the burn has started (each wave brings an early mini of the same type, `Coirnav.lua:222`, depopped at the
+  75th fiend, 236-239); the final-phase emote ("We shall not yield!", 248) marks all three down if the deaths were out of range.
+  The standing "15:00 clock from the Guardian" sub is gone; the "wave N nearly down" note stays. Tests `test/coirnav-counter.test.js`.
+  **Coirnav cleared, 2026-11-08 — the gold split (web, on beta only, 2026-11-09).** The guild lead: *"we killed coirnav tonight. put
+  that success on and move the timelines up to the very top, and highlight the background of it in gold. This will be the emphasis
+  of a gold-split replay."* `web/public/pop/elementals.html`: the 15-minute clock section is now the first thing on the Water tab,
+  on a gold panel, with "✓ Cleared" and an "Our run" track above the planned one (from the night's encounter rows, counted from the
+  Guardian's death 02:52:34 UTC: Pwelon 10:09, Vamuil 11:09, Nrinda 12:33, Coirnav 13:55, 1:05 spare; 266,613 damage on Coirnav
+  matches the script's 250,000 after the minis). "Our time here so far" no longer says Water was never raided. No web bump or
+  roadmap entry on beta (main's pending 2.1.111 would collide in the sync); both come with the graduation to main.
 
 - **🧪 Mob Info tags a partially slowable mob, "Slow −N%" (bot 4.0.53 on main `969605f7`; agent 4.0.61 on beta `c3c4ee8b`;
   2026-11-04).** The guild lead: *"Obsidian Tree Spider Queen is only partially slowable apparently. look for those tags"*. Quarm's
@@ -221,7 +437,7 @@ next touch one rather than assuming a missing row means a missing doc.
   needs the charm tracker. Electron 22 (the last that starts on Windows 7) with the agent on its Node 16 plus
   `apps/mimic/node16-shim.js` (fetch, `AbortSignal.timeout`). `build-mimic-win7.yml` rebuilds it on every beta push into ONE
   rolling prerelease, tag `mimic-win7`, which the build alone updates from. **Open:** untested on real Windows 7 until the
-  member installs it from `https://github.com/davehess/QuarmBossTracker/releases/tag/mimic-win7`; no download button on
+  member installs it from `https://github.com/davehess/raidmimic/releases/tag/mimic-win7`; no download button on
   wolfpack.quest yet.
 
 - **🔧 Officers can set a character's class; the OpenDKP sync no longer erases a known class with UNKNOWN (drafted, not yet released; the guild lead, 2026-11-03).**
@@ -466,9 +682,19 @@ next touch one rather than assuming a missing row means a missing doc.
   applied).** `https://raidmimic.com/privacy`, `/terms`, `/refunds` (also under `wolfpack.quest/raidmimic/...`, and `https://wolfpack.quest/terms`). Both sign-in callbacks
   record the accepted terms version, fail-open. "Animated with AI tools" on the story video. Words in `web/lib/legal.ts`. ⏳ `CONTACT_EMAIL` hello@raidmimic.com must still
   be created. Test: `test/legal-pages.test.js`.
+- **✅ raidmimic.com signed-in Dashboard (web 2.1.122, §559; the guild lead picked B, 2026-11-09).** `web/app/raidmimic/_landing/HomeDashboard.tsx`,
+  `HomeParts.tsx`, guild reads shared via `web/lib/hubGuildsLoad.ts`; the bar is drawn once, above it. Tests `test/raidmimic-skip-video.test.js`.
+- **✅ New raidmimic.com registrations post to the officers' feedback thread (bot 4.0.62, §559, option B).** `utils/guildInterestNotice.js`
+  (sanitizer, card, watermark plan), `_guildInterestNotice` in `index.js`, watermark `bot_kv.guild_interest_notified_at`; test
+  `test/guild-interest-notice.test.js`. The first card (the guild lead's own registration) posted 2026-11-09 16:29 UTC.
+- **🧪 raidmimic.com five-link bar on beta (web 2.1.123, §559, option A "centered underneath").** /me · Flagging · Guild · Raids · Spectator, the
+  section's pages centred under them, current section and page in gold: https://b.raidmimic.com/characters. `web/lib/raidmimicNav.ts`,
+  `web/components/RaidmimicSubnav.tsx`, `HostBar` in `web/components/RaidmimicFrame.tsx`; test `test/raidmimic-nav.test.js`. Spectator points at
+  the landing's Replay & spectator block (`/#replay`) until raidmimic.com has a spectator page. wolfpack.quest's nav is unchanged (the preview
+  was removed). Graduate on the guild lead's word.
 - **🟡 raidmimic.com references no Wolf Pack address; a guild's own site and redirect by default (first draft 2026-11-02, not yet shipped; the guild lead).**
   `hub_guilds.website_url` / `redirect_members` (migration `20261102230000_hub_guild_site.sql`, not yet applied: apply BEFORE the web change ships), Wolf Pack's site from
-  `GUILD_SITE_URL` / `GUILD_SITE_REDIRECT` (`web/lib/guildSites.ts`), `/guilds` redirects a one-guild player to it unless `?stay=1`, the privacy page is self-contained.
+  `GUILD_SITE_URL` / `GUILD_SITE_REDIRECT` (`web/lib/guildSites.ts`), `/guilds` redirects a one-guild player to it unless `?stay=1`, the privacy page is self-contained. Web 2.1.117–2.1.118 (§556): sign-in lands on `/guilds?stay=1`, and Wolf Pack's own redirect is off unless `GUILD_SITE_REDIRECT=1`.
   Open: the root layout's title template / `metadataBase` / site name and the `/auth/signin` card still say WolfPack.quest on a raidmimic host; `/api/hubs` still names the
   Wolf Pack site. Tests: `test/raidmimic-no-wolfpack.test.js`.
 - **✅ Self-serve "Download my data" and "Delete my account" (web 2.1.87, `main`; migration `20261101140000_member_self_delete.sql` applied).** A "Your data" section on
@@ -7872,3 +8098,45 @@ Mithaniel's notes (:37) and the second reading needs zeks **7** (:57), not 6. Th
   report the count. If Check says "No broken dates found" for someone the community script helps, the bounds need widening.
 - ⏳ Only the first EQ folder Mimic resolves is checked; a second install needs its own pass.
 - `test/tray-menu-layout.test.js` is quarantined in `vitest.config.js`; its expectations were updated by hand for the new tray item.
+
+### 🧾 2026-11-09 — raidmimic.com "My characters": load a character from Zeal's PoPFlags file (web 2.1.112, first draft, DECISIONS §545 step 1)
+- New page `https://raidmimic.com/characters` ([beta]): a signed-in player uploads one or more `<Name>-PoPFlags.txt` files and sees
+  each character's flag count, what it needs next (`popNextSteps` fed plain flag keys) and the flags it has. Up to 8 characters per
+  player (`MAX_CHARACTERS_PER_PLAYER` in `web/lib/hubImport.ts`). Writes `hub_characters` / `hub_flags` only (service role, server action);
+  one READ of Wolf Pack's `characters` for the claim rule (`web/lib/hubClaim.ts`, a copy of `decideClaim`). Shown only to the signed-in player.
+- Parity tests: `test/hub-characters-import.test.js` (file reader vs the agent's `parsePopFlagsFile`, claim rule vs `utils/hubSync.js`, cap, non-export rejected).
+- ⏳ Not run against a live database or a browser; no migration needed (existing columns). Names are 3-24 letters (the table's check), the agent accepts 2+.
+- ⏳ Next in §545: guild raid posts with open slots (step 2).
+
+### 🧾 2026-11-09 — Map: mini mode, a round map with its buttons as dots (Mimic beta draft, awaiting the guild lead's look)
+- The guild lead: *"add a mini mode for the mimic map. keep the quick buttons as dots around, the move icon for pan/zoom, the mobs spawns as a
+  single dot and dot with circle in it toggle. config button, compass rose button that shows the direction, label button"*. `apps/mimic/map.html`
+  (`body.mini`): the map drawn in a circle (a `border-radius` clip on `#mapPane`, no per-frame cost), the zone name above it, and twelve dots on the
+  rim (`#mini`, CSS-placed): Aa labels (all, targets, off), R raider names, ◔ respawn timer rings, •/◉ spawn dot alone or with its aggro ring,
+  + / − zoom, ✋ Pan / zoom (drag to pan, wheel to zoom; not the ✥ window move, which stays), ◎ Follow, ⤢ Fit, ⚙ settings, ▭ leave mini, and a compass
+  dot (its needle points north; click = North up / Heading up). The red N on the rim rides to where north is and takes no click. Each dot clicks its toolbar twin
+  or flips the same `cfg` switch, so there is one copy of each state. In: the toolbar's ◔ Mini, the ✥ right-click menu's "Mini map" (`map-mini-toggle`
+  through main), or right-click a dot. The choice is `wp-map-mini`; the ring choice is `cfg.show.aggro`. Entering asks main for a 260 square
+  (`map-mini-size`, `_mapMiniSize`) and keeps the old size in `cfg.mapPreMini`; leaving restores it from the same top-left corner. Full mode never shows it.
+- **Follow-up, same day (the guild lead: *"mini map can have the options on one sequence and leave room for arrows around the outside edge of their visible
+  viewpoint for group and raid members, and more importantly the target mob and distance, and pet"*).** The twelve dots now sit in ONE run on the lower-left of the
+  rim (200 to 314 degrees, 10+ degrees apart; ⚙ ▭ then + − ✋ ◎ ⤢ Aa R ◔ •/◉ ◇), leaving the top and right free. Off-view things get an **edge arrow** drawn on the
+  canvas at their bearing from you (north up or heading up): the target (largest, target colour, its distance beside it; its name on hover), the pet (pet colour,
+  distance), group (group colour), raid (small, faint, only with Raiders names on, nearest 8, clumps within 9 degrees fold into one arrow with a "+n"). Off-view
+  = past the circle's outer 14 px; the dot that would be half-hidden there is replaced by the arrow. A target IN view gets its distance beside its ring
+  (the dotted line's own mid-line number is off in mini). Positions are the live ones the dots use (`P.target.x/y`, `P.pet.x/y`, `P.group`, `P.raid`); a target or
+  pet with no position gets no arrow, nothing is invented. Mimic beta draft, no version bump. `miniBearing`, `miniInView`, `miniArrowPlan`, `drawMiniArrows`.
+- ⏳ **Open:** not run in Electron (Chromium via Playwright only: the render and the dot clicks). ⚙ leaves mini mode and opens the full settings
+  (the panel does not fit a circle). Right-click on the map itself is unchanged (centre on you); the mini menu is on the dots. Dots are fixed on the rim, the
+  compass dot included; only the N marker moves. Test: `test/map-mini.test.js`.
+### 🧾 2026-11-09 — Event spawns from the quest scripts: Map points + replay timelines (bot 4.0.61 · web 2.1.115, first draft, not yet routed)
+- PoP event mobs (Water, Fire, Air, Earth) are script-spawned and had no spawn2 row. `scripts/gen-event-spawns.js` reads the
+  scripts at a pinned commit into `data/event-spawns.json` (+ `web/lib/eventSpawns.json`); `utils/zoneSpawns.js` adds event points
+  (aggro rings and pinning candidates); the three timeline loaders keep scripted-event kills. See `HOW-ITS-BUILT.md` "Event spawns from the quest scripts".
+- Not done: Mimic map styling for event points (they draw like normal spawn points until a Mimic change reads `event: true`);
+  relative / random spawns (Essences at the killer, Mud mudlings, Vine mangled, Wind storm trap, Air spirits) are listed with no coordinates and not placed;
+  Fishlords' anglerfish spawn at the first waypoint of the script's `GRIDS` and are not placed; the Fire event's other mob types have no
+  `encounters` rows (deaths not recorded; separate investigation).
+- ⏳ Unverified: Fennin's table is "Y, X" in its own comment and the script's spawn call swaps it; the swap is applied as the script does it,
+  but only Coirnav's frame was checked against spawn2 (row 365647 sits inside its spots in the same x, y order). Pairing a plain table with
+  its type is a reading of the code near each use, so spot-check a new zone against the script.

@@ -655,3 +655,45 @@ describe('the budget', () => {
     expect(shed).not.toMatch(/zone_spawns/);
   });
 });
+
+// Mobs a quest script spawns have no spawn2 row (data/event-spawns.json, from the server's scripts; 2026-11-09).
+describe('event spawns from the quest scripts', () => {
+  const eventWorld = () => ({
+    eqemu_zone: [{ short_name: 'powater', long_name: 'Plane of Water', expansion: 4 }],
+    eqemu_spawn2: [], eqemu_spawngroup: [], eqemu_spawnentry: [],
+    eqemu_npc_types: [
+      npc(216258, 'a_regrua_waterfiend', { aggroradius: 1 }),   // the Water fiends stand still until hit: aggro 1 IS the data
+      npc(216257, 'a_triloun_vaporfiend', { aggroradius: 1 }),
+      npc(216236, 'Pwelon_of_Vapor', { aggroradius: 70 }),
+    ],
+    eqemu_npc_faction: [], eqemu_faction_list_full: [], eqemu_faction_list_mod: [], zone_map_lines: [], eqemu_zone_grids: [],
+  });
+
+  it('an event NPC with no spawn2 row gets a point with its aggro radius, marked event', async () => {
+    fake = withProjection(makeCapFake({ tables: eventWorld() }));
+    const b = await body('powater');
+    const evPoints = b.points.filter(p => p.event);
+    expect(evPoints.length).toBeGreaterThanOrEqual(25);
+    expect(evPoints.every(p => p.id >= 9_000_000 && p.event_name && p.grid === null && p.sg === null)).toBe(true);
+    const fiend = evPoints.flatMap(p => p.npcs).find(n => n.name === 'a regrua waterfiend');
+    expect(fiend.aggro).toBe(1);
+    // one point per spot: the three fiend types share the 25 spots, Pwelon stands on his own
+    const shared = evPoints.find(p => p.npcs.some(n => n.name === 'a regrua waterfiend'));
+    expect(shared.npcs.map(n => n.name)).toContain('a triloun vaporfiend');
+    expect(evPoints.some(p => p.npcs.some(n => n.name === 'Pwelon of Vapor'))).toBe(true);
+  });
+
+  it('a zone with spawn2 rows keeps them unchanged and a zone with no events adds no event points', async () => {
+    const b = await body();
+    expect(b.points.some(p => p.event)).toBe(false);
+    expect(Object.keys(b.points[0])).toEqual(['id', 'x', 'y', 'z', 'respawn_s', 'variance_s', 'grid', 'sg', 'npcs']);
+  });
+
+  it('a failed NPC read for the event mobs answers 503, never a half map', async () => {
+    const t = eventWorld();
+    fake = withProjection(makeCapFake({ tables: t }));
+    const inner = fake.select;
+    fake.select = async (table, qs = '') => (table === 'eqemu_npc_types' ? null : inner(table, qs));
+    expect((await get('powater')).status).toBe(503);
+  });
+});

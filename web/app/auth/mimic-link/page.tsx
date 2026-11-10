@@ -18,6 +18,7 @@ import { headers } from 'next/headers';
 import Link from 'next/link';
 import type { User } from '@supabase/supabase-js';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isRaidmimicHost } from '@/lib/raidmimicHost';
 import { profileOf } from '@/lib/hubRegistry';
@@ -86,6 +87,7 @@ async function authorizeCode(formData: FormData) {
   if (!user) {
     redirect(`/auth/signin?next=${encodeURIComponent('/auth/mimic-link?code=' + userCode)}`);
   }
+  await requireMember(user!.id);
 
   const admin = supabaseAdmin();
   // Look up the discord_id from wolfpack_members (cached at sign-in by the

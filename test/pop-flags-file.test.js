@@ -42,7 +42,7 @@ function load(over = {}) {
     stats: { characterPrefsCheckedAt: Date.now(), characterPrefs: {}, watchedLogs: [] },
     _raidHold: false, _uploadOpts: {}, _scannedFiles: {}, _saveUploadedStateSoon: () => {},
     uploadPopFlags: (events, opts) => { uploads.push({ events, opts }); return Promise.resolve(); },
-    _optinState: { characterModes: {} }, modeStopsLog: () => false, _offGuildServerChar: () => false,
+    _optinState: { characterModes: {} }, modeStopsLog: () => false, _offGuildServerChar: () => false, _isGuestChar: () => false,
     _zealState: {}, _liveFightActive: () => false, _uploadQueue: [], AGENT_VERSION: '9.9.9',
     _rebuildCandidates: () => [], _getApiBase: () => 'http://bot.test/api/agent', _getAgentToken: () => 'tok',
     fetch: async () => ({ ok: true, status: 200 }), _localOnly: () => false, _controlStandDown: () => ({ down: false }), ...over,
@@ -323,6 +323,15 @@ describe('the scan: <EQ dir>/<Name>-PoPFlags.txt', () => {
     const offGuild = load({ ...worldFor(dir), _offGuildServerChar: () => true });
     offGuild.M.scanPopFlagsFiles();
     expect(offGuild.uploads).toEqual([]);
+  });
+  it('a GUEST character\'s file is never read or uploaded (by file name or header), while another character\'s is', () => {
+    const dir = eqDir([['Aldenmar-PoPFlags.txt', zealFile('Aldenmar', WHEN, A)], ['Brackwyn-PoPFlags.txt', zealFile('Brackwyn', WHEN, A)],
+      ['Rethlan-PoPFlags.txt', zealFile('Aldenmar', WHEN, A)]]);
+    const { M, uploads, reads } = load(worldFor(dir, { _isGuestChar: (n) => String(n).toLowerCase() === 'aldenmar' }));
+    M.scanPopFlagsFiles();
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0].events[0].character).toBe('Brackwyn');
+    expect(reads.filter(r => /Aldenmar-PoPFlags/.test(r))).toEqual([]);          // the guest's own file name stopped it before the read
   });
   it('exclude_inventory alone does not stop it: the flags are not inventory', () => {
     const dir = eqDir([['Aldenmar-PoPFlags.txt', zealFile('Aldenmar', WHEN, A)]]);

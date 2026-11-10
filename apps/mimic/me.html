@@ -119,6 +119,7 @@
   #builder .grp{margin:8px 0 2px;color:var(--dim);text-transform:uppercase;font-size:10px;letter-spacing:.5px}
   #builder label{display:flex;align-items:center;gap:7px;padding:2px 0;cursor:pointer}
   #builder label .bl{flex:1;min-width:0}
+  #builder .bnote{padding:3px 0 4px;color:var(--dim);font-size:10px;line-height:1.35}
   #builder .bsz{width:54px;flex:none;margin:0;accent-color:var(--wp-blue);cursor:ew-resize}
   #builder select,#builder button,#builder input[type=text]{background:rgba(var(--wp-panel-rgb),.9);color:var(--text);border:1px solid var(--border);
     border-radius:4px;font:inherit;font-size:10px;padding:1px 6px;cursor:pointer}
@@ -933,6 +934,7 @@
   // below; the ⚙ in its corner switches each on or off, saved on this
   // computer. Every part has a fixed place on the ring, so switching one off
   // leaves a gap rather than moving the others under the player's eye.
+  var WEAVE_SOUNDS = ['weave-punch', 'weave-smash', 'weave-slash', 'weave-thud', 'slap', 'pop', 'off'];
   var WEAVE_DELAYS = [20, 22, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 38, 40, 42, 45];
   var HUD_PARTS = [
     ['Target', [['target', 'Name, health, level, class'], ['tot', 'Its target (on top)'], ['tres', 'Its resists'], ['status', 'Slow · F/R · summon · enrage']]],
@@ -941,10 +943,35 @@
     // The Weave timer (the guild lead, 2026-11-07): a slim vertical lane on the right of the ring, where the mana
     // arc is, timing a monk's bandolier weave. apps/mimic/weave.js runs it in Mimic's main process from the Zeal pipe.
     ['Weave timer', [['weave', 'Lane on the right (auto = Monk and Beastlord)', ['auto', 'on', 'off']],
-      ['weaveDelay', 'Your 2H weapon delay', WEAVE_DELAYS], ['weaveMargin', 'Swap margin (ms)', [50, 100, 150, 200, 250, 300]],
-      ['weaveRace', 'Monk race (Iksar fists are slower)', ['human', 'iksar']], ['weaveEpic', 'Celestial Fists equipped'],
+      // The recommended macro (the guild lead, 2026-11-09: "the new pipe commands. We should start recommending those"): the
+      // /pipe line marks each press exactly, so the timer scores it from the press, not from guessing at the swap lines.
+      ['weaveMacro', 'Recommended: end your weave macro with /pipe weave (after both /band load lines). Comparing offhands? '
+        + 'Make two more ending /pipe weave1hb (a one-hand blunt like Ribcracker) and /pipe weave2hb (empty offhand).', 'note'],
+      // The guild lead, 2026-11-09: "the sidebar on weaving for the Hud should have the option to go to the top ... i mean bottom to top".
+      ['weaveDir', 'Lane moves: down to the hit line, or up to it', ['down', 'up']],
+      // Swap time: from the press to the 2H back in hand. 400 ms is what Basketweaver measured ("Weave Off Delay"); the old 150
+      // (key weaveMargin) left the last quarter second of green clipping (the guild lead, 2026-11-09: "Our weaving timer is
+      // being unreliable"). A new key, so a save holding the old default does not keep it.
+      // Celestial Fists and Iksar fists are read from the character (the inventory export's Hands slot, /who's race), not set
+      // here (2026-11-09: "auto-detect epic fists instead of the checkbox"); the race below is only the fallback.
+      ['weaveDelay', 'Your 2H weapon delay', WEAVE_DELAYS], ['weaveSwapMs', 'Swap time, press to 2H back (ms)', [200, 300, 400, 500, 600, 700]],
+      ['weaveRace', 'Monk race if /who has not seen you', ['human', 'iksar']],
+      // 2026-11-09 (Ribcracker, secondary only, delay 25; Primal Velium Fist Wraps, delay 20): the weave set's offhand.
+      // /pipe weave1hb in a macro switches to this delay; /pipe weave2hb to the empty slot (bare fists); /pipe weave to the one above.
+      ['weaveOffDelay1hb', 'After /pipe weave1hb: the one-hand-blunt offhand delay', [16, 18, 19, 20, 21, 22, 23, 24, 25, 26, 28, 30]],
+      ['weaveOffDelay', 'Offhand in the weave set: fists, or its weapon delay (Ribcracker 25, fist wraps 20)', ['fists', 16, 18, 19, 20, 21, 22, 23, 24, 25, 26, 28, 30]],
+      // Sounds (2026-11-09: "lets add some sounds into ours"): Mimic's sound library by name; sounds/CREDITS.md. Off until
+      // ticked (same day: "need to be able to turn on the sounds (off by default)").
+      ['weaveSnd', 'Weave sounds'],
+      ['weaveSndLanded', 'Sound: weave landed', WEAVE_SOUNDS], ['weaveSndBig', 'Sound: big fist hit', WEAVE_SOUNDS],
+      ['weaveBigHit', 'Big fist hit from', [100, 150, 200, 300, 400]], ['weaveSndClip', 'Sound: clipped', WEAVE_SOUNDS],
+      ['weaveSndVol', 'Weave sound volume', ['0.4', '0.6', '0.8', '1']],
       ['weaveTally', 'Fight tally (on the wide Canvas piece)'],
-      ['weave2hVerbs', '2H swing verbs', 'text'], ['weaveFistVerbs', 'Fist verbs', 'text']]],
+      // The guild lead, 2026-11-09: "our config talks about hits vs crushes though": the offhand can be a weapon (Ribcracker
+      // crushes like the staff), so the words are named for the hand, not for fists. A word in both is the offhand when it
+      // lands right after a press (weave.js), so it only needs listing under the 2H.
+      ['weave2hVerbs', 'Main hand (2H) words, e.g. crush', 'text'],
+      ['weaveFistVerbs', 'Offhand words (fists or the weave set weapon); a 2H word right after a press counts as offhand', 'text']]],
     ['Hits', [['hitsIn', 'Hits on you (left)'], ['hitsOut', 'Your hits (right)'], ['ds', 'Damage shield'],
       ['procs', 'Procs and stuns/aggro on target'],
       ['rounds', 'Rounds listed', [3, 4, 5, 6, 8]], ['split', 'Newest rounds hit by hit', [1, 2, 3]],
@@ -962,7 +989,8 @@
   var HUD_DEFAULTS = { target: 1, tot: 1, status: 1, hp: 1, mana: 1, end: 1, regen: 1, dps: 1, focus: 1, tick: 1, swing: 1, cast: 1, cooldowns: 1,
     hitsIn: 1, hitsOut: 1, ds: 1, procs: 1, rounds: 5, split: 2, hitsSide: 'inside', resists: 1, tres: 1, weight: 'thin',
     track: 1, trackShow: 'all', ramp: 1, lowhp: 1, clickies: 1, clickyRows: 1, clickyPick: [], sizes: {},
-    weave: 'auto', weaveDelay: 30, weaveMargin: 150, weaveRace: 'human', weaveEpic: 0, weaveTally: 1,
+    weave: 'auto', weaveDir: 'down', weaveOffDelay: 'fists', weaveOffDelay1hb: 25, weaveSndLanded: 'weave-punch', weaveSndBig: 'weave-smash',
+    weaveBigHit: 200, weaveSndClip: 'weave-thud', weaveSndVol: '0.8', weaveDelay: 30, weaveSwapMs: 400, weaveRace: 'human', weaveTally: 1, weaveSnd: 0,
     weave2hVerbs: 'crush, crushes', weaveFistVerbs: 'punch, punches, hit, hits, strike, strikes' };
   // The Weave timer lane is on when picked, or by default for the two classes that hand-to-hand weave. It takes the right
   // arc's place (the mana or endurance BAR; the label beside it stays).
@@ -970,6 +998,8 @@
     var w = hudParts.weave;
     return w === 'on' || (w !== 'off' && /^(monk|beastlord)$/i.test(String((s && s['class']) || '')));
   }
+  // The lane canvas's idle mark (weaveDraw.js sets data-wp-idle when you are not fighting), read by layoutWeave.
+  var _weaveIdle = false;
   // Text size per part, from the small slider beside it in the builder (the
   // guild lead, round six: "small sliders next to each of the hud's elements for
   // font size"). 1 = as designed; kept to 0.7–1.6 so a label cannot swallow
@@ -1610,7 +1640,8 @@
     // switches only its own drawing (FB-12). Endurance on a class WITH mana is the thin arc under health.
     if (p[d.right.part] && d.right.pct != null) {
       // With the Weave timer lane on, the lane (a canvas over the ring, layoutWeave) takes the arc's place; the label stays.
-      var lane = weaveOn(s);
+      // ...but only while it shows: not fighting, weaveDraw.js marks the canvas idle and the arc comes back (2026-11-09).
+      var lane = weaveOn(s) && !_weaveIdle;
       if (!lane) h += gauge(R, 56, 124, d.right.pct / 100, d.right.color, 6 * W, true);
       // Fitted to the arc (68°): a bard's three counts with the damage out beside them is longer than
       // "MANA 45%" ever was, and a label the arc cuts off reads as a different number.
@@ -1776,6 +1807,7 @@
     HUD_PARTS.forEach(function(g){
       h += '<div class="grp">' + esc(g[0]) + '</div>';
       g[1].forEach(function(it){
+        if (it[2] === 'note') { h += '<div class="bnote">' + esc(it[1]) + '</div>'; return; }
         if (it[2] === 'text') {
           h += '<label><span class="bl">' + esc(it[1]) + '</span><input type="text" data-part="' + it[0] + '" value="' + esc(hudParts[it[0]]) + '" maxlength="80" spellcheck="false" style="width:120px">'
             + '<button type="button" class="brs" data-reset="' + it[0] + '" title="Back to default">↺</button></label>';
@@ -1994,12 +2026,19 @@
   var _weaveCfgSent = '', _weaveBox = '';
   function weaveConfig(s){
     var p = hudParts;
-    return { character: s.character, cls: String(s['class'] || '').toLowerCase(), level: s.level, race: p.weaveRace, epic: !!p.weaveEpic,
-      twoHDelay: p.weaveDelay, marginMs: p.weaveMargin, showTally: !!p.weaveTally, twoVerbs: p.weave2hVerbs, fistVerbs: p.weaveFistVerbs };
+    var g = s.gear || {};
+    return { character: s.character, cls: String(s['class'] || '').toLowerCase(), level: s.level,
+      // Read from the character (agent /api/me `gear`): the server's own test is Celestial Fists (10652) in the Hands slot.
+      race: g.race ? (/iksar/i.test(g.race) ? 'iksar' : 'human') : p.weaveRace, epic: g.hands_id === 10652,
+      // The haste the buffs and gear add up to (agent gear.haste, the server's own sum): the engine knows the new swing time the moment a buff lands or fades.
+      hasteN: g.haste && g.haste.value > 0 ? g.haste.value : null,
+      twoHDelay: p.weaveDelay, marginMs: p.weaveSwapMs, offDelay: p.weaveOffDelay === 'fists' ? 0 : p.weaveOffDelay, offDelay1hb: p.weaveOffDelay1hb,
+      sndLanded: p.weaveSndLanded, sndBig: p.weaveSndBig, sndClip: p.weaveSndClip, sndVol: Number(p.weaveSndVol), bigHit: p.weaveBigHit, sound: !!p.weaveSnd, showTally: !!p.weaveTally, twoVerbs: p.weave2hVerbs, fistVerbs: p.weaveFistVerbs };
   }
   function layoutWeave(s){
     var cv = document.getElementById('weavecv');
     if (!cv) return;
+    _weaveIdle = cv.getAttribute('data-wp-idle') === '1';   // the ring's next paint (100 ms) gives the arc back or takes it
     var on = !!(s && s.character) && weaveOn(s);
     document.body.classList.toggle('wv-on', on);
     if (!on) return;
@@ -2011,6 +2050,8 @@
     // for the circle"): the canvas covers the ring's square and weaveDraw.js paints the arc at the ring's own radius and
     // angles (renderHud: R 172, 56° to 124°). The Box keeps the straight column.
     var kind = isHud(style) ? 'arc' : 'lane';
+    var dir = hudParts.weaveDir === 'up' ? 'up' : 'down';   // which way the windows travel to the hit line
+    if (cv.getAttribute('data-wp-dir') !== dir) { cv.setAttribute('data-wp-dir', dir); if (window.WpWeaveDraw) WpWeaveDraw.redraw(); }
     // A switch between the two drops the ring's square placement, so the Box's CSS column applies again.
     if (cv.getAttribute('data-wp-weave') !== kind) { cv.setAttribute('data-wp-weave', kind); cv.removeAttribute('style'); _weaveBox = ''; }
     if (kind === 'arc' && cv.getAttribute('data-wp-arc') !== '172 56 124') cv.setAttribute('data-wp-arc', '172 56 124');

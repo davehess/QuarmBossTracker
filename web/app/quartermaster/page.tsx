@@ -24,6 +24,7 @@ import { redirect } from 'next/navigation';
 import MoreInfo from '@/components/MoreInfo';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { isOfficer } from '@/lib/officer';
 import { ownedCharacters } from '@/lib/ownedCharacters';
 import { loadRoster } from '@/lib/roster';
@@ -202,6 +203,7 @@ async function load(userId: string, officer: boolean): Promise<Loaded> {
 export default async function QuartermasterPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/quartermaster');
+  await requireMember(user.id);
   const officer = await isOfficer(user.id);
   const { coverage, quests, myChars, officer: rollup } = await load(user.id, officer);
 

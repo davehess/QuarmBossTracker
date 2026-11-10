@@ -1482,9 +1482,11 @@ describe('Mimic: the tray item and showDashboardTab', () => {
     const re = sliceBlock(MAIN, 'const ALLOW = /', '/i;');
     // The one deliberate widening since (the guild lead, 2026-10-08): the anonymous feedback form, exactly one
     // page, with or without a # payload (test/mimic-open-external-eqmimic.test.js runs it).
-    for (const host of ['wolfpack\\.quest', 'github\\.com\\/davehess\\/QuarmBossTracker', '(www\\.)?eqprogression\\.com\\/', '(www\\.)?pqdi\\.cc\\/', '(www\\.)?youtube\\.com\\/watch', 'youtu\\.be\\/', 'eqmimic\\.quest\\/feedback(#|$)']) {
+    // 2026-11-10: the repo was renamed QuarmBossTracker -> raidmimic; links already in the app may use either name, and the
+    // repo name now ends at a path boundary (no longer a bare prefix). Same repo, so not a widening.
+    for (const host of ['wolfpack\\.quest', 'github\\.com\\/davehess\\/(?:raidmimic|QuarmBossTracker)(?:[/?#]|$)', '(www\\.)?eqprogression\\.com\\/', '(www\\.)?pqdi\\.cc\\/', '(www\\.)?youtube\\.com\\/watch', 'youtu\\.be\\/', 'eqmimic\\.quest\\/feedback(#|$)']) {
       expect(re).toContain(host);
     }
-    expect(re.match(/\|/g)).toHaveLength(7);                  // six separators between the seven hosts, plus the one inside (#|$) — none else added
+    expect(re.match(/\|/g)).toHaveLength(9);                  // six between the seven hosts, one in (#|$), two in the repo's (raidmimic|old) + boundary — none else added
   });
 });

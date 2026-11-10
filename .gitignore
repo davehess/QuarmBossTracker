@@ -38,6 +38,7 @@ packages/wolfpack-logsync/logsync.stats.json
 # in the package dir (STATS_FILE anchors it there). Never commit someone's set.
 packages/wolfpack-logsync/personal_triggers.json
 packages/wolfpack-logsync/logsync.queue.json
+packages/wolfpack-logsync/logsync.queue.json.tmp
 packages/wolfpack-logsync/logsync.item-catalog.json
 packages/wolfpack-logsync/logsync.optin.json
 packages/wolfpack-logsync/logsync.session.json

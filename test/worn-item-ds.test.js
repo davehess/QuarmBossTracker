@@ -114,7 +114,7 @@ describe('the item-clickies disk cache keeps the worn-shield list', () => {
   }
 
   it('loads worn_ds and keeps the etag when the file has it', () => {
-    const h = loadDisk({ fetched_at: 't', etag: '"abc"', entries: [], worn_ds: CATALOG });
+    const h = loadDisk({ fetched_at: 't', etag: '"abc"', entries: [], worn_ds: CATALOG, worn_haste: [] });
     expect(h.worn()).toEqual(CATALOG);
     expect(h.meta().etag).toBe('"abc"');
   });

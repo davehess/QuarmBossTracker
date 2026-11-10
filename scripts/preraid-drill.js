@@ -19,7 +19,8 @@
 //
 // Env:
 //   WOLFPACK_BOT_URL        bot base or /api/agent/encounter URL (the agent's var)
-//   WOLFPACK_AGENT_TOKEN    optional; enables the authenticated-read probe
+//   WOLFPACK_AGENT_TOKEN    optional; a personal wpms_ session token. Enables the authenticated-read probe
+//                           and the breaker/budget detail on /health
 //
 // Exit code 0 = every probe green (or skipped), 1 = at least one red.
 
@@ -96,7 +97,9 @@ function parserSelfTest() {
 
 // ── 2. Bot readiness + circuit breaker + budgets ────────────────────────────
 async function botHealth() {
-  const r = await probe(`${botBase()}/health`);
+  // Breaker/budget detail is only served to a caller with a valid session token (the personal wpms_ key).
+  const tok = process.env.WOLFPACK_AGENT_TOKEN;
+  const r = await probe(`${botBase()}/health`, tok ? { headers: { Authorization: `Bearer ${tok}` } } : {});
   if (!r.ok || !r.body) {
     return record('bot /health', 'fail',
       r.status ? `HTTP ${r.status} in ${r.ms}ms` : `unreachable (${r.err || 'no response'})`);
@@ -136,7 +139,7 @@ async function ingestAuth() {
   const r = await probe(`${botBase()}/api/agent/guild-triggers`,
     { headers: { Authorization: `Bearer ${token}` } });
   if (r.status === 401 || r.status === 403) return record('ingest auth', 'fail', `HTTP ${r.status} — token rejected`);
-  if (r.status === 503) return record('ingest auth', 'fail', '503 — WOLFPACK_AGENT_TOKEN unset on the bot');
+  if (r.status === 503) return record('ingest auth', 'fail', '503 — the bot auth store is unavailable');
   if (!r.ok) return record('ingest auth', 'fail', r.status ? `HTTP ${r.status}` : `unreachable (${r.err})`);
   const n = Array.isArray(r.body?.triggers) ? r.body.triggers.length : null;
   record('ingest auth', 'ok', `accepted${n == null ? '' : ` · ${n} guild triggers`} · ${r.ms}ms`);

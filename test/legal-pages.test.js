@@ -364,19 +364,21 @@ describe('both sign-in callbacks record it, after the session is good, and never
     }));
     vi.doMock('@/lib/discord', () => ({
       fetchGuildMember: async () => ({ nick: 'Aldenmar', user: { id: 'd-100', global_name: 'Ald' }, roles: ['r-pack'], joined_at: '2026-01-01T00:00:00Z' }),
-      memberAvatarUrl: () => null, memberDisplayName: (m) => m.nick, fetchUserGuilds: async () => [],
+      memberAvatarUrl: () => null, memberDisplayName: (m) => m.nick, fetchUserGuilds: async () => [], fetchManagedGuildIds: async () => [],
     }));
     vi.doMock('@/lib/lockout', () => ({ isLockedOut: async () => false }));
     vi.doMock('@/lib/request-origin', async () => await import('../web/lib/request-origin.ts'));
     vi.doMock('@/lib/raidmimicHost', async () => await import('../web/lib/raidmimicHost.ts'));
     vi.doMock('@/lib/hubRegistry', async () => await import('../web/lib/hubRegistry.ts'));
+    vi.doMock('@/lib/hubManage', async () => await import('../web/lib/hubManage.ts'));
     vi.doMock('@/lib/openSignIn', async () => await import('../web/lib/openSignIn.ts'));
     vi.doMock('@/lib/landing', async () => await import('../web/lib/landing.ts'));
     return { GET: (await import('../web/app/auth/callback/route.ts')).GET, calls };
   }
   const req = (host) => ({ url: `https://${host}/auth/callback?code=abc&next=%2F`, headers: new Headers({ host }) });
 
-  it.each([['raidmimic.com', 'https://raidmimic.com/guilds'], ['wolfpack.quest', 'https://wolfpack.quest/']])('%s: signing in writes the acceptance row for this terms version', async (host, landed) => {
+  // raidmimic.com lands on /guilds?stay=1 since web 2.1.117 (§556: signing in keeps you on Raid Mimic).
+  it.each([['raidmimic.com', 'https://raidmimic.com/guilds?stay=1'], ['wolfpack.quest', 'https://wolfpack.quest/']])('%s: signing in writes the acceptance row for this terms version', async (host, landed) => {
     const db = fakeDb();
     const { GET, calls } = await load(db);
     const res = await GET(req(host));
@@ -387,7 +389,7 @@ describe('both sign-in callbacks record it, after the session is good, and never
     expect(w[0].payload).toEqual({ user_id: 'auth-u1', discord_id: 'd-100', terms_version: L.TERMS_VERSION, host });
     expect(w[0].opts).toEqual({ onConflict: 'user_id,terms_version', ignoreDuplicates: true });
   });
-  it.each([['raidmimic.com', 'https://raidmimic.com/guilds'], ['wolfpack.quest', 'https://wolfpack.quest/']])('%s: if the insert throws or errors, sign-in still completes (fail-open)', async (host, landed) => {
+  it.each([['raidmimic.com', 'https://raidmimic.com/guilds?stay=1'], ['wolfpack.quest', 'https://wolfpack.quest/']])('%s: if the insert throws or errors, sign-in still completes (fail-open)', async (host, landed) => {
     for (const terms of ['throw', 'error']) {
       const { GET, calls } = await load(fakeDb({ terms }));
       const res = await GET(req(host));

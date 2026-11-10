@@ -1,7 +1,7 @@
 {
   "_comment": "Schema by example. Copy to guild/config.json and edit. NO SECRETS HERE — passwords, tokens and keys go in .env and are referenced by name; any key with spec / token / key / secret / password as a word (apiKey, api_key, botToken) is refused when the file is read. Values still holding an example <placeholder-token> count as 'not filled in yet' and are ignored (a warning names each one at boot). Environment variables always win over this file. See guild/README.md and docs/DESIGN-guild-kit.md.",
 
-  "repo": "davehess/QuarmBossTracker",
+  "repo": "davehess/raidmimic",
 
   "guild": {
     "_comment": "tag is the guild id written to every database row (SUPABASE_GUILD_ID). Pick it once and never change it. inGameGuild is the name as the game shows it, when that differs from the display name.",

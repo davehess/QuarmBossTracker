@@ -96,8 +96,8 @@ describe('the upload gate, character by character', () => {
   function gate({ localOnly = false, prefs = {} } = {}) {
     const m = loadServers({ localOnly });
     // eslint-disable-next-line no-new-func
-    const fn = new Function('_offGuildServerChar', 'stats', `${gateSrc}\nreturn shouldUploadForCharacter;`)(
-      m._offGuildServerChar, { characterPrefs: prefs });
+    const fn = new Function('_offGuildServerChar', 'stats', '_isGuestChar', `${gateSrc}\nreturn shouldUploadForCharacter;`)(
+      m._offGuildServerChar, { characterPrefs: prefs }, () => false);
     return { m, fn };
   }
 
@@ -179,13 +179,13 @@ describe('Mob Info: the Quarm catalog is only used for a Quarm character', () =>
     const fn = new Function(
       'eqServerCaps', 'eqServerForCharacter', '_primaryCharacter', '_normMobNameAgent', '_mobInfoCacheKey', '_mobInfoInflight',
       '_mobInfoByName', 'MOB_INFO_TTL_MS', '_mobPackLookup', '_uploadOpts', 'https', 'http', 'AGENT_VERSION',
-      '_mobInfoNote', '_mobInfoAsking', '_mobInfoLast', '_mobHasStats', 'MOB_INFO_MISS_TTL_MS', 'MOB_INFO_STALL_MS',
+      '_mobInfoNote', '_mobInfoAsking', '_mobInfoLast', '_mobHasStats', 'MOB_INFO_MISS_TTL_MS', 'MOB_INFO_STALL_MS', '_isGuestChar',
       `${fnSrc}\nreturn fetchMobInfo;`,
     )(
       m.eqServerCaps, m.eqServerForCharacter, () => 'Aldenmar', (n) => String(n).toLowerCase(), (n) => 'k:' + String(n).toLowerCase(),
       new Set(), byName, TTL, () => null,
       { botUrl: 'https://bot.example/api/agent/encounter', token: 'abc' }, mod, mod, '0.0.0',
-      (key, reason) => { notes.push([key, reason]); }, () => {}, new Map(), () => false, 60_000, 30_000,
+      (key, reason) => { notes.push([key, reason]); }, () => {}, new Map(), () => false, 60_000, 30_000, () => false,
     );
     fn('a goblin', selfChar);
     return { calls, byName, notes, TTL };

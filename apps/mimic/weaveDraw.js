@@ -32,9 +32,15 @@
   }
   function liveOf(st, now) { return !!(st && st.active && st.core && now - st.rx <= STALE_MS); }
   function canvases() { return root.document ? root.document.querySelectorAll('canvas[data-wp-weave]') : []; }
+  // The canvas's own character first. If that one is not live but another character off the pipe IS fighting, draw that one:
+  // the HUD names the character from the log file and Zeal from the game, and a lane that waits on a name the pipe never
+  // sends stays grey all fight (the guild lead, 2026-11-09: "need the weaving to work").
   function pick(cv) {
-    var ch = cv.getAttribute('data-wp-char');
-    return ch ? (states[lc(ch)] || null) : (latest ? states[latest] : null);
+    var ch = cv.getAttribute('data-wp-char'), own = ch ? (states[lc(ch)] || null) : null;
+    var other = latest ? states[latest] : null, now = Date.now();
+    if (!ch) return other;
+    if (!liveOf(own, now) && liveOf(other, now)) return other;
+    return own;
   }
   function fit(cv) {
     var w = cv.clientWidth, h = cv.clientHeight, d = root.devicePixelRatio || 1;
@@ -53,7 +59,7 @@
     ctx.font = (bold ? '700 ' : '') + Math.round(px) + 'px ' + fam;
   }
   var KIND_COLOR = { wait: 'blue', go: 'green', late: 'red' };
-  var GLYPH = { landed: ['✓', 'green'], clip: ['✕', 'red'], miss: ['·', 'dim'] };
+  var GLYPH = { landed: ['✓', 'green'], clip: ['✕', 'red'], miss: ['·', 'dim'], void: ['⊘', 'dim'] };   // void: the swap failed (2026-11-09)
 
   // The last press's outcome as one glyph, fading out over the last 3 s of its 10.
   function glyph(c, ctx, st, now, cx, cy, px) {
@@ -71,6 +77,28 @@
     ctx.fillText(g[0], cx, cy);
     ctx.restore();
   }
+  // A landed weave lights up (the guild lead, 2026-11-09: "When we do weave we should highlight it"): a green outline that fades
+  // over 900 ms, drawn by `stroke` (each painter gives its own shape).
+  var FLASH_MS = 900;
+  // The highway and the Thin bar show four 2H swings ahead (were two): Basketweaver shows about four and a half, and ours
+  // scrolled twice as fast (the guild lead, 2026-11-09: "our weaving overlay is going faster than theirs").
+  var LOOK_SWINGS = 4;
+  function weaveFlash(c, ctx, st, now, stroke) {
+    var o = st && st.outcome;
+    if (!o || o.kind !== 'landed' || now - o.at >= FLASH_MS) return;
+    ctx.save(); ctx.globalAlpha = 1 - (now - o.at) / FLASH_MS; ctx.strokeStyle = c.green; ctx.lineWidth = 2; stroke(); ctx.restore();
+  }
+  // The engine's latest re-sync (SYNC +180 ms, SPEED 1.65 → 3.65 s, /mystats …), for NOTE_MS after it happened.
+  var NOTE_MS = 2000;
+  function noticeOf(st, now) { var n = st && st.notice; return n && now - n.at < NOTE_MS ? n : null; }
+  // The ring's short idle reason, or '' (nothing to say: waiting for a fight is the normal rest state).
+  function idleReason(st) {
+    if (!st) return '';
+    if (st.source === 'needs-zeal') return 'weave: needs Zeal';
+    var dg = st.diag;
+    if (dg && dg.seen > 0 && dg.matched === 0 && dg.lastVerb) return 'weave: swings say "' + String(dg.lastVerb).slice(0, 12) + '" (HUD ⚙)';
+    return '';
+  }
   function note(c, ctx, text, w, h) {
     ctx.save();
     ctx.translate(w / 2, h / 2); ctx.rotate(-Math.PI / 2);
@@ -83,32 +111,38 @@
   // ── The slim vertical lane (HUD ring, Box) ─────────────────────────────────────────────────────────────────
   // Future is at the top; the windows scroll DOWN to the hit line near the bottom. Blue = wait, green = go,
   // red = late, a thin orange tick where the next 2H swing is due, the last outcome as a glyph under the lane.
-  function drawLane(c, f, st, live, now) {
+  // `data-wp-dir="up"` (the guild lead, 2026-11-09: "bottom to top"): the future comes up from the bottom to a hit line near
+  // the top, the outcome glyph above it. Default "down": the future at the top, the hit line near the bottom.
+  function drawLane(c, f, st, live, now, cv) {
     var ctx = f.ctx, w = f.w, h = f.h, gh = Math.round(Math.max(9, Math.min(14, w * 0.8)));
-    var top = 1, hitY = h - gh - 5, span = hitY - top;
-    ctx.globalAlpha = live ? 0.3 : 0.16; ctx.fillStyle = c.dim; ctx.fillRect(0, top, w, hitY + 4 - top); ctx.globalAlpha = 1;
+    var up = !!(cv && cv.getAttribute && cv.getAttribute('data-wp-dir') === 'up');
+    var laneTop = up ? gh + 4 : 1, laneBot = up ? h - 1 : h - gh - 1;
+    var hitY = up ? laneTop + 4 : laneBot - 4, glyphY = up ? gh / 2 + 1 : h - gh / 2 - 1;
+    ctx.globalAlpha = live ? 0.3 : 0.16; ctx.fillStyle = c.dim; ctx.fillRect(0, laneTop, w, laneBot - laneTop); ctx.globalAlpha = 1;
     if (!live) {
-      if (st && st.source === 'needs-zeal') note(c, ctx, 'needs Zeal', w, hitY);
-      glyph(c, ctx, st, now, w / 2, h - gh / 2 - 1, gh);
+      if (st && st.source === 'needs-zeal') note(c, ctx, 'needs Zeal', w, h);
+      glyph(c, ctx, st, now, w / 2, glyphY, gh);
       return;
     }
     var z = WV.zones(st.core, now, 3);
     if (!z) return;
-    var look = 2 * st.core.interval2H, ppm = span / look;
-    var yOf = function (t) { return hitY - (t - now) * ppm; };
+    var span = laneBot - laneTop - 4, ppm = span / (2 * st.core.interval2H);
+    var yOf = function (t) { return up ? hitY + (t - now) * ppm : hitY - (t - now) * ppm; };
     ctx.save();
-    ctx.beginPath(); ctx.rect(0, top, w, hitY + 4 - top); ctx.clip();
+    ctx.beginPath(); ctx.rect(0, laneTop, w, laneBot - laneTop); ctx.clip();
     z.zones.forEach(function (zn) {
-      var y0 = yOf(zn.end), y1 = yOf(zn.start), cur = zn.start <= now && now < zn.end;
+      var a = yOf(zn.start), b = yOf(zn.end), cur = zn.start <= now && now < zn.end;
       ctx.globalAlpha = cur ? 0.95 : 0.42; ctx.fillStyle = c[KIND_COLOR[zn.kind]];
-      ctx.fillRect(0, y0, w, Math.max(1, y1 - y0));
+      ctx.fillRect(0, Math.min(a, b), w, Math.max(1, Math.abs(b - a)));
     });
     ctx.globalAlpha = 1; ctx.fillStyle = c.orange;
     z.swings.forEach(function (s) { ctx.fillRect(0, yOf(s.at) - 0.75, w, 1.5); });
+    weaveFlash(c, ctx, st, now, function () { ctx.strokeRect(1, laneTop + 1, w - 2, laneBot - laneTop - 2); });
     ctx.restore();
     ctx.fillStyle = c.text; ctx.fillRect(-1, hitY - 0.75, w + 2, 1.5);
-    glyph(c, ctx, st, now, w / 2, h - gh / 2 - 1, gh);
+    glyph(c, ctx, st, now, w / 2, glyphY, gh);
   }
+
 
   // ── The curved lane (HUD ring) ─────────────────────────────────────────────────────────────────────────────
   // The guild lead, 2026-11-07: "please curve the line to match the arc for the circle". The canvas covers the ring's
@@ -117,9 +151,12 @@
   // tick near the bottom end, and the last outcome sits just past that end.
   function drawArc(c, f, st, live, now, cv) {
     var ctx = f.ctx, s = Math.min(f.w, f.h) / 400, g = String(cv.getAttribute('data-wp-arc') || '172 56 124').split(/\s+/).map(Number);
-    var R = g[0] * s, a0 = g[1], a1 = g[2], band = 9 * s, cx = f.w / 2, cy = f.h / 2;
+    // An optional 4th number is the band's width in the same 400 units (the Arc piece is drawn small, so it asks for a wider one).
+    var R = g[0] * s, a0 = g[1], a1 = g[2], band = (g[3] > 0 ? g[3] : 9) * s, cx = f.w / 2, cy = f.h / 2;
     var rad = function (deg) { return (deg - 90) * Math.PI / 180; };
-    var hitA = a1 - 5;
+    // "up" (2026-11-09: "bottom to top"): the hit tick sits near the start of the arc and the future comes from its end.
+    var up = cv.getAttribute('data-wp-dir') === 'up';
+    var hitA = up ? a0 + 5 : a1 - 5, endA = up ? a0 : a1, sgn = up ? -1 : 1;
     var arc = function (from, to, color, alpha, width) {
       if (!(to > from)) return;
       ctx.globalAlpha = alpha; ctx.strokeStyle = color; ctx.lineWidth = width || band;
@@ -134,24 +171,69 @@
     ctx.save();
     ctx.lineCap = 'butt';
     arc(a0, a1, c.dim, live ? 0.3 : 0.16);
-    var gp = gx(a1 + 7), gpx = Math.max(9, 14 * s);
+    var gp = gx(endA + 7 * sgn), gpx = Math.max(9, 14 * s);
     if (!live) {
       ctx.restore();
       glyph(c, ctx, st, now, gp[0], gp[1], gpx);
+      // Why it is idle, as the Box lane and the Canvas piece already say: the ring's grey arc alone gave no reason (2026-11-09).
+      var why = idleReason(st);
+      if (why) {
+        var wp = gx(endA + 14 * sgn);
+        ctx.save(); font(ctx, Math.max(8, 9 * s)); ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = c.dim; ctx.globalAlpha = 0.85; ctx.fillText(why, wp[0], wp[1]); ctx.restore();
+      }
       return;
     }
     var z = WV.zones(st.core, now, 3);
     if (!z) { ctx.restore(); return; }
-    var dpm = (hitA - a0) / (2 * st.core.interval2H);
-    var aOf = function (t) { return hitA - (t - now) * dpm; };
+    var lo = up ? hitA : a0, hi = up ? a1 : hitA;   // the stretch the windows travel along
+    var dpm = (hi - lo) / (2 * st.core.interval2H);
+    var aOf = function (t) { return hitA - sgn * (t - now) * dpm; };
     z.zones.forEach(function (zn) {
-      var from = Math.max(a0, aOf(zn.end)), to = Math.min(hitA, aOf(zn.start)), cur = zn.start <= now && now < zn.end;
-      arc(from, to, c[KIND_COLOR[zn.kind]], cur ? 0.95 : 0.42);
+      var p = aOf(zn.start), q = aOf(zn.end), cur = zn.start <= now && now < zn.end;
+      arc(Math.max(lo, Math.min(p, q)), Math.min(hi, Math.max(p, q)), c[KIND_COLOR[zn.kind]], cur ? 0.95 : 0.42);
     });
-    z.swings.forEach(function (sw) { var a = aOf(sw.at); if (a >= a0 && a <= hitA) tick(a, c.orange, 1.5, band / 2); });
+    z.swings.forEach(function (sw) { var a = aOf(sw.at); if (a >= lo && a <= hi) tick(a, c.orange, 1.5, band / 2); });
     tick(hitA, c.text, 1.5, band / 2 + 2 * s);
+    weaveFlash(c, ctx, st, now, function () { ctx.lineWidth = band + 4 * s; ctx.beginPath(); ctx.arc(cx, cy, R, rad(a0), rad(a1)); ctx.stroke(); });
+    var an = noticeOf(st, now);
+    if (an) {
+      var np = gx(endA + 14 * sgn);
+      ctx.save(); font(ctx, Math.max(8, 9 * s)); ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.globalAlpha = 1 - (now - an.at) / NOTE_MS;
+      ctx.fillStyle = an.kind === 'speed' ? c.orange : c.blue; ctx.fillText(an.text, np[0], np[1]); ctx.restore();
+    }
     ctx.restore();
     glyph(c, ctx, st, now, gp[0], gp[1], gpx);
+  }
+
+  // ── The thin bar (a Canvas piece, 2026-11-09: "other formats ... arc, thin vertical line, etc.") ────────────────────
+  // The highway with nothing but the windows: they scroll right to left into the gold "now" mark, orange ticks are the
+  // next 2H swings, and a fresh clip flashes the bar's edge red. No text (an idle reason, if any, is the one exception).
+  function drawBar(c, f, st, live, now) {
+    var ctx = f.ctx, w = f.w, h = f.h, hz = Math.round(w * 0.2);
+    if (!live) {
+      var why = idleReason(st);
+      if (why) { font(ctx, Math.max(8, Math.min(10, h * 0.8))); ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = c.dim; ctx.fillText(why, 2, h / 2); }
+      return;
+    }
+    var z = WV.zones(st.core, now, LOOK_SWINGS + 1);
+    if (!z) return;
+    var ppm = (w - hz - 3) / (LOOK_SWINGS * st.core.interval2H), xOf = function (t) { return hz + (t - now) * ppm; };
+    ctx.globalAlpha = 0.3; ctx.fillStyle = c.dim; ctx.fillRect(0, 0, w, h);
+    z.zones.forEach(function (zn) {
+      var x0 = xOf(zn.start), x1 = xOf(zn.end), cur = zn.start <= now && now < zn.end;
+      ctx.globalAlpha = cur ? 0.95 : 0.42; ctx.fillStyle = c[KIND_COLOR[zn.kind]];
+      ctx.fillRect(x0, 0, Math.max(1, x1 - x0), h);
+    });
+    ctx.globalAlpha = 1; ctx.fillStyle = c.orange;
+    z.swings.forEach(function (s) { ctx.fillRect(xOf(s.at) - 0.75, 0, 1.5, h); });
+    ctx.fillStyle = c.text; ctx.fillRect(hz - 1.5, 0, 3, h);   // "now": white, so it never reads as one of the orange swing ticks
+    var o = st.outcome;
+    if (o && o.kind === 'clip' && now - o.at < 1500) {
+      ctx.globalAlpha = 0.55 + 0.45 * Math.abs(Math.sin(now / 120)); ctx.strokeStyle = c.red; ctx.lineWidth = 2;
+      ctx.strokeRect(1, 1, w - 2, h - 2); ctx.globalAlpha = 1;
+    }
+    weaveFlash(c, ctx, st, now, function () { ctx.strokeRect(1, 1, w - 2, h - 2); });
   }
 
   // ── The timing highway (the Canvas piece) ──────────────────────────────────────────────────────────────────
@@ -164,13 +246,19 @@
     ctx.globalAlpha = live ? 0.3 : 0.16; ctx.fillStyle = c.dim; ctx.fillRect(0, laneTop, w, laneH); ctx.globalAlpha = 1;
     if (!live) {
       font(ctx, px); ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = c.dim;
-      ctx.fillText(st && st.source === 'needs-zeal' ? 'Weaving timer: needs Zeal' : 'Weaving timer: waiting for a fight', 2, head / 2);
+      // Idle with melee seen but none matched: name the word, so a 2H or fist verb we do not know is one setting away.
+      var dg = st && st.diag;
+      var idle = st && st.source === 'needs-zeal' ? 'Weaving timer: needs Zeal'
+        : dg && dg.seen > 0 && dg.matched === 0 && dg.lastVerb
+          ? 'Weaving timer: your swings say "' + String(dg.lastVerb).slice(0, 16) + '" (add it in the HUD ⚙)'
+          : 'Weaving timer: waiting for a fight';
+      ctx.fillText(idle, 2, head / 2);
       glyph(c, ctx, st, now, w - px, head / 2, px + 2);
       return;
     }
-    var z = WV.zones(st.core, now, 3);
+    var z = WV.zones(st.core, now, LOOK_SWINGS + 1);
     if (!z) return;
-    var look = 2 * st.core.interval2H, ppm = (w - hz - 3) / look;
+    var look = LOOK_SWINGS * st.core.interval2H, ppm = (w - hz - 3) / look;
     var xOf = function (t) { return hz + (t - now) * ppm; };
     ctx.save();
     ctx.beginPath(); ctx.rect(0, laneTop, w, laneH); ctx.clip();
@@ -197,12 +285,23 @@
       ctx.globalAlpha = 0.55 + 0.45 * Math.abs(Math.sin(now / 120)); ctx.fillStyle = c.red; ctx.textAlign = 'center';
       ctx.fillText('CLIPPED', w / 2, head / 2); ctx.globalAlpha = 1;
     }
+    if (o && o.kind === 'landed' && now - o.at < FLASH_MS) {
+      ctx.globalAlpha = 1 - (now - o.at) / FLASH_MS; ctx.fillStyle = c.green; ctx.textAlign = 'center';
+      ctx.fillText('WEAVE' + (o.dmg ? ' +' + o.dmg : ''), w / 2, head / 2); ctx.globalAlpha = 1;
+    }
+    weaveFlash(c, ctx, st, now, function () { ctx.strokeRect(1, laneTop, w - 2, laneH); });
+    var nt = noticeOf(st, now);
+    if (nt && !(o && (o.kind === 'clip' || o.kind === 'landed') && now - o.at < 1500)) {
+      ctx.globalAlpha = 1 - (now - nt.at) / NOTE_MS; ctx.fillStyle = nt.kind === 'speed' ? c.orange : c.blue; ctx.textAlign = 'center';
+      ctx.fillText(nt.text, w / 2, head / 2); ctx.globalAlpha = 1;
+    }
     ctx.textAlign = 'right';
     var tx = w - 2;
     if (st.cfg && st.cfg.showTally !== false && st.tally && st.tally.presses) {
       font(ctx, px - 1); ctx.fillStyle = c.text;
       var t = st.tally;
-      ctx.fillText(t.landed + '✓ ' + t.clips + '✕ ' + t.misses + '·', tx - px - 6, head / 2);
+      ctx.fillText(t.landed + '✓ ' + t.clips + '✕ ' + t.misses + '·' + (t.voided ? ' ' + t.voided + '⊘' : '')
+        + (t.addedDps ? '  +' + t.addedDps + ' dps' : ''), tx - px - 6, head / 2);
     }
     glyph(c, ctx, st, now, tx - px / 2, head / 2, px + 2);
   }
@@ -227,17 +326,38 @@
     if (!f) return false;
     subscribe(); announce(cv);
     var st = pick(cv), live = liveOf(st, now), c = theme();
+    // Off when you are not fighting (the guild lead, 2026-11-09: "when i'm not attacking can we turn off the weaving timer?"):
+    // idle with nothing to report paints nothing and marks the canvas, so the HUD ring puts its endurance arc back and the
+    // Timers canvas lets the piece's plate and label step aside like any empty panel (its ✥ stays). A reason ("needs Zeal",
+    // a swing word it does not know) still shows: that is the one way to learn something is wrong.
+    var idle = !live && !idleReason(st);
+    if ((cv.getAttribute('data-wp-idle') === '1') !== idle) {
+      if (idle) cv.setAttribute('data-wp-idle', '1'); else cv.removeAttribute('data-wp-idle');
+      var panel = cv.closest ? cv.closest('.panel') : null;
+      if (panel) panel.classList.toggle('wvidle', idle);
+    }
+    if (idle) return false;
     var kind = cv.getAttribute('data-wp-weave');
-    (kind === 'highway' ? drawHighway : kind === 'arc' ? drawArc : drawLane)(c, f, st, live, now, cv);
+    (kind === 'highway' ? drawHighway : kind === 'arc' ? drawArc : kind === 'bar' ? drawBar : drawLane)(c, f, st, live, now, cv);
     return live;
   }
+  // Painted on animation frames, with a timer as the backstop: Chromium stops animation frames for a window it counts as
+  // hidden or occluded, and a click-through overlay over a full-screen game can be counted so, which left the lane frozen
+  // on its first idle paint (2026-11-09). Whichever fires first paints; the other is cancelled.
+  var backup = 0;
   function frame() {
-    raf = 0;
+    if (raf && root.cancelAnimationFrame) root.cancelAnimationFrame(raf);
+    if (backup) clearTimeout(backup);
+    raf = 0; backup = 0;
     var now = Date.now(), any = false, list = canvases();
     for (var i = 0; i < list.length; i++) if (drawOne(list[i], now)) any = true;
-    if (any) raf = root.requestAnimationFrame(frame);   // idle = no frames requested
+    if (any) schedule();   // idle = nothing requested
   }
-  function schedule() { if (!raf && root.requestAnimationFrame) raf = root.requestAnimationFrame(frame); }
+  function schedule() {
+    if (raf || backup) return;
+    if (root.requestAnimationFrame) raf = root.requestAnimationFrame(frame);
+    backup = setTimeout(frame, 50);
+  }
 
   function onState(st) {
     if (!st || typeof st.character !== 'string') return;

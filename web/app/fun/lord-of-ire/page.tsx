@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 
 export const metadata = {
   title: 'Lord of Ire',
@@ -56,6 +57,7 @@ async function load() {
 export default async function LordOfIrePage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/fun/lord-of-ire');
+  await requireMember(user.id);
 
   const { total, ranked } = await load();
 

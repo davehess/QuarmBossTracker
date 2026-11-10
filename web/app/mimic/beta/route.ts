@@ -18,7 +18,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 export const dynamic = 'force-dynamic';
 export const revalidate = 300;
 
-const REPO_RELEASES = 'https://api.github.com/repos/davehess/QuarmBossTracker/releases?per_page=30';
+const REPO_RELEASES = 'https://api.github.com/repos/davehess/raidmimic/releases?per_page=30';
 
 type Asset    = { name: string; browser_download_url: string };
 type Release  = {
@@ -30,7 +30,7 @@ type Release  = {
   assets: Asset[];
 };
 
-const FALLBACK = 'https://github.com/davehess/QuarmBossTracker/releases';
+const FALLBACK = 'https://github.com/davehess/raidmimic/releases';
 
 export async function GET(req: NextRequest) {
   const direct = req.nextUrl.searchParams.get('direct') === '1';

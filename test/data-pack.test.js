@@ -66,6 +66,7 @@ function fixtureTables() {
     })),
     item_catalog_droppable: Array.from({ length: DROPPABLE }, (_, i) => ({ item_id: 100 + i, item_name: `Drop ${i}`, era: i % 3 })),
     item_worn_damage_shield: [{ item_id: 8364, item_name: 'Talisman of Nothing', ds: 8 }],
+    item_worn_haste: [{ item_id: 7101, item_name: 'Gauntlets of Nothing', haste: 28 }],
     scripted_npc_turnins: [
       { id: 1, zone_short: 'poair', npc_name: 'Advocent Joran', npc_id: 215002, script_path: 'poair/Advocent_Joran.lua', script_lang: 'lua',
         inputs: [{ item_id: 1, qty: 1 }], outputs: [{ item_id: 2, kind: 'fixed' }], faction_changes: null, cash: null, exp_award: null,
@@ -149,7 +150,7 @@ describe('the pack is built from the bot\'s own handlers, against tables past th
     expect(SPELLS).toBeGreaterThan(SERVER_MAX_ROWS);
     const r = await build();
     const spells = gunzipJson(path.join(r.outDir, 'spell-catalog.json.gz'));
-    expect(spells.version).toBe(9);
+    expect(spells.version).toBe(10);
     expect(spells.count).toBe(SPELLS);
     expect(new Set(spells.entries.map(e => e.id)).size).toBe(SPELLS);
     const clickies = gunzipJson(path.join(r.outDir, 'item-clickies.json.gz'));

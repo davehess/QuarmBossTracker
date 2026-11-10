@@ -12,7 +12,7 @@
 // GitHub more than once in a while, and 60 req/h anonymous is plenty.
 'use strict';
 
-const RELEASES_URL = 'https://api.github.com/repos/davehess/QuarmBossTracker/releases?per_page=20';
+const RELEASES_URL = 'https://api.github.com/repos/davehess/raidmimic/releases?per_page=20';
 const FALLBACK_URL = 'https://wolfpack.quest/mimic';
 const TTL_MS = 5 * 60 * 1000;
 

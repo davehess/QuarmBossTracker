@@ -47,7 +47,8 @@ const OFFICIAL_URL = 'https://api.github.com/repos/CoastalRedwood/Zeal/releases/
 const ZIP_URL = 'https://github.com/davehess/Zeal/releases/download/test-all-build/zeal_test-all.zip';
 const WP_URL = 'https://api.github.com/repos/davehess/Zeal/releases/tags/wolfpack-beta';
 const WP_ZIP_URL = 'https://github.com/davehess/Zeal/releases/download/wolfpack-beta/zeal_v1.4.8-wolfpack.12.zip';
-let calls = [], testRelease, wpRelease, zu;
+const LIST_URL = 'https://api.github.com/repos/CoastalRedwood/Zeal/releases?per_page=30';
+let calls = [], testRelease, wpRelease, zeal15List, zu;
 
 beforeAll(() => {
   const gh = require(GH);
@@ -55,6 +56,7 @@ beforeAll(() => {
     calls.push(url);
     if (url === TEST_URL) return testRelease;
     if (url === WP_URL) return wpRelease;
+    if (url === LIST_URL) return zeal15List;
     if (url === WP_ZIP_URL) return makeZip({ 'Zeal.asi': 'ASI-WP', 'uifiles/zeal/x.tga': 'TGA' });
     if (url === OFFICIAL_URL) return { tag_name: 'v1.4.8', name: 'v1.4.8', assets: [{ name: 'zeal_v1.4.8_50dc9a4.zip', browser_download_url: 'https://example/official.zip' }] };
     if (url === ZIP_URL) return makeZip({ 'Zeal.asi': 'ASI-TEST', 'Zeal.pdb': 'PDB', 'uifiles/zeal/targetrings/WolfPack.tga': 'TGA', 'Zeal_README.md': '#' });
@@ -100,6 +102,18 @@ describe('where Zeal comes from', () => {
     expect((await zu.checkLatest('test')).tag).toBe('testall-0a2e25d');
     testRelease = release({ name: 'test-all', target_commitish: 'test-all' });
     expect((await zu.checkLatest('test')).tag).toBe('testall-2026-10-01T12:30:00Z');
+  });
+
+  // The guild lead, 2026-11-08: "should be stable, then 1.5.0, then ours that are updated off of 1.5".
+  it('zeal15 takes CoastalRedwood\'s newest 1.5 release from the list, alpha included', async () => {
+    const z = (tag, extra = {}) => ({ tag_name: tag, name: tag, prerelease: /alpha/.test(tag),
+      assets: [{ name: 'zeal_' + tag + '.zip', browser_download_url: 'https://example/' + tag + '.zip' }], ...extra });
+    zeal15List = [z('v1.5.0-alpha1', { draft: true }), z('v1.5.0-alpha0'), z('v1.4.8')];
+    const r = await zu.checkLatest('zeal15');
+    expect(calls).toEqual([LIST_URL]);
+    expect(r).toMatchObject({ source: 'zeal15', tag: 'v1.5.0-alpha0', assetUrl: 'https://example/v1.5.0-alpha0.zip' });
+    zeal15List = [z('v1.4.8')];
+    await expect(zu.checkLatest('zeal15')).rejects.toThrow(/no Zeal 1\.5 release yet/);
   });
 
   it('a test release with no zip yet says so', async () => {
@@ -192,11 +206,13 @@ describe('the wiring', () => {
     expect(bg).toMatch(/New Wolf Pack Zeal build/);
   });
 
-  it('Settings: three choices that save at once and re-check', () => {
-    expect(settings).toMatch(/<input type="radio" name="zealSource" value="wolfpack" id="zealSrcWolfpack">/);
-    expect(stripJs(sliceBlock(settings, 'async function _renderZealStatus(){', '\n  }\n'))).toMatch(/'zealSrcWolfpack'/);
-    expect(settings).toMatch(/<input type="radio" name="zealSource" value="official" id="zealSrcOfficial">/);
-    expect(settings).toMatch(/<input type="radio" name="zealSource" value="test" id="zealSrcTest">/);
+  it('Settings: Stable, Zeal 1.5.0, Ours on 1.5 in that order, saved at once and re-checked', () => {
+    const ids = [...settings.matchAll(/<input type="radio" name="zealSource" value="([a-z0-9]+)"/g)].map(m => m[1]);
+    expect(ids).toEqual(['official', 'zeal15', 'test']);
+    // The Wolf Pack build is no longer offered; a Mimic still set to it is told so.
+    const render = stripJs(sliceBlock(settings, 'async function _renderZealStatus(){', '\n  }\n'));
+    expect(render).toMatch(/zeal15: 'zealSrcZeal15'/);
+    expect(render).toMatch(/s\.source === 'wolfpack' \? '' : 'none'/);
     const js = stripJs(sliceBlock(settings, "document.querySelectorAll('input[name=zealSource]')", 'checkBtn.addEventListener('));
     expect(js).toMatch(/window\.mimic\.zealSetSource\(r\.value\)/);
     expect(js).toMatch(/checkBtn\.click\(\)/);

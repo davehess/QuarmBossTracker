@@ -82,6 +82,47 @@ describe('the catalog\'s blinding spells', () => {
   });
 });
 
+// The guild lead, 2026-11-09: "vision restored hits too early" (Infernal Darkness: 2 ticks, no fade line). The
+// landing lines below are dated in the past, so the catalog timer has already run out: only Zeal holds the blind.
+describe('the end comes from Zeal\'s buff window when it is live', () => {
+  const full = sliceBlock(agent, '// ── Blind Mode (v1.1.8)', '\n// Target-change-while-blind');
+  function loadWithZeal(zeal) {
+    const pre = `
+      const _spellByNameLower = new Map(${JSON.stringify([...CATALOG, { name: 'Infernal Darkness', you: 'You are consumed in a wave of endless darkness.', fades: null, blind: 1, secs: 12 }].map(e => [e.name.toLowerCase(), e]))});
+      function _catalogDurationSec() { return 12; }
+      function _zealTargetForChar() { return null; }
+      ${parseTs}
+    `;
+    // eslint-disable-next-line no-new-func
+    return new Function('_zealState', pre + full + '\nreturn { noteBlindLine, _expireStaleBlinds, _blindState, _blindEvents };')(zeal);
+  }
+  const ends = (m) => m._blindEvents.filter(e => e.kind === 'blind_end').length;
+
+  it('stays blind while the spell is in the buff window, and ends the moment it leaves', () => {
+    const zeal = { Aldenmar: { updatedAt: Date.now(), buffs: [{ name: 'Infernal Darkness', ticks: 1 }] } };
+    const m = loadWithZeal(zeal);
+    m.noteBlindLine(L('You are consumed in a wave of endless darkness.'), 'Aldenmar');
+    m._expireStaleBlinds();
+    expect(m._blindState.aldenmar.active).toBe(true);
+    expect(ends(m)).toBe(0);
+    zeal.Aldenmar = { updatedAt: Date.now(), buffs: [] };
+    m._expireStaleBlinds();
+    expect(m._blindState.aldenmar.active).toBe(false);
+    expect(ends(m)).toBe(1);
+  });
+
+  it('with no live Zeal, or a spell Zeal never listed, the timer ends it as before', () => {
+    const stale = loadWithZeal({ Aldenmar: { updatedAt: Date.now() - 60_000, buffs: [{ name: 'Infernal Darkness' }] } });
+    stale.noteBlindLine(L('You are consumed in a wave of endless darkness.'), 'Aldenmar');
+    stale._expireStaleBlinds();
+    expect(ends(stale)).toBe(1);
+    const never = loadWithZeal({ Aldenmar: { updatedAt: Date.now(), buffs: [] } });
+    never.noteBlindLine(L('You are consumed in a wave of endless darkness.'), 'Aldenmar');
+    never._expireStaleBlinds();
+    expect(ends(never)).toBe(1);
+  });
+});
+
 describe('the auto-show can fire', () => {
   it('the active character\'s blind state is looked up lowercase, as it is stored', () => {
     const body = stripJs(agent);

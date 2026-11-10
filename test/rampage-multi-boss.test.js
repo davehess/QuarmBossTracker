@@ -9,7 +9,7 @@
 //
 // Run: npx vitest run test/rampage-multi-boss.test.js
 
-import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { readSource, ROOT, sliceBlock, stripJs } from './_source-slice.js';
@@ -17,6 +17,9 @@ import { readSource, ROOT, sliceBlock, stripJs } from './_source-slice.js';
 let agent;
 beforeAll(() => { agent = createRequire(import.meta.url)('../packages/wolfpack-logsync/index.js'); });
 beforeEach(() => { agent._resetRampagesForTest(); agent._mobInfoByNameForTest().clear(); agent._setCurrentBossForTest(null); });
+// The fixture lines are stamped Oct 19 2026 20:00 and the tank state ages them against the wall clock, so pin the clock a few seconds after them (the display window is 8 s).
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(2026, 9, 19, 20, 0, 15)); });
+afterEach(() => { vi.useRealTimers(); });
 
 const cmd = readSource(path.join(ROOT, 'apps', 'mimic', 'command.html'));
 const rampBlock = sliceBlock(cmd, '  function rampHtml(r, multi){', '\n  }');

@@ -5,6 +5,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { parseFilm, type FilmTake } from '@/lib/film';
 import LiteYouTube from '@/components/LiteYouTube';
@@ -39,6 +40,7 @@ function TakeHead({ n, take }: { n: number; take: FilmTake }) {
 export default async function FilmPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/film');
+  await requireMember(user.id);
 
   const takes = await loadTakes();
 

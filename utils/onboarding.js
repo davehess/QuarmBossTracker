@@ -29,6 +29,45 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.73': [
+    'Behind the scenes: the code moved to its new home, github.com/davehess/raidmimic. Old links still work.',
+  ],
+  '4.0.72': [
+    'Charm tracker, "Best pets here": event controllers, "You hear" voices and other mobs you cannot target or harm no longer show up as charm pets.',
+  ],
+  '4.0.71': [
+    'Loot is now recorded when your group sees someone else take it, not only when the looter runs Mimic, so items handed out without a bid (like a queued Essence) show up in the Essences queue and loot lists. Needs the Mimic beta that pairs with it.',
+  ],
+  '4.0.70': [
+    'Officers: `/opendkplevels` previews and applies OpenDKP level updates from the levels we have seen in /who. Levels only go up, and nothing changes until you press Apply.',
+  ],
+  '4.0.69': [
+    'Behind the scenes: tighter protection on the Raid Mimic guild registry. Registering a Discord server now needs you to manage it, and invite codes are longer and rate-limited.',
+  ],
+  '4.0.68': [
+    'Behind the scenes: officer-only controls now work only inside the Wolf Pack Discord server, and other guilds\' uploads are refused rather than retried if their sign-in is rejected.',
+  ],
+  '4.0.67': [
+    'Behind the scenes: uploaded fights are sanity-checked, so an impossible damage number or a wrong kill time can no longer land on a parse or a boss timer.',
+  ],
+  '4.0.66': [
+    'Behind the scenes: anonymous raider labels in shared raids now always use a private key, so nobody can work out who they are.',
+  ],
+  '4.0.65': [
+    'Behind-the-scenes security hardening: the bot can no longer ping @everyone or @here by accident, and its health page shows details only to signed-in Mimic installs.',
+  ],
+  '4.0.64': [
+    'Behind the scenes: nightly cleanup of old raid telemetry now works in small steps and reports how it went, so the database stays small.',
+  ],
+  '4.0.63': [
+    'The Mimic beta\'s weave timer can now work out your attack speed from your buffs and your hasted gear, so it knows the new swing time the moment a haste lands or fades. Needs the Mimic beta that pairs with it.',
+  ],
+  '4.0.62': [
+    'Officers: a guild that registers on raidmimic.com now shows up as a card in the officers\' feedback thread, with its size, nights and loot system.',
+  ],
+  '4.0.61': [
+    'Event mobs in the elemental planes (Coirnav\'s fiends and minis, Fennin Ro\'s army, the Air and Earth encounters) now show their range and spawn spots on the Mimic map, and their kills reach the replay and share timelines.',
+  ],
   '4.0.60': [
     'The Command Center hail board now opens for the four elemental Essences (Water, Fire, Air, Earth) when their Avatar dies. The Essence hands you its item without a word, so the board marks you from your own hail, or from a tap on your name.',
   ],
@@ -1120,7 +1159,7 @@ function buildAttendeeEmbed() {
 // Direct GitHub-release download URL. The `parser.wolfpack.quest` CNAME-to-
 // GitHub can't terminate TLS, so always link the release artifact directly.
 const PARSER_DOWNLOAD_URL =
-  'https://github.com/davehess/QuarmBossTracker/releases/latest/download/WolfPackParser.zip';
+  'https://github.com/davehess/raidmimic/releases/latest/download/WolfPackParser.zip';
 
 // ── Onboarding action rows ────────────────────────────────────────────────────
 // Surfaced when a member clicks "Set up the parser" in the welcome flow. Two

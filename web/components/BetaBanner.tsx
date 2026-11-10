@@ -88,7 +88,7 @@ export default function BetaBanner() {
             same database, so timers, DKP and who-is-online move between the two
             requests. The repo is public, so GitHub renders the real answer. */}
         <a
-          href="https://github.com/davehess/QuarmBossTracker/compare/main...beta"
+          href="https://github.com/davehess/raidmimic/compare/main...beta"
           target="_blank"
           rel="noreferrer"
           className="underline whitespace-nowrap hover:opacity-70"

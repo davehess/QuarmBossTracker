@@ -33,7 +33,9 @@ const namedBosses = require('./namedBosses');
 const trapSpawns = require('./trapSpawns');
 const splitSpawns = require('./splitSpawns');
 
-const ZONE_RE = /^[a-z0-9_]{1,32}$/;
+const EVENT_SPAWNS = require('../data/event-spawns.json');   // static; read once (never hot-reloaded)
+const EVENT_POINT_ID_BASE = 9_000_000;
+const ZONE_RE =/^[a-z0-9_]{1,32}$/;
 const MAP_SELECT = 'bands,segs,bounds';
 // eqemu_spawn2.respawntime of an instanced spawn point. Not a real timer: the point stays, the timer goes.
 const INSTANCE_SENTINEL_S = 1_700_000;
@@ -119,6 +121,23 @@ async function build(supabase, zone, bosses) {
     for (const r of rows) npcs.set(r.id, r);
   }
 
+  // Mobs a quest script spawns (data/event-spawns.json, from scripts/gen-event-spawns.js) have no spawn2 row, so they
+  // get their spots from the script: one point per spot, shaped like the spawn2 points. Their NPC rows are read with
+  // the others, so the factions below cover them too.
+  const eventSpots = new Map();   // "x|y|z" → { x, y, z, ids:Set, event }
+  for (const e of (EVENT_SPAWNS.zones[zone] || [])) {
+    if (e.x == null || e.y == null || e.z == null || e.npc_id == null) continue;
+    const k = `${e.x}|${e.y}|${e.z}`;
+    if (!eventSpots.has(k)) eventSpots.set(k, { x: e.x, y: e.y, z: e.z, ids: new Set(), event: e.event });
+    eventSpots.get(k).ids.add(e.npc_id);
+  }
+  const eventIds = [...new Set([...eventSpots.values()].flatMap(s => [...s.ids]))].filter(i => !npcs.has(i));
+  for (const ids of chunks(eventIds, CHUNK)) {
+    const rows = await supabase.select('eqemu_npc_types', `id=in.(${ids.join(',')})&select=${NPC_SELECT}&limit=${CHUNK}`);
+    if (!Array.isArray(rows)) return { status: 503 };
+    for (const r of rows) npcs.set(r.id, r);
+  }
+
   // Each NPC's PRIMARY faction (the one it cons and aggros by) with that faction's starting values and race / class /
   // deity modifiers, so the Map can tell whom a mob is KOS to (utils/factionCon.js; the guild lead, 2026-10-13: "the
   // mobs in Plane of Tranquility should be green because they are indifferent to everyone"). Decoration like the
@@ -168,21 +187,14 @@ async function build(supabase, zone, bosses) {
   // Mobs that split on death (utils/splitSpawns.js; the guild lead, 2026-11-01: "some of these mobs split, we should
   // denote it"). Read from the server's death scripts; decoration like the traps, so a failed read means no marks.
   const splitMap = await splitSpawns.build(supabase, zone);
-  const points = [];
-  for (const sp of [...spawn2].sort((a, b) => a.id - b.id)) {
-    const entries = (entriesByGroup.get(sp.spawngroup_id) || [])
-      .slice().sort((a, b) => (Number(b.chance) || 0) - (Number(a.chance) || 0) || a.npc_id - b.npc_id);
-    const list = [];
-    for (const e of entries) {
-      const npc = npcs.get(e.npc_id);
-      if (!npc) continue;
+  const rowFor = (npc, chance, groupSize) => {
       const name = cleanName(npc.name);
       const helper = HELPER_BODYTYPES.has(num(npc.bodytype));
       const row = {
         name,
         level: num(npc.level),
-        chance: num(e.chance),
-        named: isNamed({ npc, name, chance: e.chance, groupSize: entries.length, bossNames }),
+        chance: num(chance),
+        named: isNamed({ npc, name, chance, groupSize, bossNames }),
         raid_target: namedBosses.raidTarget(npc),
         badges: badgesFor(npc),
         // How close you can get before it aggros, in game units (eqemu_npc_types.aggroradius; median 60). The Map's
@@ -203,7 +215,17 @@ async function build(supabase, zone, bosses) {
         row.splits = splits;
         if (splits.into.some(i => !i.unique)) row.badges.push('splits');
       }
-      list.push(row);
+      return row;
+  };
+
+  const points = [];
+  for (const sp of [...spawn2].sort((a, b) => a.id - b.id)) {
+    const entries = (entriesByGroup.get(sp.spawngroup_id) || [])
+      .slice().sort((a, b) => (Number(b.chance) || 0) - (Number(a.chance) || 0) || a.npc_id - b.npc_id);
+    const list = [];
+    for (const e of entries) {
+      const npc = npcs.get(e.npc_id);
+      if (npc) list.push(rowFor(npc, e.chance, entries.length));
     }
     if (!list.length) continue;   // a point nobody spawns at is not a point
     const mirrored = num(sp.respawntime);
@@ -217,6 +239,19 @@ async function build(supabase, zone, bosses) {
       sg: num(sp.spawngroup_id),   // its spawn group: a key into the body's `spawngroups`
       npcs: list,
       ...(trapOf.has(sp.id) ? { trap: trapOf.get(sp.id) } : {}),   // a trap spot: a key into the body's `traps.defs`
+    });
+  }
+  // The script-spawned points. `event: true` marks them; the ids sit far above any spawn2 id so a consumer keying on
+  // `id` never mixes the two. They have no respawn, route or spawn group: the script decides when they come.
+  let eventN = 0;
+  for (const s of [...eventSpots.values()].sort((a, b) => a.x - b.x || a.y - b.y || a.z - b.z)) {
+    const ids = [...s.ids].sort((a, b) => a - b).filter(i => npcs.has(i));
+    const list = ids.map(i => rowFor(npcs.get(i), 100, ids.length));
+    if (!list.length) continue;
+    points.push({
+      id: EVENT_POINT_ID_BASE + eventN++, x: s.x, y: s.y, z: s.z,
+      respawn_s: null, variance_s: null, grid: null, sg: null,
+      npcs: list, event: true, event_name: s.event,
     });
   }
   if (!points.length) return { status: 404 };

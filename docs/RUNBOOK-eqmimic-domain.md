@@ -44,7 +44,7 @@ header. Signed-out Mimic users get a button that opens `https://eqmimic.quest/fe
 ## Step 2. Vercel: find the right project, add the domain
 
 1. In Vercel open the team's project list. The project to use is the one that serves **wolfpack.quest** in production
-   (repository `davehess/QuarmBossTracker`, root directory `web`). Open it. If you cannot tell which project that is, stop and ask.
+   (repository `davehess/raidmimic`, root directory `web`). Open it. If you cannot tell which project that is, stop and ask.
 2. **Settings → Domains → Add Domain**. Add `eqmimic.quest`. Assign it to **Production** (not to a branch).
 3. Add `www.eqmimic.quest` too. When Vercel offers it, set `www` to **redirect to `eqmimic.quest`**.
 4. Vercel now shows what DNS it wants for each name (usually "Invalid Configuration" with the records to add). **Copy those exact

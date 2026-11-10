@@ -402,6 +402,8 @@ vi.mock('@/lib/supabase-server', () => ({
 }));
 vi.mock('@/lib/supabase', () => ({ supabaseAdmin: () => ({ from: query }) }));
 vi.mock('@/lib/officer', () => ({ isOfficer: async (id) => st.officers.has(id) }));
+// lib/member.ts reads wolfpack_members.is_member; here every signed-in id is a member except the 'outsider-' ones.
+vi.mock('@/lib/member', () => ({ isGuildMember: async (id) => !!id && !String(id).startsWith('outsider-') }));
 vi.mock('@/lib/raidScreen', async () => await import('../web/lib/raidScreen.ts'));
 vi.mock('@/lib/raidScreenServer', async () => await import('../web/lib/raidScreenServer.ts'));
 vi.mock('@/lib/spectator', async () => await import('../web/lib/spectator.ts'));
@@ -495,6 +497,15 @@ describe('GET /api/screen/state', () => {
     st.fail.add('raid_screen_state');
     const { GET } = await import('../web/app/api/screen/state/route.ts');
     expect((await GET()).status).toBe(502);
+  });
+});
+
+describe('GET /api/screen/state: current members only', () => {
+  it('a signed-in account that is not a current member gets 403 and the database is never read', async () => {
+    st.user = { id: 'outsider-1' };
+    const { GET } = await import('../web/app/api/screen/state/route.ts');
+    expect((await GET()).status).toBe(403);
+    expect(st.calls).toEqual([]);
   });
 });
 

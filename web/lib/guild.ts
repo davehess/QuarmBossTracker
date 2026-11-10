@@ -64,7 +64,7 @@ export const LOGIN_EMAIL_DOMAIN: string = clean(process.env.NEXT_PUBLIC_LOGIN_DO
 
 // ── Source repository ───────────────────────────────────────────────────────
 
-const DEFAULT_REPO = { owner: 'davehess', name: 'QuarmBossTracker' };
+const DEFAULT_REPO = { owner: 'davehess', name: 'raidmimic' };   // renamed from QuarmBossTracker 2026-11-10
 
 // NEXT_PUBLIC_GITHUB_REPO is 'owner/name'; anything else falls back to the default.
 function parseRepo(v: string | undefined): { owner: string; name: string } {

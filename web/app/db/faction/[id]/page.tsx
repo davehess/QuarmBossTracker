@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { requireMember } from '@/lib/member';
 import { deUnderscore } from '@/lib/npcDecode';
 import FactionB from './FactionB';
 
@@ -43,6 +44,7 @@ export default async function DbFactionPage({ params, searchParams }: {
 
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/db/faction/${factionId}`);
+  await requireMember(user.id);
 
   // ?v=b — the variant (the guild lead, 2026-10-13). No ?v= is the page below, unchanged.
   const { v } = await searchParams;

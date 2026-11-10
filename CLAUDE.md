@@ -50,6 +50,12 @@ Every option gets a rendered sample (a PNG sent with the reply, or a beta link f
 a phrase, and a tag that places it: faster / cheaper / can grow into another option / recommended. A
 pick still open from an earlier reply is re-asked the same way, with its pictures again, not by letter.
 
+**Every pick goes on the Decision Desk, with a timeframe** (the guild lead, 2026-11-09: *"everything needing choices
+continues into decision desk. decision desks decisions get a timeframe for sorting as well"*). A choice is a card on the
+guild lead's Decision Desk artifact (find it by title in the artifact list; its picks are read back from the Desk's
+database), with the pictures and one-liners above, and a `when` of now / week / month / later (how soon the work needs the
+answer). The chat reply names the card and links the Desk; it does not hold the only copy of the question.
+
 ### Working rule — minimal diff
 Touch only the code the task requires. If a change appears to need edits to
 adjacent or unrelated code, stop and flag it before proceeding. (The
@@ -904,6 +910,10 @@ raid_roster and character_live_state rows in bot memory and answers the bot's ow
 (log-ingestion cut, DECISIONS §348). Memory is complete only if one process receives every upload, so
 never scale the bot service past one replica. Supabase stays the record (rows still written, batched every
 2 s) and a fresh process reads Supabase until it has received a reader's whole window (15 min roster).
+**The Discord login is leased (2026-11-10, bot 4.0.74, DECISIONS §562).** `utils/botLease.js` + table `bot_lease`: only
+the holder logs in; a deploy's new process waits as a standby (`/health` 200 with `role: standby`, agent POSTs 503 until
+ready) until the old one releases at shutdown. A lease store that does not answer for 45 s means log in anyway (today's
+behaviour); `BOT_LEASE=off` disables it. Stage 2 (a warm standby taking uploads) must first retire the memory rule above.
 
 ⚠ **Never hot-reload a JSON file with `delete require.cache[…]; require(…)` (2026-10-29, bot 4.0.28).** Each
 re-require builds a new Module that Node pushes onto the caller's `module.children` and never trims, so every

@@ -29,6 +29,7 @@ import {
   signInScopes, SCOPES_WOLFPACK, SCOPES_OPEN, SCOPES_FIND_GUILDS, openNext, matchRegisteredGuilds, splitMatchesByOpenJoin, closedMatchesFor,
   normaliseInviteCode, redeemInviteCode, profileOf, INVITE_CODE_RX,
 } from '../web/lib/hubRegistry.ts';
+import { redirectTarget, wantsToStay } from '../web/lib/guildSites.ts';
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const code = (rel) => stripJs(read(rel));
@@ -56,6 +57,12 @@ function memDb(tables = {}) {
         if (tables[name] === null) return { data: null, error: { message: `relation "${name}" does not exist` } };
         const hit = (r) => q.filters.every(f => f(r));
         let out = [];
+        if (q.head) return { count: rows().filter(hit).length, error: null };
+        if (q.op === 'insert') {
+          writes.push({ table: name, op: 'insert', payload: JSON.parse(JSON.stringify(q.payload)) });
+          rows().push({ ...q.payload, at: new Date().toISOString() });
+          return { data: null, error: null };
+        }
         if (q.op === 'select') out = rows().filter(hit);
         else if (q.op === 'update') {
           out = rows().filter(hit);
@@ -76,7 +83,9 @@ function memDb(tables = {}) {
         return { data: q.op === 'select' || q.returning ? out.map(r => ({ ...r })) : null, error: null };
       };
       const b = {
-        select() { if (q.op !== 'select') q.returning = true; return b; },
+        select(_c, o) { if (o?.head) q.head = true; else if (q.op !== 'select') q.returning = true; return b; },
+        gte(c, v) { q.filters.push(r => r[c] >= v); return b; },   // hub_invite_attempts: failed tries in the last ten minutes
+        insert(p) { q.op = 'insert'; q.payload = p; return b; },
         eq(c, v) { q.filters.push(r => r[c] === v); return b; },
         is(c, v) { q.filters.push(r => (v === null ? r[c] == null : r[c] === v)); return b; },
         not(c, op, v) { q.filters.push(r => !(op === 'is' && v === null ? r[c] == null : r[c] === v)); return b; },
@@ -135,9 +144,16 @@ describe('scopes follow the host', () => {
     expect(btn).not.toMatch(/'identify guilds\.members\.read'/);   // the literal lives in one place (hubRegistry)
   });
   it('/ becomes /guilds on the open path only, and any other page the caller asked for is kept', () => {
-    expect(openNext('/')).toBe('/guilds');
+    expect(openNext('/')).toBe('/guilds?stay=1');
     expect(openNext('/auth/mimic-link?code=K7M2QP')).toBe('/auth/mimic-link?code=K7M2QP');
-    expect(openNext('/guilds')).toBe('/guilds');
+    expect(openNext('/characters')).toBe('/characters');
+  });
+  it('signing in lands on Raid Mimic: the guilds landing carries stay=1, so a one-guild member is not sent to the guild site', () => {
+    // 2026-11-09: a Wolf Pack member signing in on raidmimic.com was forwarded to wolfpack.quest by /guilds' redirect.
+    expect(openNext('/guilds')).toBe('/guilds?stay=1');
+    expect(wantsToStay(Object.fromEntries(new URL(`https://raidmimic.com${openNext('/guilds')}`).searchParams))).toBe(true);
+    expect(redirectTarget([{ guildId: 'wolfpack', url: 'https://wolfpack.example', redirect: true }],
+      wantsToStay(Object.fromEntries(new URL(`https://raidmimic.com${openNext('/')}`).searchParams)))).toBeNull();
   });
 });
 
@@ -363,11 +379,13 @@ describe('the sign-in callback, run (web/app/auth/callback/route.ts)', () => {
       memberAvatarUrl: () => 'https://cdn.discordapp.com/x.png',
       memberDisplayName: (m) => m.nick,
       fetchUserGuilds: async (t) => { st.calls.fetchUserGuilds.push(t); return st.userGuilds; },
+      fetchManagedGuildIds: async () => st.userGuilds,
     }));
     vi.doMock('@/lib/lockout', () => ({ isLockedOut: async () => st.locked }));
     vi.doMock('@/lib/request-origin', async () => await import('../web/lib/request-origin.ts'));
     vi.doMock('@/lib/raidmimicHost', async () => await import('../web/lib/raidmimicHost.ts'));
     vi.doMock('@/lib/hubRegistry', async () => await import('../web/lib/hubRegistry.ts'));
+    vi.doMock('@/lib/hubManage', async () => await import('../web/lib/hubManage.ts'));
     vi.doMock('@/lib/openSignIn', async () => await import('../web/lib/openSignIn.ts'));
     // On beta the gated path also goes through lib/landing.ts (the /me hub as the sign-in landing, §481).
     vi.doMock('@/lib/landing', async () => await import('../web/lib/landing.ts'));
@@ -383,7 +401,7 @@ describe('the sign-in callback, run (web/app/auth/callback/route.ts)', () => {
       const GET = await load();
       st.member = null;   // would be "not a Wolf Pack member" on the gated path
       const res = await GET(req('raidmimic.com', 'code=abc&next=%2F'));
-      expect(where(res)).toBe('https://raidmimic.com/guilds');
+      expect(where(res)).toBe('https://raidmimic.com/guilds?stay=1');
       expect(st.calls.fetchGuildMember).toBe(0);
       expect(st.calls.fetchUserGuilds).toEqual([]);
       expect(st.calls.signOut).toBe(0);
@@ -404,14 +422,14 @@ describe('the sign-in callback, run (web/app/auth/callback/route.ts)', () => {
       const GET = await load();
       st.member = { ...st.member, roles: [] };
       const res = await GET(req('raidmimic.com', 'code=abc&next=%2Fguilds'));
-      expect(where(res)).toBe('https://raidmimic.com/guilds');
+      expect(where(res)).toBe('https://raidmimic.com/guilds?stay=1');
       expect(st.db.tables.hub_memberships).toEqual([]);
     });
     it('keeps the page the caller asked for (/auth/mimic-link?code=…), and still refuses an off-site next', async () => {
       const GET = await load();
       expect(where(await GET(req('raidmimic.com', 'code=abc&next=' + encodeURIComponent('/auth/mimic-link?code=K7M2QP'))))).toBe('https://raidmimic.com/auth/mimic-link?code=K7M2QP');
-      expect(where(await GET(req('raidmimic.com', 'code=abc&next=' + encodeURIComponent('//evil.example/x'))))).toBe('https://raidmimic.com/guilds');
-      expect(where(await GET(req('raidmimic.com', 'code=abc&next=' + encodeURIComponent('https://evil.example'))))).toBe('https://raidmimic.com/guilds');
+      expect(where(await GET(req('raidmimic.com', 'code=abc&next=' + encodeURIComponent('//evil.example/x'))))).toBe('https://raidmimic.com/guilds?stay=1');
+      expect(where(await GET(req('raidmimic.com', 'code=abc&next=' + encodeURIComponent('https://evil.example'))))).toBe('https://raidmimic.com/guilds?stay=1');
     });
     it('a locked-out Discord id is signed out and sent to /auth/paused, with nothing written', async () => {
       const GET = await load();
@@ -657,7 +675,8 @@ describe('redeemInviteCode', () => {
   });
   it('the code shape is the hub_invites check constraint', () => {
     const sql = stripSql(read('supabase/migrations/20261023160000_open_hub_registry.sql'));
-    expect(sql).toContain(INVITE_CODE_RX.source.replace(/\\/g, '\\'));
+    expect(sql).toContain('^[A-HJKMNP-Z2-9]{6}$');   // the original constraint; 20261110140000 widened it to six-or-eight (test/hub-hardening.test.js)
+    expect(INVITE_CODE_RX.test('K7M2QP') && INVITE_CODE_RX.test('K7M2QP4X')).toBe(true);
   });
   it('an unknown code', async () => {
     const d = db();
@@ -720,6 +739,7 @@ describe('the redeemInvite server action, run (web/app/guilds/actions.ts)', () =
   async function loadAction() {
     vi.resetModules();
     mockBoth('next/cache', () => ({ revalidatePath() {} }));
+    mockBoth('next/headers', () => ({ headers: () => ({ get: () => null }) }));
     vi.doMock('@/lib/supabase-server', () => ({ supabaseServer: () => ({ auth: { getUser: async () => ({ data: { user } }) } }) }));
     vi.doMock('@/lib/supabase', () => ({ supabaseAdmin: () => store }));
     vi.doMock('@/lib/lockout', async () => await import('../web/lib/lockout.ts'));
@@ -805,7 +825,7 @@ describe('migration 20261031150000_hub_registry_discord_guild.sql', () => {
 });
 
 describe('the /guilds page', () => {
-  const page = code('web/app/guilds/page.tsx');
+  const page = code('web/app/guilds/page.tsx') + code('web/lib/hubGuildsLoad.ts');   // the page's reads moved to the shared loader (2026-11-09)
   it('requires a sign-in and sends the visitor back to /guilds after it', () => {
     expect(page).toMatch(/if \(!user\) redirect\('\/auth\/signin\?next=\/guilds'\);/);
   });

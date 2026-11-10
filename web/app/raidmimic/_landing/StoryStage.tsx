@@ -11,7 +11,8 @@
 // Skip (jump to the end card) and Hide (collapse the stage to a slim bar, reading on) sit with Sound and CC in a quiet row at the
 // bottom. Skipping, finishing, hiding and reduced motion all show everything at once. Without script the chrome is shown by
 // the <noscript> rule below. The page under it (FeatureBlocks, Pricing) is server-rendered by the page.
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { HOME_WORDS, REWATCH_HASH, SKIP_KEY } from '@/lib/raidmimicHome';
 import SignInButton from '@/components/SignInButton';
 import AgreeLine from '@/components/AgreeLine';
 import { GOLD_BTN, MARKS, revealAt, sameReveal, STORY_WORDS as W, type Reveal } from '@/lib/raidmimicStory';
@@ -23,6 +24,9 @@ const SLOW = 'transition-[opacity,visibility] duration-[1200ms] ease-out motion-
 const on = (show: boolean) => (show ? 'visible opacity-100' : 'invisible opacity-0');
 const GHOST = 'inline-flex min-h-11 items-center rounded-md px-2 text-sm text-[#f2ede1] no-underline hover:bg-white/10 hover:no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-gold sm:px-3';
 
+// The big "Skip video" at the top (the guild lead, 2026-11-09) collapses the stage (the same Hide as the bottom row) and
+// remembers the choice per viewer, so a returning visitor lands past the video with a "Rewatch the video" link at the top.
+// `#video` in the address (the rewatch link) overrides the remembered skip.
 export default function StoryStage({ downloadUrl, onHost = false }: { downloadUrl: string; onHost?: boolean }) {
   const handle = useRef<StoryVideoHandle>(null);
   const reduced = useReducedMotion();
@@ -32,6 +36,17 @@ export default function StoryStage({ downloadUrl, onHost = false }: { downloadUr
   const [hidden, setHidden] = useState(false);
   const all = skipped || ended || reduced || hidden;
   const show: Reveal = all ? revealAt(0, true) : timed;
+
+  useEffect(() => {
+    try {
+      if (window.location.hash === REWATCH_HASH) return;
+      if (window.localStorage.getItem(SKIP_KEY) === '1') setHidden(true);
+    } catch { /* storage blocked: the video plays */ }
+  }, []);
+  const bigSkipNow = () => {
+    try { window.localStorage.setItem(SKIP_KEY, '1'); } catch { /* not remembered */ }
+    setHidden(true);
+  };
 
   const onTime = (t: number) => {
     const next = revealAt(t);
@@ -50,7 +65,7 @@ export default function StoryStage({ downloadUrl, onHost = false }: { downloadUr
 
   // The lockup (icon + name) and the menu: the header, on the timeline.
   const header = (
-    <header className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-center gap-2 p-2 sm:gap-3 sm:p-3">
+    <header className={`pointer-events-none absolute inset-x-0 ${hidden ? 'top-9' : 'top-0'} z-30 flex items-center gap-2 p-2 sm:gap-3 sm:p-3`}>
       <a href="#top" data-reveal="icon" aria-label={W.brand} tabIndex={show.icon ? 0 : -1}
         className={`pointer-events-auto flex items-center gap-2 rounded-lg text-[#f2ede1] no-underline hover:no-underline ${SLOW} ${on(show.icon)}`}>
         <img src="/mimic-logo.png" alt="" width={44} height={44} className="block h-10 w-10 rounded-lg sm:h-11 sm:w-11" />
@@ -67,20 +82,23 @@ export default function StoryStage({ downloadUrl, onHost = false }: { downloadUr
 
   // Hidden: the stage is a slim bar (lockup, menu, a way back) and the page reads on straight under it.
   if (hidden) {
+    // The way back is a "Rewatch the video" link along the top.
     return (
-      <section id="top" aria-label="Raid Mimic" data-story-stage="hidden" className={`relative ${place} min-h-[4.5rem] border-b border-border`}>
+      <section id="top" aria-label="Raid Mimic" data-story-stage="hidden" className={`relative isolate ${place} min-h-[7rem] border-b border-border`}>
         {header}
-        <div className="absolute inset-x-0 bottom-0 flex justify-center p-1">
-          <button type="button" onClick={again} className={QUIET_BTN}>{W.show}</button>
+        <div className="absolute inset-x-0 top-0 z-40 flex justify-center">
+          <button type="button" data-rewatch onClick={again} className={`${QUIET_BTN} underline`}>{HOME_WORDS.rewatch}</button>
         </div>
-        <div aria-hidden className="h-[4.5rem]" />
+        <div aria-hidden className="h-[7rem]" />
       </section>
     );
   }
 
+  // `isolate` (both sections): the stage's own layers (the Skip button is z-50) stay inside it, so the site menu's dropdown opens
+  // OVER the stage instead of under the Skip button (the guild lead, 2026-11-09: "also not overlap").
   return (
     <section id="top" aria-label="Raid Mimic: the story" data-story-stage={onHost ? 'host' : 'site'}
-      className={`rm-stage relative ${place} overflow-hidden bg-bg`}>
+      className={`rm-stage relative isolate ${place} overflow-hidden bg-bg`}>
       <noscript><style>{'[data-reveal]{opacity:1!important;visibility:visible!important}'}</style></noscript>
 
       <StoryVideo ref={handle} onTime={onTime} onEnd={() => setEnded(true)} halted={skipped || ended} reduced={reduced}
@@ -90,6 +108,13 @@ export default function StoryStage({ downloadUrl, onHost = false }: { downloadUr
       </StoryVideo>
 
       {header}
+
+      {!show.end && (
+        <button type="button" data-big-skip onClick={bigSkipNow}
+          className="absolute left-1/2 top-2 z-50 inline-flex min-h-12 -translate-x-1/2 items-center rounded-lg border border-gold bg-black/70 px-5 text-base font-semibold text-[#f2ede1] hover:bg-black/85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold">
+          {HOME_WORDS.skipBig}
+        </button>
+      )}
 
       {/* The feature marks: one fades in as each moment passes. A row under the header on a phone; a column in the left gutter
           beside the (square) picture on a wide screen. They sit on the faded edge, never over the middle of the picture. */}

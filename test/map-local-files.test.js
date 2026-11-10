@@ -49,6 +49,7 @@ function loadCore({ opts, net }) {
     function _localOnly() { return !!(_uploadOpts && !_uploadOpts.token); }
     function _controlStandDown() { return { down: false }; }
     const AGENT_VERSION = 'test';
+    const _isGuestChar = () => false;   // the guest gate (test/guest-characters.test.js covers it)
     const _zealState = {};
     let _lastRaidPipe = null;
     function _zoneName(id) { return id === 164 ? 'The Deep' : null; }
@@ -211,6 +212,7 @@ describe('Brewall maps from Zeal\'s repo: fetched once per zone, read first', ()
       function _localOnly() { return !!(_uploadOpts && !_uploadOpts.token); }
       function _controlStandDown() { return { down: false }; }
       const AGENT_VERSION = 'test';
+      const _isGuestChar = () => false;
       const _zealState = {};
       let _lastRaidPipe = null;
       function _zoneName(id) { return id === 164 ? 'The Deep' : null; }

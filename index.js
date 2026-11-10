@@ -87,7 +87,7 @@ const path = require('path');
 // Pin/canary by pointing AGENT_RELEASE_REF at a tag or branch; the manifest
 // stays internally consistent because everything is fetched from that one ref.
 const AGENT_RELEASE_REF = process.env.AGENT_RELEASE_REF || 'main';
-const _AGENT_RAW_BASE   = `https://raw.githubusercontent.com/davehess/QuarmBossTracker/${AGENT_RELEASE_REF}/packages/wolfpack-logsync`;
+const _AGENT_RAW_BASE   = `https://raw.githubusercontent.com/davehess/raidmimic/${AGENT_RELEASE_REF}/packages/wolfpack-logsync`;
 const _AGENT_INDEX_URL  = `${_AGENT_RAW_BASE}/index.js`;
 const AGENT_MANIFEST_REFRESH_MS = 3 * 60 * 1000;
 
@@ -113,6 +113,9 @@ let _agentManifestFetching = false;
 // flips true on SIGTERM so we refuse NEW HTTP work and drain in-flight handlers.
 let _botReady = false;
 let _shuttingDown = false;
+// Only the holder of this lease logs in to Discord (utils/botLease.js, DECISIONS §562). A new deploy waits as a standby
+// until the old bot lets go at shutdown, so the two never post side by side.
+const _botLease = require('./utils/botLease').defaultLease();
 
 // Node 20 exits the process on an unhandled promise rejection, so one stray `await` in a handler took the whole bot
 // (and every agent's uploads) down (the guild lead, 2026-10-17). Log it and keep serving. uncaughtException is left alone.
@@ -214,7 +217,7 @@ async function _refreshAgentManifestBeta() {
   _agentManifestFetchingBeta = true;
   try {
     const ref    = await _betaReleaseRef();
-    const base   = `https://raw.githubusercontent.com/davehess/QuarmBossTracker/${ref}/packages/wolfpack-logsync`;
+    const base   = `https://raw.githubusercontent.com/davehess/raidmimic/${ref}/packages/wolfpack-logsync`;
     const idxUrl = `${base}/index.js`;
     const [pkgBuf, idxBuf] = await Promise.all([
       _fetchBufferRaw(`${base}/package.json`),
@@ -332,7 +335,10 @@ function getBosses() {
 // SUNO-mover ships inert until both switches are flipped.
 const _intents = [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildVoiceStates];
 if (process.env.MESSAGE_CONTENT_INTENT === '1') _intents.push(GatewayIntentBits.MessageContent);
-const client = new Client({ intents: _intents });
+// Default mention policy: never resolve @everyone/@here from message text. User and role mentions
+// keep working (the many intentional role/user pings rely on them); a send that wants none passes
+// its own allowedMentions, which overrides this default.
+const client = new Client({ intents: _intents, allowedMentions: { parse: ['users', 'roles'] } });
 
 // ── SUNO-link mover (the guild lead, 2026-07-19) ──────────────────────────────────────
 // Suno links from configured members belong in #the-slop: repost there with
@@ -544,6 +550,9 @@ client.once(Events.ClientReady, async (readyClient) => {
   // The weekly anonymous-feedback count (counts only): checked hourly, posts on Monday after 13:00 UTC.
   setTimeout(() => _afbWeeklyDigest(readyClient).catch(err => console.warn('[afb] digest:', err?.message)), 5 * 60_000);
   setInterval(() => _afbWeeklyDigest(readyClient).catch(err => console.warn('[afb] digest:', err?.message)), 60 * 60_000);
+  // New raidmimic.com guild registrations -> one card each in the officers' #feedback thread, every 10 minutes.
+  setTimeout(() => _guildInterestNotice(readyClient).catch(() => {}), 150_000);
+  setInterval(() => _guildInterestNotice(readyClient).catch(() => {}), 10 * 60_000);
   // Quarm patch notes mirror (it never throws): a minute after boot, then every 6 hours.
   setTimeout(() => _syncQuarmPatchNotes(), 60_000);
   setInterval(() => _syncQuarmPatchNotes(), 6 * 60 * 60_000);
@@ -3224,6 +3233,41 @@ async function _sweepThreatSnapshots(supabase, cutoffIso, {
   return { deleted, batches, stop };
 }
 
+// Build the per-fight threat graphs in small batches. The graph watermark
+// (threat_graph_built_through) is the start of the OLDEST fight still lacking a graph, and
+// the sweep may delete nothing at or after it, so one fight whose graph never gets built
+// pins the whole sweep. A single 5000-fight call overran the client's 10s abort and left
+// the same oldest fight pending night after night. Stops when a call builds fewer than a
+// batch ('done'), the time budget is spent ('budget'), or a call fails ('error'). Never throws.
+async function _buildThreatGraphs(supabase, {
+  batch = 25, budgetMs = 60000, now = Date.now,   // 5 fights measured 0.4 s (2026-11-10): 25 stays well inside the 10 s abort
+} = {}) {
+  const startedAt = now();
+  let built = 0, calls = 0, stop = 'budget';
+  try {
+    while (now() - startedAt < budgetMs) {
+      const n = await supabase.rpc('build_encounter_threat_graphs', { p_limit: batch });
+      calls++;
+      if (typeof n !== 'number') { stop = 'error'; break; }
+      built += n;
+      if (n < batch) { stop = 'done'; break; }
+    }
+  } catch (err) {
+    stop = 'error';
+  }
+  return { built, calls, stop };
+}
+
+// Leave the last sweep's outcome where an officer can read it (bot_kv, not state.json — that
+// does not survive a deploy). Never throws.
+async function _recordThreatSweep(supabase, guildId, record) {
+  try {
+    await supabase.upsert('bot_kv',
+      [{ guild_id: guildId, key: 'threat_sweep_status', value: record, updated_at: new Date().toISOString() }],
+      'guild_id,key');
+  } catch (_) { /* visibility only */ }
+}
+
 // ── Midnight tasks ─────────────────────────────────────────────────────────
 function scheduleMidnightSummary(readyClient) {
   const historyThreadId = process.env.HISTORIC_KILLS_THREAD_ID;
@@ -3426,7 +3470,7 @@ function scheduleMidnightSummary(readyClient) {
         let graphThrough = null;
         if (supabase.isEnabled()) {
           try {
-            const built = await supabase.rpc('build_encounter_threat_graphs', { p_limit: 5000 });
+            const built = (await _buildThreatGraphs(supabase)).built;
             if (built) console.log(`[midnight] stored ${built} fight threat graph(s)`);
             const through = await supabase.rpc('threat_graph_built_through', {});
             const t = through ? Date.parse(through) : NaN;
@@ -3439,9 +3483,10 @@ function scheduleMidnightSummary(readyClient) {
           const cutoffDate = _threatDeleteCutoff({ archivedThrough, graphThrough,
             retentionCutoff: new Date(Date.now() - keep * 24 * 60 * 60 * 1000) });
           if (!cutoffDate) {
-            console.warn('[midnight] threat sweep SKIPPED — '
-              + (!archivedThrough ? 'no on-prem archive watermark (bot_kv archive_watermark_threat_snapshots)'
-                                  : 'no threat-graph watermark')
+            const why = !archivedThrough ? 'no on-prem archive watermark (bot_kv archive_watermark_threat_snapshots)'
+                                         : 'no threat-graph watermark';
+            await _recordThreatSweep(supabase, guildId, { at: new Date().toISOString(), cutoff: null, deleted: 0, stop: 'skipped', reason: why });
+            console.log('[midnight] threat sweep SKIPPED — ' + why
               + '. Nothing deleted; the table will grow until both report in. Deliberate: see the header above.');
           } else {
             const cutoff = cutoffDate.toISOString();
@@ -3452,6 +3497,12 @@ function scheduleMidnightSummary(readyClient) {
             const batch = parseInt(process.env.THREAT_SWEEP_BATCH, 10) || 2000;
             const budgetSec = parseInt(process.env.THREAT_SWEEP_BUDGET_SEC, 10) || 120;
             const swept = await _sweepThreatSnapshots(supabase, cutoff, { batch, budgetMs: budgetSec * 1000 });
+            const limits = { retention: Date.now() - keep * 24 * 60 * 60 * 1000,
+                             archive: archivedThrough.getTime(), graphs: graphThrough.getTime() };
+            await _recordThreatSweep(supabase, guildId, {
+              at: new Date().toISOString(), cutoff, deleted: swept.deleted, batches: swept.batches,
+              stop: swept.stop, limited_by: Object.keys(limits).sort((a, b) => limits[a] - limits[b])[0],
+            });
             console.log(`[midnight] swept ${swept.deleted} encounter_threat_snapshots older than ${cutoff} `
               + `in ${swept.batches} batch(es), stopped: ${swept.stop} `
               + `(retention ${keep}d; archived through ${archivedThrough.toISOString()}; `
@@ -3549,6 +3600,19 @@ function scheduleMidnightSummary(readyClient) {
         }
       } catch (err) {
         console.warn('[midnight] buff_casts retention skipped:', err?.message);
+      }
+
+      // Invite-code guess log (hub_invite_attempts, web invite limiter): only the last 10 minutes are ever read, so
+      // anything older than a day is dropped, address hash included.
+      try {
+        const supabase = require('./utils/supabase');
+        if (supabase.isEnabled()) {
+          const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+          await supabase.del('hub_invite_attempts', `at=lt.${encodeURIComponent(cutoff)}`);
+          console.log('[midnight] swept hub_invite_attempts older than 1 day');
+        }
+      } catch (err) {
+        console.warn('[midnight] hub_invite_attempts retention skipped:', err?.message);
       }
 
       // ── Retention sweep: raid history (utils/raidHistory.js) ──────────────
@@ -6475,6 +6539,7 @@ async function _handleAgentBossKill(req, res) {
   for (const kill of kills) {
     const { character, guild, boss: bossName, zone, ts } = kill || {};
     if (!bossName) continue;
+    if (!_relayTsInBounds(ts)) { _logRelayTsDropped('bosskill'); continue; }
 
     // Dead → off the Extended Target board, before anything else can `continue`
     // past it. Deliberately ABOVE the PoP lock check below: that gate is about
@@ -7022,6 +7087,30 @@ async function _callerMayActAs(identity, characterName) {
   if (_uploadedAsCache.size > 5000) _uploadedAsCache.clear();
   _uploadedAsCache.set(memoKey, Date.now());
   return true;
+}
+// True only when the character is linked to a Discord account OUTSIDE the caller's household. The fight upload uses
+// this instead of _callerMayActAs: an unlinked or brand-new alt, and a failed lookup, must still upload as before.
+async function _characterBelongsToAnotherMember(identity, characterName) {
+  const callerId = identity && identity.discord_id ? String(identity.discord_id) : '';
+  const name = String(characterName || '').trim();
+  if (!callerId || !_CHAR_NAME_RX.test(name)) return false;
+  const owner = await _characterOwnerDiscordId(name);
+  if (!owner) return false;
+  return !(await _householdDiscordIds(callerId)).has(owner);
+}
+// A kill relay's client clock must sit between 48 h ago and 5 min ahead; no ts means "now" (as before). 48 h, not 6:
+// Mimic's durable upload queue holds a kill through a bot outage, and a raid's kills must survive a long one.
+// The window is the agent's live tail: it sends a kill within seconds, and a queued retry outlives an outage by hours.
+function _relayTsInBounds(ts, now = Date.now()) {
+  if (ts === undefined || ts === null || ts === '') return true;
+  const ms = typeof ts === 'number' ? ts : Date.parse(ts);
+  return Number.isFinite(ms) && ms >= now - 48 * 3600000 && ms <= now + 5 * 60000;
+}
+let _relayTsDropLogAt = 0;
+function _logRelayTsDropped(kind) {
+  if (Date.now() - _relayTsDropLogAt < 10 * 60000) return;   // once per 10 min, stdout only
+  _relayTsDropLogAt = Date.now();
+  console.log(`[${kind}] dropped relay entry with an out-of-range time`);
 }
 // The names in `names` the caller may act as (case-preserving, de-duplicated, order kept).
 async function _callerOwnNames(identity, names) {
@@ -10949,6 +11038,9 @@ async function _handleAgentLockout(req, res) {
   for (const entry of entries) {
     const { bossName, remainingMs, character } = entry || {};
     if (!bossName || typeof remainingMs !== 'number') continue;
+    // The entry has no clock of its own, only a remaining time: it must be positive and no longer than the longest
+    // boss timer (162 h on the board) with a day of slack.
+    if (!Number.isFinite(remainingMs) || remainingMs < 0 || remainingMs > 8 * 24 * 3600000) { _logRelayTsDropped('lockout'); continue; }
 
     // /sll names a mob → the server gives loot lockouts for it → card-worthy.
     // Promote its bosses_local row if it was auto-registered (fire-and-forget;
@@ -11555,6 +11647,30 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
         for (let i = 0; i < eff.length; i++) if (Number(eff[i]) === 92 && Number(base[i]) > 0) sum += Number(base[i]);
         return sum > 0 ? sum : null;
       }
+      // Attack-speed effects, the numbers Mob::GetHaste adds up (the guild lead, 2026-11-09: "We should be figuring out haste
+      // based on buffs too"): [SE_AttackSpeed 11, SE_AttackSpeed2 98, SE_AttackSpeed3 119] as the server's effect value, so
+      // 100 is no change, 130 is 30% haste, 40 is a heavy slow; for 119 (overhaste) the value is the haste itself and a slow is
+      // negative (EQMacEmu zone/bonuses.cpp:1136-1182, c2cd265). A fixed formula is the base; a level formula is read at the era
+      // cap. Zeros are kept to hold the slot; a spell with none carries no `hs` at all, so the payload barely grows.
+      function _hasteSlots(r) {
+        const eff  = r.raw && Array.isArray(r.raw.eff)     ? r.raw.eff     : null;
+        const base = r.raw && Array.isArray(r.raw.base)    ? r.raw.base    : null;
+        if (!eff || !base) return null;
+        const form = r.raw && Array.isArray(r.raw.formula) ? r.raw.formula : null;
+        const maxA = r.raw && Array.isArray(r.raw.max)     ? r.raw.max     : null;
+        const out = [0, 0, 0];
+        const SPA = { 11: 0, 98: 1, 119: 2 };
+        for (let i = 0; i < 12 && i < eff.length; i++) {
+          const k = SPA[Number(eff[i])];
+          if (k === undefined) continue;
+          const b = Number(base[i]) || 0;
+          const f = form && form[i] != null ? Number(form[i]) : 100;
+          const mx = maxA && maxA[i] != null ? Math.abs(Number(maxA[i])) : 0;
+          const mag = _dsFormulaValue(b, f === 0 ? 100 : f, _dsLevel, mx);
+          out[k] = b < 0 ? -mag : mag;
+        }
+        return (out[0] || out[1] || out[2]) ? out : null;
+      }
       // Estimated heal magnitude for the heal-attribution join + the tank
       // overlay's inbound-heal amounts (the guild lead, 2026-07-14: heal amounts are
       // private to the healed, so a witnessed landing is credited at the
@@ -11671,6 +11787,8 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
             cc: _ccKinds(r) || undefined,
             // Hate the spell adds (_hateAdded) — omitted for the ~99% that add none.
             hate: _hateAdded(r) || undefined,
+            // Attack-speed effects (_hasteSlots): the agent's Weave timer adds up a raider's buffs like the server does.
+            hs: _hasteSlots(r) || undefined,
             // Decoded effect strings, for the dashboard's Buffs tab. Attached
             // ONLY to beneficial timed buffs (1233 of 3933 spells), so the
             // catalog grows by ~50KB on an hour-cached ETag'd fetch rather than
@@ -11708,7 +11826,7 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
         }
       }
       const body = JSON.stringify({
-        version: 9,   // `st`/`sws` (debuff stacking signature) ride v9 — the ETag, a hash of the body, is what makes agents refetch · v9: adds `ae` (area-spell flag) — FB-57 Melody AE chip · v8: adds `npc` (NPC-castable flag) — #206 instant-mechanic index
+        version: 10,  // `hs` (attack-speed effect values) rides v10 · `st`/`sws` (debuff stacking signature) ride v9 — the ETag, a hash of the body, is what makes agents refetch · v9: adds `ae` (area-spell flag) — FB-57 Melody AE chip · v8: adds `npc` (NPC-castable flag) — #206 instant-mechanic index
         fetched_at: new Date().toISOString(),
         count: entries.length,
         entries,
@@ -11761,6 +11879,7 @@ async function _handleAgentItemClickies(req, res, isPublic) {
   if (!fresh) {
     const entries = [];
     let wornDs = [];
+    let wornHaste = null;   // null = unread (an older database): the agent then knows it has no gear haste
     let failed = false;
     try {
       const supabase = require('./utils/supabase');
@@ -11788,6 +11907,12 @@ async function _handleAgentItemClickies(req, res, isPublic) {
       const worn = await supabase.select('item_worn_damage_shield', 'select=item_id,item_name,ds&order=item_id&limit=500');
       if (Array.isArray(worn)) wornDs = worn.map(w => ({ id: w.item_id, name: w.item_name, ds: Number(w.ds) || 0 }));
       else console.warn('[item-clickies] worn damage-shield read failed — serving without it');
+      // Items whose WORN effect is an attack-speed spell (SE_AttackSpeed 11), with the haste they add (the value less 100):
+      // the server fills itembonuses.haste from the worn effect (EQMacEmu zone/bonuses.cpp:247, c2cd265) and Mob::GetHaste adds the
+      // best one. Same fail-soft as worn_ds: a failed read serves the catalog without them and the agent then reads no gear haste.
+      const wornH = await supabase.selectAllPaged('item_worn_haste', 'select=item_id,item_name,haste', 'item_id');
+      if (Array.isArray(wornH)) wornHaste = wornH.map(w => ({ id: w.item_id, name: w.item_name, haste: Number(w.haste) || 0 }));
+      else console.warn('[item-clickies] worn haste read failed — serving without it');
     } catch (err) {
       // Column missing (migration not applied yet) or other transient failure.
       // Nothing from a failed read is cached: the last good catalog keeps serving
@@ -11798,11 +11923,12 @@ async function _handleAgentItemClickies(req, res, isPublic) {
     }
     if (!failed) {
       const body = JSON.stringify({
-        version: 2,                         // 2: + worn_ds (additive; older agents ignore it)
+        version: 3,                         // 3: + worn_haste · 2: + worn_ds (additive; older agents ignore them)
         fetched_at: new Date().toISOString(),
         count: entries.length,
         entries,
         worn_ds: wornDs,
+        worn_haste: wornHaste,
       });
       const etag = '"' + require('crypto').createHash('sha1').update(body).digest('hex') + '"';
       _itemClickyCache = { fetchedAt: Date.now(), body, etag };
@@ -13031,13 +13157,13 @@ async function _announceMimicReleases() {
   // Newest stable AND newest beta from one listing.
   const rels = await new Promise((resolve) => {
     const https = require('https');
-    https.get({ hostname: 'api.github.com', path: '/repos/davehess/QuarmBossTracker/releases?per_page=20',
+    https.get({ hostname: 'api.github.com', path: '/repos/davehess/raidmimic/releases?per_page=20',
       headers: { 'User-Agent': 'wolfpack-bot', 'Accept': 'application/vnd.github+json' }, timeout: 10000 },
       (res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { const arr = JSON.parse(b); resolve(Array.isArray(arr) ? arr : []); } catch { resolve([]); } }); }
     ).on('error', () => resolve([])).on('timeout', function () { this.destroy(); resolve([]); });
   });
   const { EmbedBuilder } = require('discord.js');
-  const REL = 'https://github.com/davehess/QuarmBossTracker/releases';
+  const REL = 'https://github.com/davehess/raidmimic/releases';
   // The release body leads with the actual changelog (from the release commit
   // message) with install boilerplate below a `---` rule — show the changelog
   // part only (the guild lead, 2026-07-14). Falls back to the whole body for older
@@ -13283,7 +13409,7 @@ async function _announceMimic271Once() {
   }
   const rel = await new Promise((resolve) => {
     const https = require('https');
-    https.get({ hostname: 'api.github.com', path: '/repos/davehess/QuarmBossTracker/releases/tags/' + _MIMIC271_TAG,
+    https.get({ hostname: 'api.github.com', path: '/repos/davehess/raidmimic/releases/tags/' + _MIMIC271_TAG,
       headers: { 'User-Agent': 'wolfpack-bot', 'Accept': 'application/vnd.github+json' }, timeout: 10000 },
       (res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { resolve(JSON.parse(b)); } catch { resolve(null); } }); }
     ).on('error', () => resolve(null)).on('timeout', function () { this.destroy(); resolve(null); });
@@ -13357,7 +13483,7 @@ async function _announceMimic278Once() {
   }
   const rel = await new Promise((resolve) => {
     const https = require('https');
-    https.get({ hostname: 'api.github.com', path: '/repos/davehess/QuarmBossTracker/releases/tags/' + _MIMIC278_TAG,
+    https.get({ hostname: 'api.github.com', path: '/repos/davehess/raidmimic/releases/tags/' + _MIMIC278_TAG,
       headers: { 'User-Agent': 'wolfpack-bot', 'Accept': 'application/vnd.github+json' }, timeout: 10000 },
       (res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { resolve(JSON.parse(b)); } catch { resolve(null); } }); }
     ).on('error', () => resolve(null)).on('timeout', function () { this.destroy(); resolve(null); });
@@ -13438,7 +13564,7 @@ async function _announceMimic291Once() {
   }
   const rel = await new Promise((resolve) => {
     const https = require('https');
-    https.get({ hostname: 'api.github.com', path: '/repos/davehess/QuarmBossTracker/releases/tags/' + _MIMIC291_TAG,
+    https.get({ hostname: 'api.github.com', path: '/repos/davehess/raidmimic/releases/tags/' + _MIMIC291_TAG,
       headers: { 'User-Agent': 'wolfpack-bot', 'Accept': 'application/vnd.github+json' }, timeout: 10000 },
       (res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { resolve(JSON.parse(b)); } catch { resolve(null); } }); }
     ).on('error', () => resolve(null)).on('timeout', function () { this.destroy(); resolve(null); });
@@ -13516,7 +13642,7 @@ async function _announceOptinPvpOnce() {
   }
   const rel = await new Promise((resolve) => {
     const https = require('https');
-    https.get({ hostname: 'api.github.com', path: '/repos/davehess/QuarmBossTracker/releases/tags/' + _OPTINPVP_TAG,
+    https.get({ hostname: 'api.github.com', path: '/repos/davehess/raidmimic/releases/tags/' + _OPTINPVP_TAG,
       headers: { 'User-Agent': 'wolfpack-bot', 'Accept': 'application/vnd.github+json' }, timeout: 10000 },
       (res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { resolve(JSON.parse(b)); } catch { resolve(null); } }); }
     ).on('error', () => resolve(null)).on('timeout', function () { this.destroy(); resolve(null); });
@@ -21136,6 +21262,20 @@ async function _handleAgentRolls(req, res) {
 // honestly reuse loot_observations). Upsert by (guild, looter, item, looted_at)
 // so a restart re-read collapses. The site links a looted item to its roll
 // session at read; nothing here needs the roll data.
+// The same loot reported twice: since agent 4.0.84 every group member's Mimic reports "--<Name> has looted ...--"
+// (the guild lead, 2026-11-10: "it should also capture X has looted lines"), and the looter's own Mimic reports
+// "You have looted". Their PC clocks differ by seconds, so the exact-second upsert key does not collapse them. A row
+// is dropped when an EXISTING row from a DIFFERENT uploader has the same looter and item within _LOOT_SAME_MS. The
+// same uploader's own repeats keep the exact-second rule (a raider can really loot the same stackable twice).
+const _LOOT_SAME_MS = 20000;
+function _dropAlreadyReportedLoot(rows, existing) {
+  const ex = Array.isArray(existing) ? existing : [];
+  return rows.filter(r => !ex.some(x =>
+    x.looter_lower === r.looter_lower && x.item_name === r.item_name
+    && x.uploaded_by_discord_id !== r.uploaded_by_discord_id
+    && Math.abs(Date.parse(x.looted_at) - Date.parse(r.looted_at)) <= _LOOT_SAME_MS));
+}
+
 async function _handleAgentLooted(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -21181,11 +21321,26 @@ async function _handleAgentLooted(req, res) {
       zone:                   e?.zone ? String(e.zone).slice(0, 64) : null,
       looted_at:              atIso,
       uploaded_by_discord_id: identity.discord_id,
-      source:                 'local_agent_v1',
+      source:                 e?.witnessed === true ? 'local_agent_witnessed' : 'local_agent_v1',
       created_at:             nowIso,
       ...(fromOwnPet ? { from_own_pet: true } : {}),
     });
     seen.set(key, rows[rows.length - 1]);
+  }
+  if (rows.length > 0) {
+    // Already reported by someone else (see _dropAlreadyReportedLoot). Looter names are one word of letters (the agent's
+    // own pattern), so they are safe in the in.() filter; items are compared here, not in the query.
+    const names = [...new Set(rows.map(r => r.looter_lower))].filter(n => /^[a-z]+$/.test(n));
+    const times = rows.map(r => Date.parse(r.looted_at));
+    if (names.length) {
+      const lo = new Date(Math.min(...times) - _LOOT_SAME_MS).toISOString();
+      const hi = new Date(Math.max(...times) + _LOOT_SAME_MS).toISOString();
+      const existing = await supabase.select('looted_items',
+        `select=looter_lower,item_name,looted_at,uploaded_by_discord_id&guild_id=eq.${guildId}`
+        + `&looter_lower=in.(${names.join(',')})&looted_at=gte.${encodeURIComponent(lo)}&looted_at=lte.${encodeURIComponent(hi)}&limit=500`);
+      const kept = _dropAlreadyReportedLoot(rows, existing);
+      rows.length = 0; rows.push(...kept);
+    }
   }
   if (rows.length === 0) { res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored: 0 })); }
   try {
@@ -22225,7 +22380,7 @@ async function _feedbackAdvance(readyClient, ref, branch, sha, commitMessage) {
 // later page fails the earlier ones still count and the next look carries on from where they ended.
 // A compare that fails on its first page (404/422: a reset branch) or no `seen` at all takes the date walk.
 async function _feedbackFreshCommits(branch, seen) {
-  const repo = '/repos/davehess/QuarmBossTracker';
+  const repo = '/repos/davehess/raidmimic';
   if (seen) {
     let gained = null;
     for (let page = 1; page <= 3; page++) {
@@ -22341,6 +22496,57 @@ async function _afbWeeklyDigest(readyClient) {
   if (!Array.isArray(latched)) return 'latch-failed';
   if (!line) return 'quiet';
   await thread.send({ content: line, allowedMentions: { parse: [] }, flags: MessageFlags.SuppressEmbeds });
+  return 'posted';
+}
+
+// New raidmimic.com guild registrations (public.guild_interest) post as one embed card each into the officers'
+// #feedback thread. The text is typed by strangers: utils/guildInterestNotice.js sanitizes it, the send allows no
+// mentions, and nothing on the card is actionable. Row text is never logged, counts only. The watermark (newest
+// created_at posted) lives in bot_kv, not state.json; first run sets it to now and posts nothing. A failure logs
+// once an hour on stdout and leaves the watermark, so the next tick retries.
+const _ginLogAt = {};
+function _ginLog(reason, msg) {
+  const t = Date.now();
+  if (t - (_ginLogAt[reason] || 0) < 60 * 60_000) return;
+  _ginLogAt[reason] = t;
+  console.log(`[guild-interest] ${msg}`);
+}
+async function _guildInterestNotice(readyClient) {
+  const threadId = process.env.FEEDBACK_THREAD_ID;
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return 'skipped';
+  if (!threadId) { _ginLog('no-thread', 'FEEDBACK_THREAD_ID not set; registration cards skipped'); return 'skipped'; }
+  const gin = require('./utils/guildInterestNotice');
+  const guildId = supabase.guildId();
+  const key = 'guild_interest_notified_at';
+  const kv = await supabase.select('bot_kv', `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${key}&select=value&limit=1`);
+  if (!Array.isArray(kv)) { _ginLog('kv', 'bot_kv not readable; registration check will retry'); return 'unknown'; }
+  const watermark = kv[0] && kv[0].value ? kv[0].value.at : null;
+  const saveMark = at => supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key, value: { at }, updated_at: new Date().toISOString() }], 'guild_id,key');
+  if (!watermark) { await saveMark(new Date().toISOString()); return 'first-run'; }
+  const rows = await supabase.select('guild_interest',
+    'select=created_at,guild_name,game,server,raiders,nights,tz,raid_start,raid_end,bid_mode,dkp,heard,discord_contact'
+    + `&created_at=gt.${encodeURIComponent(watermark)}&order=created_at.asc&limit=100`);
+  if (!Array.isArray(rows)) { _ginLog('read', 'guild_interest not readable; registration check will retry'); return 'unknown'; }
+  const p = gin.plan({ rows, watermark, now: new Date() });
+  if (!p.toPost.length) return 'quiet';
+  const thread = await readyClient.channels.fetch(threadId).catch(() => null);
+  if (!thread) { _ginLog('fetch', 'officers thread not reachable; registration cards will retry'); return 'no-thread'; }
+  let done = 0;
+  try {
+    for (const row of p.toPost) {
+      await thread.send({ embeds: [gin.card(row)], allowedMentions: { parse: [] } });
+      done++;
+      await saveMark(row.created_at);
+    }
+    if (p.more) await thread.send({ content: gin.moreLine(p.more), allowedMentions: { parse: [] }, flags: MessageFlags.SuppressEmbeds });
+    await saveMark(p.nextWatermark);
+  } catch (err) {
+    _ginLog('send', `post failed after ${done} of ${p.toPost.length} card(s); will retry`);
+    return 'failed';
+  }
+  console.log(`[guild-interest] posted ${done} registration card(s)${p.more ? `, ${p.more} more left to the admin page` : ''}`);
   return 'posted';
 }
 
@@ -23386,8 +23592,9 @@ async function _recordKillLockouts({
     + (foreign ? `, ${foreign} not from our raid` : ''));
 }
 
+const _foreignUploadLogged = new Set();
 async function _handleAgentUpload(req, res) {
-  // Auth: shared-secret bearer token. WOLFPACK_AGENT_TOKEN must be set.
+  // Auth: per-user session token (wpms_...), checked by requireAgentAuth.
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
 
@@ -23430,7 +23637,23 @@ async function _handleAgentUpload(req, res) {
   // AUTOPARSE_TEST_THREAD, no session damage accumulation, no auto-kill /
   // timer reset. Otherwise importing weeks of old combat would spam Discord
   // and stomp every active boss timer.
-  const { character, encounter } = payload || {};
+  let { character } = payload || {};
+  const { encounter } = payload || {};
+  // The uploader's name is the contributor, and first-person events are credited to it. When that character is linked
+  // to someone else's Discord account the upload is still kept for the OTHER players in the log, but nothing is
+  // attributed to that name (no first-person damage, no contributor row under it).
+  if (character && !(identity.scope === 'guest' || identity.hub_guild)) {
+    try {
+      if (await _characterBelongsToAnotherMember(identity, character)) {
+        const k = `${identity.discord_id}|${String(character).toLowerCase()}`;
+        if (!_foreignUploadLogged.has(k)) {
+          _foreignUploadLogged.add(k);
+          console.log(`[agent] upload names a character linked to another member; not attributed (session ${String(identity.discord_id).slice(-4)})`);
+        }
+        character = null;
+      }
+    } catch { /* a failed check keeps today's behaviour */ }
+  }
   // A GUEST link (an officer-approved raider from another guild, 2026-10-30) contributes the parse and nothing
   // else: recordParse below still persists it, but it is treated like a replay for every live side effect (no
   // Discord card, no session totals, no auto-kill or timer, no live review), and the member-keyed writes (/who
@@ -25005,6 +25228,12 @@ const httpServer = http.createServer(async (req, res) => {
     res.writeHead(503, { 'Content-Type': 'application/json', 'Connection': 'close' });
     return res.end(JSON.stringify({ error: 'shutting_down' }));
   }
+  // A standby (or a bot still logging in) answers health checks and reads but takes no uploads: their handlers post to
+  // Discord. The agent's durable queue retries a 503, so nothing is lost while the lease changes hands.
+  if (!_botReady && req.method === 'POST' && /^\/api\/agent\//.test(req.url || '')) {
+    res.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '15' });
+    return res.end(JSON.stringify({ error: 'not_ready', role: _botLease.role() }));
+  }
   // Agent upload endpoint
   // Auto-derive the current agent version from the agent's package.json so we
   // don't have to bump a LATEST_AGENT_VERSION env var every release. The env
@@ -26215,11 +26444,18 @@ const httpServer = http.createServer(async (req, res) => {
     // Process memory in MB (utils/memStats.js) — tells real retention from V8 declining to collect early.
     let mem = null;
     try { mem = require('./utils/memStats').memSnapshot(); } catch { /* */ }
-    const ready = _botReady && !_shuttingDown;
+    // A standby is healthy: it has to pass the platform's check for the deploy to go ahead and retire the old bot.
+    const role = _botLease.role();
+    const ready = (_botReady || role === 'standby') && !_shuttingDown;
+    // Anonymous callers (the platform healthcheck, uptime pings) get readiness only; the operational
+    // detail needs a valid per-user session token.
+    const _detailed = (await mimicLink.peekAgentAuth(req)) ? {
+      supabase_breaker: breaker, supabase_row_cap: rowCap, guild_rls: guildRls, budgets, mem,
+    } : {};
     res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({
-      ok: ready, ready, shutting_down: _shuttingDown,
-      supabase_breaker: breaker, supabase_row_cap: rowCap, guild_rls: guildRls, budgets, mem,
+      ok: ready, ready, role, shutting_down: _shuttingDown, version: require('./package.json').version,
+      ..._detailed,
     }));
   }
 
@@ -26232,6 +26468,11 @@ httpServer.listen(process.env.PORT || 3000, () =>
 );
 // One `[mem]` stdout line at boot and every 10 minutes, so the memory curve can be read from the deploy logs.
 try { require('./utils/memStats').startMemLog(); } catch (e) { void e; }
+// Hardening: in production the guild tag should be named, not defaulted. Wolf Pack runs on the default today, so this
+// says so once on stdout and does not stop the boot.
+if (process.env.RAILWAY_ENVIRONMENT && !process.env.SUPABASE_GUILD_ID) {
+  console.log("[boot] SUPABASE_GUILD_ID is unset in production; rows are tagged with the default guild 'wolfpack'. Set it explicitly so a new deployment cannot inherit that tag.");
+}
 
 // #58 graceful shutdown — Railway sends SIGTERM before replacing a container.
 // Stop accepting new connections, give in-flight handlers ~10s to drain, then
@@ -26251,7 +26492,9 @@ function _gracefulShutdown(signal) {
   const done = () => {
     console.log('[shutdown] destroying Discord client + exiting');
     try { client.destroy(); } catch (e) { void e; }
-    process.exit(0);
+    // Discord is closed, so the standby may take over now rather than wait out the lease.
+    setTimeout(() => process.exit(0), 4000).unref?.();
+    Promise.resolve().then(() => _botLease.release()).catch(() => {}).finally(() => process.exit(0));
   };
   // Exit when the drain window elapses (whether or not every socket closed).
   setTimeout(done, drainMs).unref?.();
@@ -26259,4 +26502,14 @@ function _gracefulShutdown(signal) {
 process.on('SIGTERM', () => _gracefulShutdown('SIGTERM'));
 process.on('SIGINT',  () => _gracefulShutdown('SIGINT'));
 
-client.login(process.env.DISCORD_TOKEN);
+// Log in only once this process holds the lease. Losing it later (another bot took it while this one could not renew)
+// exits non-zero, and the platform restarts this process as a standby.
+_botLease.waitForLease().then(() => {
+  if (_shuttingDown) return;
+  _botLease.startRenewing(() => {
+    console.log('[lease] another bot holds the lease now; stepping down to restart as a standby');
+    try { client.destroy(); } catch (e) { void e; }
+    process.exit(1);
+  });
+  client.login(process.env.DISCORD_TOKEN);
+});
