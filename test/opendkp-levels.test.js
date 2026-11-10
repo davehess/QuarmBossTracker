@@ -73,6 +73,20 @@ describe('planLevelUpdates', () => {
     expect(Object.keys(sent)).toEqual(Object.keys(r));
     expect(r.Level).toBe(58);   // input not mutated
   });
+
+  // OpenDKP saves the whole record an update sends: a trimmed roster row would blank rank, account, ... (2026-11-10 review).
+  it('never plans or builds a record that is missing a field the update sends', () => {
+    const trimmed = row({ CharacterId: 7, Name: 'Zarrin', Level: 50 });
+    delete trimmed.User;
+    const noLevel = row({ CharacterId: 8, Name: 'Nyssara' });
+    delete noLevel.Level;
+    const p = planLevelUpdates([trimmed, noLevel], seen({
+      zarrin: { level: 60, seenAt: iso(1) }, nyssara: { level: 60, seenAt: iso(1) },
+    }), NOW);
+    expect(p.raise).toHaveLength(0);
+    expect(p.skipped.incomplete).toBe(2);
+    expect(() => buildUpdateRecord(trimmed, 60)).toThrow(/incomplete/);
+  });
 });
 
 describe('updateCharacter request shape', () => {

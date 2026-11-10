@@ -41,7 +41,8 @@ async function buildPlan() {
 function previewText(plan) {
   const out = [`**OpenDKP levels from /who** — ${plan.raise.length} to raise`
     + `, ${plan.lower.length} lower in /who (not changed), ${plan.same} already right`
-    + `, ${plan.unseen} not seen, ${plan.skipped.stale} seen too long ago.`];
+    + `, ${plan.unseen} not seen, ${plan.skipped.stale} seen too long ago`
+    + (plan.skipped.incomplete ? `, ${plan.skipped.incomplete} skipped (OpenDKP record incomplete, fix by hand)` : '') + '.'];
   if (plan.raise.length) {
     out.push('```', ...plan.raise.slice(0, PREVIEW_LINES).map(_line));
     if (plan.raise.length > PREVIEW_LINES) out.push(`…and ${plan.raise.length - PREVIEW_LINES} more`);
