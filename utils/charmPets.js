@@ -17,7 +17,9 @@
 //   · special ability 14 (CharmImmunity) — Quarm's numbering, utils/mobSpecials.js, is the same as ours;
 //   · Veksar, level 50 and up, is hard-coded immune;
 //   · a placeholder body (immune to BOTH melee and magic) cannot be fought, let alone charmed;
-//   · bodytype 11 / 60 / 64 / 66 are untargetable, a swarm pet or the nameless "invisible man";
+//   · bodytype 11 / 60 / 64 / 65 / 66 / 67 are untargetable, a swarm pet, a scripted effect, a voice or an
+//     event controller (the nameless "invisible man");
+//   · special ability 35 (No Harm From Client): nothing harmful from a player lands, charm included;
 //   · a raid target is dropped on purpose: Quarm gives raid bosses an "engage notice" (the server says
 //     "too powerful for your charm"), a column our mirror does not carry, and nearly all of them are 14
 //     anyway. A false "charm this" on a raid boss costs a pull; a missing one costs nothing.
@@ -51,7 +53,12 @@ const TRAIT_CODES = Object.freeze({
   1: 'summon', 3: 'rampage', 4: 'area_rampage', 5: 'flurry', 6: 'triple', 7: 'dual', 10: 'magical',
 });
 const CHARM_IMMUNITY_CODE = 14;
-const UNTARGETABLE_BODY = new Set([11, 60, 64, 66]);
+// 65 / 67 added 2026-11-10 (the guild lead: "PusEventStarter and You Hear shouldn't be on this list"): the scripted
+// effects, voices and event controllers (race 127 "invisible man" with body 65 / 66 / 67 in the mirror: 873 rows).
+const UNTARGETABLE_BODY = new Set([11, 60, 64, 65, 66, 67]);
+// Special ability 35, No Harm From Client: a player cannot land anything harmful on it, charm included (the "You hear"
+// voices carry it). Teleporters and other untouchables are immune to melee AND magic: isPlaceholder already drops them.
+const NO_HARM_FROM_CLIENT_CODE = 35;
 const MAX_LEVEL = 65;
 
 const chunks = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
@@ -71,6 +78,7 @@ function isCharmCandidate(row, zone) {
   if (row.raid_target) return false;
   const specials = mobSpecials.parseSpecials(row.special_abilities);
   if (specials.has(CHARM_IMMUNITY_CODE)) return false;
+  if (specials.has(NO_HARM_FROM_CLIENT_CODE)) return false;
   if (mobSpecials.isPlaceholder(specials)) return false;
   if (zone === 'veksar' && level >= 50) return false;
   return true;
