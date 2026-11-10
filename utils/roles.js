@@ -20,7 +20,17 @@ function hasAllowedRole(member) {
   return member.roles.cache.some((r) => allowed.includes(r.name));
 }
 
+// Officer rights belong to the home Discord server (DISCORD_GUILD_ID) only. Role NAMES are not unique across servers, so a
+// member of any other server that has this app and a role called "Officer" must not pass. Every officer check funnels
+// through here, and a GuildMember carries the server it belongs to. Unset env (local dev) enforces nothing.
+function _inHomeGuild(member) {
+  const home = process.env.DISCORD_GUILD_ID;
+  const gid = member && member.guild && member.guild.id;
+  return !home || !gid || String(gid) === String(home);
+}
+
 function hasOfficerRole(member) {
+  if (!_inHomeGuild(member)) return false;
   const roles = getOfficerRoles();
   return member.roles.cache.some((r) => roles.includes(r.name));
 }
