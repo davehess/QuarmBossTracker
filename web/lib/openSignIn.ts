@@ -18,10 +18,11 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer } from '@/lib/supabase-server';
-import { fetchUserGuilds } from '@/lib/discord';
+import { fetchUserGuilds, fetchManagedGuildIds } from '@/lib/discord';
+import { MANAGE_COOKIE, MANAGE_TTL_MS, signManageProof } from '@/lib/hubManage';
 import { isLockedOut } from '@/lib/lockout';
 import { recordTermsAcceptance } from './termsAcceptance';   // relative on purpose: the tests that run this route mock every "@/" import by name
-import { FLOW_GUILDS, openNext, profileOf, splitMatchesByOpenJoin, type RegisteredGuild } from '@/lib/hubRegistry';
+import { FLOW_GUILDS, FLOW_MANAGE, openNext, profileOf, splitMatchesByOpenJoin, type RegisteredGuild } from '@/lib/hubRegistry';
 
 const fail = (origin: string, message: string) =>
   NextResponse.redirect(`${origin}/auth/signin?error=${encodeURIComponent(message)}`);
@@ -69,6 +70,16 @@ export async function openSignInCallback(req: NextRequest, origin: string, next:
   // Which terms version this person signed in under (2026-11-01). Fail-open: the helper swallows its own errors.
   await recordTermsAcceptance(admin, user.id, discordId, origin);
 
+  // "Confirm my server" (/guilds/new): read the list once, keep only the servers this person can manage, and hand the answer
+  // back as a signed 15-minute cookie (web/lib/hubManage.ts). The list and the token are still never stored.
+  if (url.searchParams.get('flow') === FLOW_MANAGE) {
+    const res = NextResponse.redirect(`${origin}/guilds/new`);
+    let managed: string[] | null = null;
+    try { managed = data.session.provider_token ? await fetchManagedGuildIds(data.session.provider_token) : null; } catch { managed = null; }
+    const proof = managed ? signManageProof(discordId, managed) : null;
+    if (proof) res.cookies.set(MANAGE_COOKIE, proof, { httpOnly: true, secure: true, sameSite: 'lax', path: '/guilds', maxAge: MANAGE_TTL_MS / 1000 });
+    return res;
+  }
   if (url.searchParams.get('flow') === FLOW_GUILDS) {
     return NextResponse.redirect(`${origin}/guilds?${await findMyGuilds(admin, player.player_id, data.session.provider_token)}`);
   }

@@ -194,10 +194,16 @@ describe('validateGuildInput', () => {
 
 // ── 2. createGuild, run ─────────────────────────────────────────────────────────────────────────────────────────
 describe('the createGuild server action, run (web/app/guilds/new/actions.ts)', () => {
-  let store, user, redirected;
+  let store, user, redirected, manageCookie;
   async function load() {
     vi.resetModules();
     redirected = [];
+    // The proof that the person manages the Discord server (web/lib/hubManage.ts): a signed cookie this suite mints for the
+    // two servers it registers. test/hub-hardening.test.js covers refusing a missing / foreign / non-manager proof.
+    vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'test-service-key');
+    mockBoth('next/headers', () => ({ cookies: () => ({ get: (n) => (n === 'rm_manage' && manageCookie ? { value: manageCookie } : undefined) }) }));
+    vi.doMock('@/lib/hubManage', async () => await import('../web/lib/hubManage.ts'));
+    manageCookie = (await import('../web/lib/hubManage.ts')).signManageProof('d-100', ['1168893924329402420', '123456789']);
     mockBoth('next/cache', () => ({ revalidatePath() {} }));
     mockBoth('next/navigation', () => ({ redirect: (to) => { redirected.push(to); throw Object.assign(new Error('NEXT_REDIRECT'), { to }); } }));
     vi.doMock('@/lib/supabase-server', () => ({ supabaseServer: () => ({ auth: { getUser: async () => ({ data: { user } }) } }) }));
@@ -378,12 +384,16 @@ describe('invite code generation', () => {
     for (const ch of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789') {
       expect(INVITE_ALPHABET.includes(ch), ch).toBe(/^[A-HJKMNP-Z2-9]$/.test(ch));
     }
-    expect(stripSql(read('supabase/migrations/20261023160000_open_hub_registry.sql'))).toContain(INVITE_CODE_RX.source);
+    expect(stripSql(read('supabase/migrations/20261023160000_open_hub_registry.sql'))).toContain('^[A-HJKMNP-Z2-9]{6}$');
+    // 2026-11-10: new codes are eight characters; the constraint takes six (old codes) or eight
+    expect(stripSql(read('supabase/migrations/20261110140000_hub_invite_attempts.sql'))).toContain('^([A-HJKMNP-Z2-9]{6}|[A-HJKMNP-Z2-9]{8})$');
   });
-  it('a code is six characters in the constraint shape, over many draws', () => {
+  it('a code is eight characters in the constraint shape, over many draws; a six-character code still parses', () => {
     const seen = new Set();
-    for (let i = 0; i < 2000; i++) { const c = generateInviteCode(); expect(c).toMatch(INVITE_CODE_RX); seen.add(c); }
-    expect(seen.size).toBeGreaterThan(1990);   // 31^6 is ~887 million: a repeat in 2000 draws would be a broken generator
+    for (let i = 0; i < 2000; i++) { const c = generateInviteCode(); expect(c).toMatch(INVITE_CODE_RX); expect(c).toHaveLength(8); seen.add(c); }
+    expect(seen.size).toBe(2000);
+    expect('K7M2QP').toMatch(INVITE_CODE_RX);
+    expect('K7M2QPX').not.toMatch(INVITE_CODE_RX);
   });
   it('uses every letter of the alphabet and no other', () => {
     const letters = new Set();
@@ -391,15 +401,15 @@ describe('invite code generation', () => {
     expect([...letters].sort().join('')).toBe([...INVITE_ALPHABET].sort().join(''));
   });
   it('maps bytes onto the alphabet in order, and skips the bytes past the last whole multiple of 31 (no letter is likelier)', () => {
-    expect(generateInviteCode((b) => b.fill(0))).toBe('AAAAAA');
-    expect(generateInviteCode((b) => { b.set([1, 2, 3, 4, 5, 6]); return b; })).toBe('BCDEFG');
-    // 248 is the first skipped byte (256 - 256 % 31 = 248): the six after it are used instead
-    expect(generateInviteCode((b) => { b.set([248, 255, 250, 7, 8, 9, 10, 11, 12]); return b; })).toBe('HJKMNP');
+    expect(generateInviteCode((b) => b.fill(0))).toBe('AAAAAAAA');
+    expect(generateInviteCode((b) => { b.set([1, 2, 3, 4, 5, 6, 7, 8]); return b; })).toBe('BCDEFGHJ');
+    // 248 is the first skipped byte (256 - 256 % 31 = 248): the eight after it are used instead
+    expect(generateInviteCode((b) => { b.set([248, 255, 250, 7, 8, 9, 10, 11, 12, 13, 14]); return b; })).toBe('HJKMNPQR');
   });
   it('draws more bytes when too many are skipped', () => {
     let calls = 0;
     const c = generateInviteCode((b) => { calls++; b.fill(calls === 1 ? 250 : 3); return b; });
-    expect(c).toBe('DDDDDD');
+    expect(c).toBe('DDDDDDDD');
     expect(calls).toBe(2);
   });
   it('the row: 25 uses, seven days from now, the guild and the officer who made it', () => {

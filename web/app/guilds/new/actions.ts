@@ -11,13 +11,16 @@ import { revalidatePath } from 'next/cache';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { discordIdOf } from '@/lib/lockout';
+import { cookies } from 'next/headers';
 import { profileOf } from '@/lib/hubRegistry';
+import { MANAGE_COOKIE, MANAGE_MESSAGES, managesDiscordServer } from '@/lib/hubManage';
 import {
   validateGuildInput, GUILD_MESSAGES, CREATE_LIMIT, CREATE_WINDOW_MS,
   type GuildInput, type GuildFields,
 } from '@/lib/hubGuilds';
 
-export type CreateGuildResult = { ok: false; message?: string; errors?: Partial<Record<GuildFields, string>> };
+// confirmServer: the form should offer "Confirm my server" (a sign-in that reads the server list), not just show the error.
+export type CreateGuildResult = { ok: false; message?: string; errors?: Partial<Record<GuildFields, string>>; confirmServer?: boolean };
 
 const NO = (message: string): CreateGuildResult => ({ ok: false, message });
 
@@ -29,6 +32,14 @@ export async function createGuild(input: GuildInput): Promise<CreateGuildResult>
   const check = validateGuildInput(input ?? {});
   if (!check.ok) return { ok: false, errors: check.errors };
   const { displayName, slug, discordGuildId, openJoin } = check.values;
+
+  // A Discord server is bound only for someone who manages it: a signed proof from the sign-in that read their server list
+  // (web/lib/hubManage.ts). Nothing the form sends says so, and no proof means ask again. A guild with no server needs none.
+  if (discordGuildId) {
+    const managed = managesDiscordServer(cookies().get(MANAGE_COOKIE)?.value, discordId, discordGuildId);
+    if (managed === null) return { ok: false, confirmServer: true, errors: { discordGuildId: MANAGE_MESSAGES.needSignIn } };
+    if (!managed) return { ok: false, errors: { discordGuildId: MANAGE_MESSAGES.notManager } };
+  }
 
   const admin = supabaseAdmin();
 
