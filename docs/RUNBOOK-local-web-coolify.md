@@ -48,7 +48,7 @@ Then open `http://<VM-IP>:8000` and create the admin account.
 The repo is private, so Coolify needs credentials. Easiest path:
 **Projects → New Resource → Private Repository (with deploy key)**. Coolify
 generates an SSH public key; paste it into GitHub → repo → Settings → Deploy keys
-(read-only is enough). Then point it at `davehess/QuarmBossTracker`, branch `main`.
+(read-only is enough). Then point it at `davehess/raidmimic`, branch `main`.
 
 ## Part D — application settings
 

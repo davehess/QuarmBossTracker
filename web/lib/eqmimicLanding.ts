@@ -12,7 +12,7 @@
 // ⚠ This repo is PUBLIC. Nothing here names a member, a character, a real id, a token or an address. The
 // one demo guild is invented ("Lantern Watch"). Hosting numbers are the measured ones in docs/COSTS.md.
 
-export const REPO_URL = 'https://github.com/davehess/QuarmBossTracker';
+export const REPO_URL = 'https://github.com/davehess/raidmimic';
 export const docUrl = (path: string) => `${REPO_URL}/blob/main/${path}`;
 
 // Where the downloads live. The installer is served by wolfpack.quest; the eqmimic host has no download

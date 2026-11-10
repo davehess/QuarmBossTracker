@@ -87,7 +87,7 @@ const path = require('path');
 // Pin/canary by pointing AGENT_RELEASE_REF at a tag or branch; the manifest
 // stays internally consistent because everything is fetched from that one ref.
 const AGENT_RELEASE_REF = process.env.AGENT_RELEASE_REF || 'main';
-const _AGENT_RAW_BASE   = `https://raw.githubusercontent.com/davehess/QuarmBossTracker/${AGENT_RELEASE_REF}/packages/wolfpack-logsync`;
+const _AGENT_RAW_BASE   = `https://raw.githubusercontent.com/davehess/raidmimic/${AGENT_RELEASE_REF}/packages/wolfpack-logsync`;
 const _AGENT_INDEX_URL  = `${_AGENT_RAW_BASE}/index.js`;
 const AGENT_MANIFEST_REFRESH_MS = 3 * 60 * 1000;
 
@@ -214,7 +214,7 @@ async function _refreshAgentManifestBeta() {
   _agentManifestFetchingBeta = true;
   try {
     const ref    = await _betaReleaseRef();
-    const base   = `https://raw.githubusercontent.com/davehess/QuarmBossTracker/${ref}/packages/wolfpack-logsync`;
+    const base   = `https://raw.githubusercontent.com/davehess/raidmimic/${ref}/packages/wolfpack-logsync`;
     const idxUrl = `${base}/index.js`;
     const [pkgBuf, idxBuf] = await Promise.all([
       _fetchBufferRaw(`${base}/package.json`),
@@ -13154,13 +13154,13 @@ async function _announceMimicReleases() {
   // Newest stable AND newest beta from one listing.
   const rels = await new Promise((resolve) => {
     const https = require('https');
-    https.get({ hostname: 'api.github.com', path: '/repos/davehess/QuarmBossTracker/releases?per_page=20',
+    https.get({ hostname: 'api.github.com', path: '/repos/davehess/raidmimic/releases?per_page=20',
       headers: { 'User-Agent': 'wolfpack-bot', 'Accept': 'application/vnd.github+json' }, timeout: 10000 },
       (res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { const arr = JSON.parse(b); resolve(Array.isArray(arr) ? arr : []); } catch { resolve([]); } }); }
     ).on('error', () => resolve([])).on('timeout', function () { this.destroy(); resolve([]); });
   });
   const { EmbedBuilder } = require('discord.js');
-  const REL = 'https://github.com/davehess/QuarmBossTracker/releases';
+  const REL = 'https://github.com/davehess/raidmimic/releases';
   // The release body leads with the actual changelog (from the release commit
   // message) with install boilerplate below a `---` rule — show the changelog
   // part only (the guild lead, 2026-07-14). Falls back to the whole body for older
@@ -13406,7 +13406,7 @@ async function _announceMimic271Once() {
   }
   const rel = await new Promise((resolve) => {
     const https = require('https');
-    https.get({ hostname: 'api.github.com', path: '/repos/davehess/QuarmBossTracker/releases/tags/' + _MIMIC271_TAG,
+    https.get({ hostname: 'api.github.com', path: '/repos/davehess/raidmimic/releases/tags/' + _MIMIC271_TAG,
       headers: { 'User-Agent': 'wolfpack-bot', 'Accept': 'application/vnd.github+json' }, timeout: 10000 },
       (res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { resolve(JSON.parse(b)); } catch { resolve(null); } }); }
     ).on('error', () => resolve(null)).on('timeout', function () { this.destroy(); resolve(null); });
@@ -13480,7 +13480,7 @@ async function _announceMimic278Once() {
   }
   const rel = await new Promise((resolve) => {
     const https = require('https');
-    https.get({ hostname: 'api.github.com', path: '/repos/davehess/QuarmBossTracker/releases/tags/' + _MIMIC278_TAG,
+    https.get({ hostname: 'api.github.com', path: '/repos/davehess/raidmimic/releases/tags/' + _MIMIC278_TAG,
       headers: { 'User-Agent': 'wolfpack-bot', 'Accept': 'application/vnd.github+json' }, timeout: 10000 },
       (res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { resolve(JSON.parse(b)); } catch { resolve(null); } }); }
     ).on('error', () => resolve(null)).on('timeout', function () { this.destroy(); resolve(null); });
@@ -13561,7 +13561,7 @@ async function _announceMimic291Once() {
   }
   const rel = await new Promise((resolve) => {
     const https = require('https');
-    https.get({ hostname: 'api.github.com', path: '/repos/davehess/QuarmBossTracker/releases/tags/' + _MIMIC291_TAG,
+    https.get({ hostname: 'api.github.com', path: '/repos/davehess/raidmimic/releases/tags/' + _MIMIC291_TAG,
       headers: { 'User-Agent': 'wolfpack-bot', 'Accept': 'application/vnd.github+json' }, timeout: 10000 },
       (res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { resolve(JSON.parse(b)); } catch { resolve(null); } }); }
     ).on('error', () => resolve(null)).on('timeout', function () { this.destroy(); resolve(null); });
@@ -13639,7 +13639,7 @@ async function _announceOptinPvpOnce() {
   }
   const rel = await new Promise((resolve) => {
     const https = require('https');
-    https.get({ hostname: 'api.github.com', path: '/repos/davehess/QuarmBossTracker/releases/tags/' + _OPTINPVP_TAG,
+    https.get({ hostname: 'api.github.com', path: '/repos/davehess/raidmimic/releases/tags/' + _OPTINPVP_TAG,
       headers: { 'User-Agent': 'wolfpack-bot', 'Accept': 'application/vnd.github+json' }, timeout: 10000 },
       (res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { resolve(JSON.parse(b)); } catch { resolve(null); } }); }
     ).on('error', () => resolve(null)).on('timeout', function () { this.destroy(); resolve(null); });
@@ -22377,7 +22377,7 @@ async function _feedbackAdvance(readyClient, ref, branch, sha, commitMessage) {
 // later page fails the earlier ones still count and the next look carries on from where they ended.
 // A compare that fails on its first page (404/422: a reset branch) or no `seen` at all takes the date walk.
 async function _feedbackFreshCommits(branch, seen) {
-  const repo = '/repos/davehess/QuarmBossTracker';
+  const repo = '/repos/davehess/raidmimic';
   if (seen) {
     let gained = null;
     for (let page = 1; page <= 3; page++) {

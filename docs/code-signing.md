@@ -101,7 +101,7 @@ figure below is checkable by the reviewer.
 | Criterion a free-for-OSS signer asks | Where we now stand | Checkable at |
 |---|---|---|
 | **OSI-approved open-source licence** | ✅ **AGPL-3.0-or-later**, since 2026-09-18. This was the disqualifier under BSL 1.1 for part of one day and under nothing else — the project was BSD-3 before that | `LICENSE`, `docs/LICENSING.md` |
-| **Source publicly available** | ✅ Public repository, full history, no private build steps | github.com/davehess/QuarmBossTracker |
+| **Source publicly available** | ✅ Public repository, full history, no private build steps | github.com/davehess/raidmimic |
 | **Sustained development, not a weekend project** | ✅ **2,278 commits over 4.9 months**, first commit 2026-04-21, active daily | `git log` |
 | **A real release history** | ✅ **730 published release tags — 145 stable, 584 prereleases** — with an automated build pipeline and a beta channel | the repository's Releases page |
 | **Real users, not a demo** | ✅ An active raiding guild plus a separate beta-tester channel, with an auto-updater fleet. ⚠ **Put the actual number in the application, not in this file** — `CLAUDE.md` forbids publishing fleet-size figures, and this repo is public. Count PLAYERS, never characters (distinct `uploaded_by_discord_id`) | ask an officer; `agent_upload_stats` |

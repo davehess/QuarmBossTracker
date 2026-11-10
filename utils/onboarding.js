@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.73': [
+    'Behind the scenes: the code moved to its new home, github.com/davehess/raidmimic. Old links still work.',
+  ],
   '4.0.72': [
     'Charm tracker, "Best pets here": event controllers, "You hear" voices and other mobs you cannot target or harm no longer show up as charm pets.',
   ],
@@ -1156,7 +1159,7 @@ function buildAttendeeEmbed() {
 // Direct GitHub-release download URL. The `parser.wolfpack.quest` CNAME-to-
 // GitHub can't terminate TLS, so always link the release artifact directly.
 const PARSER_DOWNLOAD_URL =
-  'https://github.com/davehess/QuarmBossTracker/releases/latest/download/WolfPackParser.zip';
+  'https://github.com/davehess/raidmimic/releases/latest/download/WolfPackParser.zip';
 
 // ── Onboarding action rows ────────────────────────────────────────────────────
 // Surfaced when a member clicks "Set up the parser" in the welcome flow. Two

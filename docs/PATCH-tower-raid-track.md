@@ -33,7 +33,7 @@ exactly the ones checked here):
 
 ```bash
 cp scripts/lib/archive-merge.sql scripts/lib/archive-merge.sql.bak-20261005
-R=https://raw.githubusercontent.com/davehess/QuarmBossTracker/7ae47c7ffbd4b56f07027fa65035d1916e8bad82/scripts
+R=https://raw.githubusercontent.com/davehess/raidmimic/7ae47c7ffbd4b56f07027fa65035d1916e8bad82/scripts
 curl -fsSL -o scripts/lib/archive-merge.sql "$R/lib/archive-merge.sql"
 curl -fsSL -o /tmp/test-archive-merge.sh    "$R/test-archive-merge.sh"
 md5sum scripts/lib/archive-merge.sql /tmp/test-archive-merge.sh

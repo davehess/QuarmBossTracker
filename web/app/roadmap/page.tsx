@@ -108,7 +108,7 @@ export default function RoadmapPage() {
         <p className="text-sm text-text">
           Want to help build it? Paste our{' '}
           <a
-            href="https://github.com/davehess/QuarmBossTracker/blob/main/docs/AI-CONTRIBUTOR-BRIEF.md"
+            href="https://github.com/davehess/raidmimic/blob/main/docs/AI-CONTRIBUTOR-BRIEF.md"
             target="_blank"
             rel="noreferrer"
             className="text-blue hover:underline"
@@ -122,7 +122,7 @@ export default function RoadmapPage() {
         <p className="text-sm text-text mt-1">
           If your AI can read code, start from the{' '}
           <a
-            href="https://github.com/davehess/QuarmBossTracker/blob/main/docs/GEMINI-SPARK-HELPER.md"
+            href="https://github.com/davehess/raidmimic/blob/main/docs/GEMINI-SPARK-HELPER.md"
             target="_blank"
             rel="noreferrer"
             className="text-blue hover:underline"
@@ -132,7 +132,7 @@ export default function RoadmapPage() {
           instead. The developer-level detail — file paths, versions, open questions — is in
           the{' '}
           <a
-            href="https://github.com/davehess/QuarmBossTracker/blob/main/docs/STATUS.md"
+            href="https://github.com/davehess/raidmimic/blob/main/docs/STATUS.md"
             target="_blank"
             rel="noreferrer"
             className="text-blue hover:underline"
