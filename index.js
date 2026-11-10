@@ -113,6 +113,9 @@ let _agentManifestFetching = false;
 // flips true on SIGTERM so we refuse NEW HTTP work and drain in-flight handlers.
 let _botReady = false;
 let _shuttingDown = false;
+// Only the holder of this lease logs in to Discord (utils/botLease.js, DECISIONS §562). A new deploy waits as a standby
+// until the old bot lets go at shutdown, so the two never post side by side.
+const _botLease = require('./utils/botLease').defaultLease();
 
 // Node 20 exits the process on an unhandled promise rejection, so one stray `await` in a handler took the whole bot
 // (and every agent's uploads) down (the guild lead, 2026-10-17). Log it and keep serving. uncaughtException is left alone.
@@ -25225,6 +25228,12 @@ const httpServer = http.createServer(async (req, res) => {
     res.writeHead(503, { 'Content-Type': 'application/json', 'Connection': 'close' });
     return res.end(JSON.stringify({ error: 'shutting_down' }));
   }
+  // A standby (or a bot still logging in) answers health checks and reads but takes no uploads: their handlers post to
+  // Discord. The agent's durable queue retries a 503, so nothing is lost while the lease changes hands.
+  if (!_botReady && req.method === 'POST' && /^\/api\/agent\//.test(req.url || '')) {
+    res.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '15' });
+    return res.end(JSON.stringify({ error: 'not_ready', role: _botLease.role() }));
+  }
   // Agent upload endpoint
   // Auto-derive the current agent version from the agent's package.json so we
   // don't have to bump a LATEST_AGENT_VERSION env var every release. The env
@@ -26435,7 +26444,9 @@ const httpServer = http.createServer(async (req, res) => {
     // Process memory in MB (utils/memStats.js) — tells real retention from V8 declining to collect early.
     let mem = null;
     try { mem = require('./utils/memStats').memSnapshot(); } catch { /* */ }
-    const ready = _botReady && !_shuttingDown;
+    // A standby is healthy: it has to pass the platform's check for the deploy to go ahead and retire the old bot.
+    const role = _botLease.role();
+    const ready = (_botReady || role === 'standby') && !_shuttingDown;
     // Anonymous callers (the platform healthcheck, uptime pings) get readiness only; the operational
     // detail needs a valid per-user session token.
     const _detailed = (await mimicLink.peekAgentAuth(req)) ? {
@@ -26443,7 +26454,7 @@ const httpServer = http.createServer(async (req, res) => {
     } : {};
     res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({
-      ok: ready, ready, shutting_down: _shuttingDown, version: require('./package.json').version,
+      ok: ready, ready, role, shutting_down: _shuttingDown, version: require('./package.json').version,
       ..._detailed,
     }));
   }
@@ -26481,7 +26492,9 @@ function _gracefulShutdown(signal) {
   const done = () => {
     console.log('[shutdown] destroying Discord client + exiting');
     try { client.destroy(); } catch (e) { void e; }
-    process.exit(0);
+    // Discord is closed, so the standby may take over now rather than wait out the lease.
+    setTimeout(() => process.exit(0), 4000).unref?.();
+    Promise.resolve().then(() => _botLease.release()).catch(() => {}).finally(() => process.exit(0));
   };
   // Exit when the drain window elapses (whether or not every socket closed).
   setTimeout(done, drainMs).unref?.();
@@ -26489,4 +26502,14 @@ function _gracefulShutdown(signal) {
 process.on('SIGTERM', () => _gracefulShutdown('SIGTERM'));
 process.on('SIGINT',  () => _gracefulShutdown('SIGINT'));
 
-client.login(process.env.DISCORD_TOKEN);
+// Log in only once this process holds the lease. Losing it later (another bot took it while this one could not renew)
+// exits non-zero, and the platform restarts this process as a standby.
+_botLease.waitForLease().then(() => {
+  if (_shuttingDown) return;
+  _botLease.startRenewing(() => {
+    console.log('[lease] another bot holds the lease now; stepping down to restart as a standby');
+    try { client.destroy(); } catch (e) { void e; }
+    process.exit(1);
+  });
+  client.login(process.env.DISCORD_TOKEN);
+});

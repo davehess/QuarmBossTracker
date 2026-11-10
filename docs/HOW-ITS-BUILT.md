@@ -5455,6 +5455,12 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   (`utils/supabase.js`, env-tuned); `target-buffs` cache; poison-payload
   hardening. `GET /health` readiness for zero-downtime deploys (#58,
   `railway.toml`).
+- **Bot lease: one Discord login across a deploy (§562, bot 4.0.74)** — `utils/botLease.js`
+  (acquire/renew/release over RPCs `bot_lease_acquire`/`bot_lease_release`, table `bot_lease`,
+  migration `20261110200000`). `client.login` runs only after `waitForLease()`; a standby answers
+  `/health` 200 (`role`) and 503s agent POSTs until ready; `_gracefulShutdown` releases after
+  `client.destroy()`. Null from the store = unknown (keep holding; 45 s of silence at boot = log in
+  anyway). Tests: `test/bot-lease.test.js`, `test/bot-lease-wiring.test.js`.
 - **Mob-info row-picker (#171, folds #161-P1/#173)** — `utils/mobSpecials.js` is
   the ONE eqemu `special_abilities` table (shared with
   `scripts/audit-mob-specials.mjs`). `mob-info` fetches ALL same-name rows

@@ -9,7 +9,7 @@ describe('/health detail gating', () => {
 
   it('detail fields sit behind peekAgentAuth, not in the base object', () => {
     expect(body).toMatch(/await mimicLink\.peekAgentAuth\(req\)\) \? \{[^}]*supabase_breaker[^}]*\} : \{\}/);
-    expect(body).toMatch(/ok: ready, ready, shutting_down: _shuttingDown, version:[^}]*\.\.\._detailed/);
+    expect(body).toMatch(/ok: ready, ready, role, shutting_down: _shuttingDown, version:[^}]*\.\.\._detailed/);
   });
 });
 
