@@ -118,7 +118,36 @@ module.exports = {
   // the page or its routes give (the routes also set it themselves; this covers errors and the 429 too).
   async headers() {
     const noindex = [{ key: 'X-Robots-Tag', value: 'noindex, nofollow, noarchive' }];
+    // Standard browser security headers (2026-11-10), every route and host (wolfpack.quest, b., raidmimic.com).
+    // Framing is SAMEORIGIN, not DENY: the site frames its own pages (/pop/elementals.html, the /platform
+    // diagrams). No page of ours is framed by another origin (Mimic's iframes load local files / the local agent).
+    // The CSP is REPORT-ONLY: Next's inline bootstrap needs 'unsafe-inline' without nonces. Sources were
+    // inventoried from the code: Supabase (https + wss), Discord/PQDI images, YouTube/Medal embeds, Google Fonts
+    // (static /platform pages).
+    const csp = [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src 'self' data: https://fonts.gstatic.com",
+      "img-src 'self' data: blob: https:",
+      "media-src 'self' blob: https:",
+      "connect-src 'self' https://zhtoekwakucbckvatfky.supabase.co wss://zhtoekwakucbckvatfky.supabase.co",
+      "frame-src 'self' https://www.youtube-nocookie.com https://www.youtube.com https://medal.tv",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+    ].join('; ');
+    const security = [
+      { key: 'X-Content-Type-Options', value: 'nosniff' },
+      { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+      { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' },
+      { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), payment=()' },
+      { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+      { key: 'Content-Security-Policy', value: "frame-ancestors 'self'" },
+      { key: 'Content-Security-Policy-Report-Only', value: csp },
+    ];
     return [
+      { source: '/(.*)', headers: security },
       { source: '/share/:path*', headers: noindex },
       { source: '/api/share/:path*', headers: noindex },
     ];
