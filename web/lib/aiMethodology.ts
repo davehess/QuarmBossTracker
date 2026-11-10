@@ -22,7 +22,7 @@
 // fails CI until it is updated too. That guard is the only reason a published
 // page is allowed to restate rules that live somewhere else.
 
-export const REPO_URL = 'https://github.com/davehess/QuarmBossTracker';
+export const REPO_URL = 'https://github.com/davehess/raidmimic';
 export const commitUrl = (sha: string) => `${REPO_URL}/commit/${sha}`;
 export const fileUrl = (path: string) => `${REPO_URL}/blob/main/${path}`;
 

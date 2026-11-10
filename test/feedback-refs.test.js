@@ -505,7 +505,7 @@ describe('the scanner reads what is new since its last look, not the newest 40 b
     const { run, paths, stored, status } = rig({
       seen: { beta: 'seenB', main: 'seenM' },
       github: (p) => {
-        if (p === '/repos/davehess/QuarmBossTracker/compare/seenB...beta?per_page=100&page=1') return { commits: [commit('side1', 58), commit('merge1', null)] };
+        if (p === '/repos/davehess/raidmimic/compare/seenB...beta?per_page=100&page=1') return { commits: [commit('side1', 58), commit('merge1', null)] };
         if (p.includes('/compare/seenM...main')) return { commits: [] };
         if (isList(p)) return dateOrdered;   // What the old walk would have read.
         return null;

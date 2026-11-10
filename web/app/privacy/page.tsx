@@ -125,7 +125,7 @@ export default function PrivacyPage() {
         <Bullets>
           <li>
             <B>Open source.</B> Every line of Mimic, the bot and this website is{' '}
-            <a href="https://github.com/davehess/QuarmBossTracker" target="_blank" rel="noreferrer" className="text-blue hover:underline">public on GitHub</a>.
+            <a href="https://github.com/davehess/raidmimic" target="_blank" rel="noreferrer" className="text-blue hover:underline">public on GitHub</a>.
             You, or a friend who codes, can check anything on this page.
           </li>
           <li>

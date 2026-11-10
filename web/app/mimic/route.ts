@@ -21,7 +21,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 export const dynamic = 'force-dynamic';
 export const revalidate = 300;
 
-const REPO_RELEASES = 'https://api.github.com/repos/davehess/QuarmBossTracker/releases?per_page=20';
+const REPO_RELEASES = 'https://api.github.com/repos/davehess/raidmimic/releases?per_page=20';
 
 type Asset    = { name: string; browser_download_url: string };
 type Release  = {
@@ -35,7 +35,7 @@ type Release  = {
 
 // Fallback URL if the GitHub API call fails — points at the latest stable
 // release (the plain list opens on betas) so the user can still grab an installer.
-const FALLBACK = 'https://github.com/davehess/QuarmBossTracker/releases/latest';
+const FALLBACK = 'https://github.com/davehess/raidmimic/releases/latest';
 
 export async function GET(req: NextRequest) {
   const direct = req.nextUrl.searchParams.get('direct') === '1';

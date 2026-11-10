@@ -51,14 +51,14 @@ describe('the updater follows the track', () => {
   it('alpha reads the rolling mimic-alpha release directly, as channel alpha', () => {
     const { au, api } = updater({ alphaChannel: true }, '2.7.5-beta.3');
     api._applyUpdaterChannel();
-    expect(au.feeds).toEqual([{ provider: 'generic', url: 'https://github.com/davehess/QuarmBossTracker/releases/download/mimic-alpha/', channel: 'alpha' }]);
+    expect(au.feeds).toEqual([{ provider: 'generic', url: 'https://github.com/davehess/raidmimic/releases/download/mimic-alpha/', channel: 'alpha' }]);
     expect(au.channel).toBe('alpha');
     expect(au.allowDowngrade).toBe(false);
   });
   it('leaving an alpha build goes back to GitHub releases on beta, and may step down from 3.0.0', () => {
     const { au, api } = updater({ alphaChannel: false }, '3.0.0-alpha.840', true);
     api._applyUpdaterChannel();
-    expect(au.feeds).toEqual([{ provider: 'github', owner: 'davehess', repo: 'QuarmBossTracker' }]);
+    expect(au.feeds).toEqual([{ provider: 'github', owner: 'davehess', repo: 'raidmimic' }]);
     expect(au.channel).toBe('beta');
     expect(au.allowDowngrade).toBe(true);
   });

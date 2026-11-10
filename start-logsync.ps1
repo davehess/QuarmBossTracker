@@ -30,9 +30,9 @@ $ShortcutName = "Parser.lnk"
 # ── Auto-update configuration ─────────────────────────────────────────────────
 # We fetch the agent source straight from GitHub's main branch on the official
 # repo. If you fork or self-host, change *_RAW_URL to your own raw URL.
-$AGENT_RAW_URL              = "https://raw.githubusercontent.com/davehess/QuarmBossTracker/main/packages/wolfpack-logsync/index.js"
-$AGENT_PKG_RAW_URL          = "https://raw.githubusercontent.com/davehess/QuarmBossTracker/main/packages/wolfpack-logsync/package.json"
-$SCRIPT_RAW_URL             = "https://raw.githubusercontent.com/davehess/QuarmBossTracker/main/start-logsync.ps1"
+$AGENT_RAW_URL              = "https://raw.githubusercontent.com/davehess/raidmimic/main/packages/wolfpack-logsync/index.js"
+$AGENT_PKG_RAW_URL          = "https://raw.githubusercontent.com/davehess/raidmimic/main/packages/wolfpack-logsync/package.json"
+$SCRIPT_RAW_URL             = "https://raw.githubusercontent.com/davehess/raidmimic/main/start-logsync.ps1"
 $AGENT_UPDATE_INTERVAL_HRS  = 12
 
 # Displayed in console output during updates.  The auto-update mechanism does

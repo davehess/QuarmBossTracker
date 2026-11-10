@@ -29,7 +29,7 @@ never hide again.
 
 ```bash
 cd /mnt/user/backups/wolfpack/repo
-S=https://raw.githubusercontent.com/davehess/QuarmBossTracker/119552ee50bb136bd38966c6e20eeb1b2f69a0d7/scripts
+S=https://raw.githubusercontent.com/davehess/raidmimic/119552ee50bb136bd38966c6e20eeb1b2f69a0d7/scripts
 ```
 
 **1 — Confirm the diagnosis (read-only).** The failed run left `snap` in place.
@@ -121,7 +121,7 @@ and send it to me, and fall back to the Parts below.
 
 ```bash
 cd /mnt/user/backups/wolfpack/repo
-curl -fsSL https://raw.githubusercontent.com/davehess/QuarmBossTracker/2bc7b900480c7ed045eb0d201511142081d52269/scripts/lib/archive-merge.sql \
+curl -fsSL https://raw.githubusercontent.com/davehess/raidmimic/2bc7b900480c7ed045eb0d201511142081d52269/scripts/lib/archive-merge.sql \
   | diff - scripts/lib/archive-merge.sql.bak-20260923 | grep '^[<>]' \
   | grep -v -e is_generated -e 'overriding system value' -e '= d\.%1\$I' \
             -e 'is not distinct from d\.%1\$I' -e 'insert into public\.%1\$I (%2\$s) select %2\$s from snap\.%1\$I'
@@ -135,7 +135,7 @@ three fixes, and it printed an injected `order by c.relname desc` straight away.
 ```bash
 cp scripts/lib/archive-merge.sql scripts/lib/archive-merge.sql.handpatched-20260923
 curl -fsSL -o scripts/lib/archive-merge.sql \
-  https://raw.githubusercontent.com/davehess/QuarmBossTracker/bffb587132df37aeb6052ccb6a0f26a33d796118/scripts/lib/archive-merge.sql
+  https://raw.githubusercontent.com/davehess/raidmimic/bffb587132df37aeb6052ccb6a0f26a33d796118/scripts/lib/archive-merge.sql
 md5sum scripts/lib/archive-merge.sql    # 92f6a42c1c90658b9e8b0956c161a520
 ```
 
@@ -435,7 +435,7 @@ The repo is public, so pull it straight from the branch — no checkout needed:
 
 ```bash
 curl -fsSL -o /tmp/test-archive-merge.sh \
-  https://raw.githubusercontent.com/davehess/QuarmBossTracker/claude/sharp-lamport-dC0TW/scripts/test-archive-merge.sh
+  https://raw.githubusercontent.com/davehess/raidmimic/claude/sharp-lamport-dC0TW/scripts/test-archive-merge.sh
 md5sum /tmp/test-archive-merge.sh    # 96f6318bde77b1b37c65b981b293f496
 grep -c '^check ' /tmp/test-archive-merge.sh   # 14
 ```

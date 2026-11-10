@@ -54,10 +54,10 @@ describe('defaults are Wolf Pack today, to the character', () => {
   it('login domain, repo, OpenDKP, time zone', async () => {
     const g = await load();
     expect(g.LOGIN_EMAIL_DOMAIN).toBe('login.wolfpack.quest');
-    expect(g.REPO).toEqual({ owner: 'davehess', name: 'QuarmBossTracker' });
-    expect(g.REPO_URL).toBe('https://github.com/davehess/QuarmBossTracker');
-    expect(g.REPO_RELEASES_URL).toBe('https://github.com/davehess/QuarmBossTracker/releases');
-    expect(g.REPO_RELEASES_API).toBe('https://api.github.com/repos/davehess/QuarmBossTracker/releases');
+    expect(g.REPO).toEqual({ owner: 'davehess', name: 'raidmimic' });
+    expect(g.REPO_URL).toBe('https://github.com/davehess/raidmimic');
+    expect(g.REPO_RELEASES_URL).toBe('https://github.com/davehess/raidmimic/releases');
+    expect(g.REPO_RELEASES_API).toBe('https://api.github.com/repos/davehess/raidmimic/releases');
     expect(g.OPENDKP_BASE).toBe('https://wolfpack.opendkp.com');
     expect(g.RAID_TZ).toBe('America/New_York');
   });
@@ -126,7 +126,7 @@ describe('the environment wins', () => {
   });
 
   it('a malformed repo falls back to the default instead of building a broken link', async () => {
-    expect((await load({ NEXT_PUBLIC_GITHUB_REPO: 'not-a-repo' })).REPO_URL).toBe('https://github.com/davehess/QuarmBossTracker');
+    expect((await load({ NEXT_PUBLIC_GITHUB_REPO: 'not-a-repo' })).REPO_URL).toBe('https://github.com/davehess/raidmimic');
     expect((await load({ NEXT_PUBLIC_GITHUB_REPO: 'a/b/c' })).REPO.owner).toBe('davehess');
   });
 });

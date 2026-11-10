@@ -330,10 +330,10 @@ describe('getters: built-in defaults are today\'s Wolf Pack literals', () => {
     expect(gc.webBeta(c)).toBe('https://b.wolfpack.quest');
     expect(gc.botApiBase(c)).toBeNull();
     expect(gc.repo(c)).toEqual({
-      owner: 'davehess', name: 'QuarmBossTracker', slug: 'davehess/QuarmBossTracker',
-      url: 'https://github.com/davehess/QuarmBossTracker',
-      api: 'https://api.github.com/repos/davehess/QuarmBossTracker',
-      rawBase: 'https://raw.githubusercontent.com/davehess/QuarmBossTracker',
+      owner: 'davehess', name: 'raidmimic', slug: 'davehess/raidmimic',
+      url: 'https://github.com/davehess/raidmimic',
+      api: 'https://api.github.com/repos/davehess/raidmimic',
+      rawBase: 'https://raw.githubusercontent.com/davehess/raidmimic',
     });
     expect(gc.opendkpClient(c)).toBe('wolfpack');
     expect(gc.opendkpBase(c)).toBe('https://wolfpack.opendkp.com');
@@ -464,8 +464,8 @@ describe('getters: env beats file beats default', () => {
   });
 
   it('a malformed repo falls back to the default slug', () => {
-    expect(gc.repo(ctx(EMPTY, { GITHUB_REPO: 'not a repo' })).slug).toBe('davehess/QuarmBossTracker');
-    expect(gc.repo(ctx(EMPTY, { GITHUB_REPO: 'a/b/c' })).slug).toBe('davehess/QuarmBossTracker');
+    expect(gc.repo(ctx(EMPTY, { GITHUB_REPO: 'not a repo' })).slug).toBe('davehess/raidmimic');
+    expect(gc.repo(ctx(EMPTY, { GITHUB_REPO: 'a/b/c' })).slug).toBe('davehess/raidmimic');
   });
 
   it('bad list/number/date values fall back to the defaults instead of poisoning them', () => {
@@ -663,7 +663,7 @@ describe('guild/config.example.json', () => {
     expect(env.DISCORD_GUILD_ID).toBeUndefined();                       // still "<discord-guild-id>"
     expect(env.SUPABASE_GUILD_ID).toBe('wolfpack');
     expect(env.GUILD_NAME).toBe('Wolf Pack');
-    expect(env.GITHUB_REPO).toBe('davehess/QuarmBossTracker');
+    expect(env.GITHUB_REPO).toBe('davehess/raidmimic');
     expect(env.ALLOWED_ROLE_NAMES).toBe('Pack Member,Officer,Guild Leader');
     expect(env.OFFICER_ROLE_NAMES).toBe('Officer,Guild Leader');
     expect(env.GUILD_PROVISION).toBe('auto');

@@ -190,7 +190,7 @@ export default function ArchitecturePage() {
         </p>
         <p className="space-x-3">
           <Link href="/platform" className="text-blue hover:underline">← back to the platform overview</Link>
-          <a href="https://github.com/davehess/QuarmBossTracker" target="_blank" rel="noreferrer"
+          <a href="https://github.com/davehess/raidmimic" target="_blank" rel="noreferrer"
              className="text-blue hover:underline">source ↗</a>
           <Link href="/privacy" className="text-blue hover:underline">privacy</Link>
         </p>

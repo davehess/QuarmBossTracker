@@ -19,8 +19,8 @@ import { APPIMAGE_RX, PER_PAGE, findLinuxRelease, type Release } from '@/lib/lin
 export const dynamic = 'force-dynamic';
 export const revalidate = 300;
 
-const REPO_RELEASES = 'https://api.github.com/repos/davehess/QuarmBossTracker/releases';
-const FALLBACK = 'https://github.com/davehess/QuarmBossTracker/releases';
+const REPO_RELEASES = 'https://api.github.com/repos/davehess/raidmimic/releases';
+const FALLBACK = 'https://github.com/davehess/raidmimic/releases';
 
 async function fetchPage(page: number): Promise<Release[] | null> {
   try {

@@ -102,7 +102,7 @@ jobs:
           - The current beta, built to run on Windows 7 (and 8 / 8.1).
           - Charm tracker, pet tracker, triggers and the rest of the overlays, same as the beta.
           - Updates itself from this page only; it never jumps to the normal builds, which no longer start on Windows 7.
-          - Link that always gets the newest installer: https://github.com/davehess/QuarmBossTracker/releases/download/mimic-win7/Raid-Mimic-Setup-win7.exe
+          - Link that always gets the newest installer: https://github.com/davehess/raidmimic/releases/download/mimic-win7/Raid-Mimic-Setup-win7.exe
 
           ---
           Not code-signed (SmartScreen → More info → Run anyway). Built on an older Electron for Windows 7; use the normal Mimic download on Windows 10 or 11.

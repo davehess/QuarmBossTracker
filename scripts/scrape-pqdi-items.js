@@ -49,7 +49,7 @@ function fetchItemName(id) {
       method:   'GET',
       hostname: 'www.pqdi.cc',
       path:     `/item/${id}`,
-      headers:  { 'User-Agent': 'wolfpack-pqdi-scraper/1 (https://github.com/davehess/quarmbosstracker)' },
+      headers:  { 'User-Agent': 'wolfpack-pqdi-scraper/1 (https://github.com/davehess/raidmimic)' },
       timeout:  10_000,
     }, (res) => {
       let body = '';

@@ -83,7 +83,7 @@ describe('1. the install keeps its identity (so settings survive the update)', (
     expect(pkg.build.win.executableName).toBeUndefined();
     expect(pkg.build.nsis.shortcutName).toBeUndefined();
     expect(pkg.build.nsis.perMachine).toBe(false);
-    expect(pkg.build.publish).toEqual([expect.objectContaining({ provider: 'github', owner: 'davehess', repo: 'QuarmBossTracker' })]);
+    expect(pkg.build.publish).toEqual([expect.objectContaining({ provider: 'github', owner: 'davehess', repo: 'raidmimic' })]);
   });
 
   it('the product name is Raid Mimic', () => {
