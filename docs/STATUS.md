@@ -103,6 +103,8 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **Security hardening (2026-11-10) — standard browser security headers on every route** (`web/next.config.js` `headers()`, web 2.1.124): nosniff, strict-origin-when-cross-origin referrer, HSTS (1 year, no preload), a Permissions-Policy denying camera/microphone/geolocation/payment, same-origin framing only, and a report-only CSP to be tightened from what it flags. `test/security-headers.test.js` guards the set.
+
 - **2026-11-09 — raidmimic.com pricing copy = analytics (on beta, awaiting promotion to main).** One paid plan, Pro · Guild $25/month; the Pro · Individual tier, `INDIVIDUAL_PRICE` and the "costs us money" / storage reasons are gone from `raidmimicStory.ts`, `raidmimicStartFree.ts`, `StartFree.tsx` and the terms and refunds pages (DECISIONS §552; guild lead's picks on the Decision Desk). Nothing is charged today; no copy added for the unbuilt 7-day retention, free week page or grace period. Test: `test/raidmimic-landing-variants.test.js`. No web version bump on beta.
 
 
