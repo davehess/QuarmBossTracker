@@ -96,7 +96,9 @@ function parserSelfTest() {
 
 // ── 2. Bot readiness + circuit breaker + budgets ────────────────────────────
 async function botHealth() {
-  const r = await probe(`${botBase()}/health`);
+  // Breaker/budget detail is only served to a caller with a valid session token (the personal wpms_ key).
+  const tok = process.env.WOLFPACK_AGENT_TOKEN;
+  const r = await probe(`${botBase()}/health`, tok ? { headers: { Authorization: `Bearer ${tok}` } } : {});
   if (!r.ok || !r.body) {
     return record('bot /health', 'fail',
       r.status ? `HTTP ${r.status} in ${r.ms}ms` : `unreachable (${r.err || 'no response'})`);

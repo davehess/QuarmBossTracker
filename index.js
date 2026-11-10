@@ -26349,10 +26349,15 @@ const httpServer = http.createServer(async (req, res) => {
     let mem = null;
     try { mem = require('./utils/memStats').memSnapshot(); } catch { /* */ }
     const ready = _botReady && !_shuttingDown;
+    // Anonymous callers (the platform healthcheck, uptime pings) get readiness only; the operational
+    // detail needs a valid per-user session token.
+    const _detailed = (await mimicLink.peekAgentAuth(req)) ? {
+      supabase_breaker: breaker, supabase_row_cap: rowCap, guild_rls: guildRls, budgets, mem,
+    } : {};
     res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({
-      ok: ready, ready, shutting_down: _shuttingDown,
-      supabase_breaker: breaker, supabase_row_cap: rowCap, guild_rls: guildRls, budgets, mem,
+      ok: ready, ready, shutting_down: _shuttingDown, version: require('./package.json').version,
+      ..._detailed,
     }));
   }
 

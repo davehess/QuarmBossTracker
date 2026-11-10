@@ -74,7 +74,9 @@ async function runDrill() {
       record('bot /health', 'fail', r.status ? `HTTP ${r.status}` : `unreachable (${r.err || '?'})`);
     } else {
       const b = r.body;
-      const breaker = b.supabase_breaker;
+      // /health serves the breaker only to authenticated callers; this runs in the bot, so read it directly.
+      let breaker = b.supabase_breaker;
+      if (!breaker) { try { breaker = require('../utils/supabase').breakerState(); } catch { /* */ } }
       const over = Object.keys(b.budgets || {});
       const bits = [`${r.ms}ms`];
       if (breaker && breaker.open) bits.push('⚠ Supabase breaker OPEN');
