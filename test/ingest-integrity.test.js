@@ -63,13 +63,13 @@ describe('relay timestamp bounds', () => {
   const now = Date.parse('2026-11-10T20:00:00Z');
   const iso = (ms) => new Date(now + ms).toISOString();
 
-  it('accepts now-6h .. now+5min and a missing ts', () => {
-    expect(_relayTsInBounds(iso(-5 * 3600000), now)).toBe(true);
+  it('accepts now-48h .. now+5min and a missing ts (a long bot outage keeps its queued kills)', () => {
+    expect(_relayTsInBounds(iso(-47 * 3600000), now)).toBe(true);
     expect(_relayTsInBounds(iso(4 * 60000), now)).toBe(true);
     expect(_relayTsInBounds(undefined, now)).toBe(true);
   });
   it('rejects older, future and unparseable times', () => {
-    expect(_relayTsInBounds(iso(-7 * 3600000), now)).toBe(false);
+    expect(_relayTsInBounds(iso(-49 * 3600000), now)).toBe(false);
     expect(_relayTsInBounds(iso(10 * 60000), now)).toBe(false);
     expect(_relayTsInBounds('not a date', now)).toBe(false);
   });

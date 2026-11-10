@@ -7082,12 +7082,13 @@ async function _characterBelongsToAnotherMember(identity, characterName) {
   if (!owner) return false;
   return !(await _householdDiscordIds(callerId)).has(owner);
 }
-// A kill relay's client clock must sit between 6 h ago and 5 min ahead; no ts means "now" (as before).
+// A kill relay's client clock must sit between 48 h ago and 5 min ahead; no ts means "now" (as before). 48 h, not 6:
+// Mimic's durable upload queue holds a kill through a bot outage, and a raid's kills must survive a long one.
 // The window is the agent's live tail: it sends a kill within seconds, and a queued retry outlives an outage by hours.
 function _relayTsInBounds(ts, now = Date.now()) {
   if (ts === undefined || ts === null || ts === '') return true;
   const ms = typeof ts === 'number' ? ts : Date.parse(ts);
-  return Number.isFinite(ms) && ms >= now - 6 * 3600000 && ms <= now + 5 * 60000;
+  return Number.isFinite(ms) && ms >= now - 48 * 3600000 && ms <= now + 5 * 60000;
 }
 let _relayTsDropLogAt = 0;
 function _logRelayTsDropped(kind) {
