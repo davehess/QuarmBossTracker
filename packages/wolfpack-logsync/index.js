@@ -54976,6 +54976,9 @@ const CHARM_PET_SPELLS = [
 ];
 const CHARM_PET_TARGETS = { 5: 'any mob', 9: 'animals', 10: 'undead', 11: 'summoned', 16: 'plants' };
 const CHARM_PET_LIST_MAX = 8;
+// A pet under half the spell's level cap is not worth a charm (the guild lead, 2026-11-10: mobs that "are SUPER low
+// level" should not be on the list; a level 2 and a level 10 showed under Boltran's Agacerie, cap 53).
+const CHARM_PET_MIN_CAP_FRACTION = 0.5;
 const CHARM_PET_DPS_STEP = 1.1;   // two pets within 10% of each other's damage are a tie: the tougher one goes first
 
 // EQMacEmu zone/spells.cpp: an animal / undead / summoned / plant charm only lands on its own body type; the
@@ -55040,6 +55043,7 @@ function rankCharmPets(npcs, spell) {
   const rows = [];
   for (const n of Array.isArray(npcs) ? npcs : []) {
     if (!n || !(Number(n.level) >= 1) || Number(n.level) > spell.cap) continue;
+    if (Number(n.level) < Math.floor(spell.cap * CHARM_PET_MIN_CAP_FRACTION)) continue;
     if (!charmPetBodyOk(spell.tt, n.bodytype)) continue;
     const dps = charmPetDps(n);
     rows.push({ n, dps, step: Math.floor(Math.log(Math.max(dps, 0.1)) / Math.log(CHARM_PET_DPS_STEP)) });
