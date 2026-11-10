@@ -230,7 +230,7 @@ export const HIVE_STEPS: HiveStep[] = [
     body: 'Make the application and bot in the Discord developer portal and invite it to your server.' },
   { title: 'Fill in .env and guild/config.json',
     body: 'Copy .env.example to .env and set SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_GUILD_ID (your guild tag), ' +
-      'WOLFPACK_AGENT_TOKEN (any long random string), DISCORD_TOKEN, DISCORD_CLIENT_ID and DISCORD_GUILD_ID. Commit ' +
+      'DISCORD_TOKEN, DISCORD_CLIENT_ID and DISCORD_GUILD_ID. Commit ' +
       'guild/config.json for your names, roles, timezone and sites. Never commit secrets.',
     code: '{ "guild": { "tag": "lanternwatch", "name": "Lantern Watch", "timezone": "America/Chicago" } }' },
   { title: 'Deploy the bot',

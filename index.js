@@ -23520,7 +23520,7 @@ async function _recordKillLockouts({
 }
 
 async function _handleAgentUpload(req, res) {
-  // Auth: shared-secret bearer token. WOLFPACK_AGENT_TOKEN must be set.
+  // Auth: per-user session token (wpms_...), checked by requireAgentAuth.
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
 

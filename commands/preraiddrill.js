@@ -93,11 +93,11 @@ async function runDrill() {
     else record(`agent manifest (${label})`, 'ok', `serves ${r.body.latest_agent_version || '(none)'}`);
   }
 
-  // 4. Ingest auth — the fleet's bearer token, end to end. A 401/403/503 here
-  // is the outage that silently kills every upload on raid night.
+  // 4. Ingest auth — a personal session token (wpms_...) end to end. The bot itself holds no shared upload
+  // secret (retired 2026-06-04), so this probe runs only when the operator supplies one.
   {
     const token = process.env.WOLFPACK_AGENT_TOKEN;
-    if (!token) record('ingest auth', 'fail', 'WOLFPACK_AGENT_TOKEN unset on the bot — ALL uploads will 503');
+    if (!token) record('ingest auth', 'skip', 'no session token supplied (WOLFPACK_AGENT_TOKEN) — probe not run');
     else {
       const r = await probe(`${base}/api/agent/guild-triggers`, { Authorization: `Bearer ${token}` });
       if (r.status === 401 || r.status === 403) record('ingest auth', 'fail', `HTTP ${r.status} — token rejected`);
