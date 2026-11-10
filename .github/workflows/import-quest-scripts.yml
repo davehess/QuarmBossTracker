@@ -58,14 +58,17 @@ jobs:
         # Build the arg list conditionally so empty inputs don't become bad
         # CLI tokens (the script's argv parser would otherwise treat them as
         # the next flag's value).
+        env:
+          IN_ZONE: ${{ inputs.zone }}
+          IN_LIMIT: ${{ inputs.limit }}
         run: |
           set -euo pipefail
           args=( --commit )
-          if [ -n "${{ inputs.zone }}" ]; then
-            args+=( --zone "${{ inputs.zone }}" )
+          if [ -n "$IN_ZONE" ]; then
+            args+=( --zone "$IN_ZONE" )
           fi
-          if [ -n "${{ inputs.limit }}" ]; then
-            args+=( --limit "${{ inputs.limit }}" )
+          if [ -n "$IN_LIMIT" ]; then
+            args+=( --limit "$IN_LIMIT" )
           fi
           echo "Running: node scripts/import-quest-scripts.js ${args[*]}"
           node scripts/import-quest-scripts.js "${args[@]}"

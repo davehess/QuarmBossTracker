@@ -332,7 +332,10 @@ function getBosses() {
 // SUNO-mover ships inert until both switches are flipped.
 const _intents = [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildVoiceStates];
 if (process.env.MESSAGE_CONTENT_INTENT === '1') _intents.push(GatewayIntentBits.MessageContent);
-const client = new Client({ intents: _intents });
+// Default mention policy: never resolve @everyone/@here from message text. User and role mentions
+// keep working (the many intentional role/user pings rely on them); a send that wants none passes
+// its own allowedMentions, which overrides this default.
+const client = new Client({ intents: _intents, allowedMentions: { parse: ['users', 'roles'] } });
 
 // ── SUNO-link mover (the guild lead, 2026-07-19) ──────────────────────────────────────
 // Suno links from configured members belong in #the-slop: repost there with
@@ -23517,7 +23520,7 @@ async function _recordKillLockouts({
 }
 
 async function _handleAgentUpload(req, res) {
-  // Auth: shared-secret bearer token. WOLFPACK_AGENT_TOKEN must be set.
+  // Auth: per-user session token (wpms_...), checked by requireAgentAuth.
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
 
@@ -26346,10 +26349,15 @@ const httpServer = http.createServer(async (req, res) => {
     let mem = null;
     try { mem = require('./utils/memStats').memSnapshot(); } catch { /* */ }
     const ready = _botReady && !_shuttingDown;
+    // Anonymous callers (the platform healthcheck, uptime pings) get readiness only; the operational
+    // detail needs a valid per-user session token.
+    const _detailed = (await mimicLink.peekAgentAuth(req)) ? {
+      supabase_breaker: breaker, supabase_row_cap: rowCap, guild_rls: guildRls, budgets, mem,
+    } : {};
     res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({
-      ok: ready, ready, shutting_down: _shuttingDown,
-      supabase_breaker: breaker, supabase_row_cap: rowCap, guild_rls: guildRls, budgets, mem,
+      ok: ready, ready, shutting_down: _shuttingDown, version: require('./package.json').version,
+      ..._detailed,
     }));
   }
 

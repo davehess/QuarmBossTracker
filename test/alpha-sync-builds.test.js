@@ -24,6 +24,6 @@ describe('sync-alpha starts the alpha build', () => {
 
 describe('release-mimic: a dispatch on alpha builds the alpha', () => {
   it('the manual-tag path is skipped on the alpha branch', () => {
-    expect(release).toMatch(/"workflow_dispatch" \] && \[ "\$\{\{ github\.ref_name \}\}" != "alpha" \]/);
+    expect(release).toMatch(/"\$EVENT_NAME" = "workflow_dispatch" \] && \[ "\$REF_NAME" != "alpha" \]/);
   });
 });

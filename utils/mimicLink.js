@@ -737,6 +737,15 @@ async function resolveMimicSession(req) {
   return (r === LOOKUP_ERROR || r === RATE_LIMITED) ? null : r;
 }
 
+// peekAgentAuth(req) — non-writing variant for routes that are public but add detail for a signed-in caller.
+// Returns the identity, or null for no/invalid token or a lookup blip (fails closed; never writes a response).
+async function peekAgentAuth(req) {
+  const bearer = String(req.headers?.['authorization'] || '').replace(/^Bearer\s+/i, '').trim();
+  if (!bearer || !SESSION_TOKEN_RE.test(bearer) || !supabase.isEnabled()) return null;
+  const r = await _resolveSessionToken(bearer, clientIp(req));
+  return (r === LOOKUP_ERROR || r === RATE_LIMITED) ? null : r;
+}
+
 // requireAgentAuth(req, res) — gate for every /api/agent/* endpoint after the
 // 2026-06-04 cutover. The agent sends its session token in the standard
 // Authorization: Bearer header (one shared secret WOLFPACK_AGENT_TOKEN is no
@@ -930,6 +939,7 @@ module.exports = {
   handleRevoke,
   resolveMimicSession,
   requireAgentAuth,
+  peekAgentAuth,
   invalidateSessionCache,
   forgetGuestSession,   // utils/guestLinks.js: an extended guest's new expiry applies at once
   mintSessionForUser,
