@@ -2079,7 +2079,7 @@ function mergeKnownClassRace(rows, stored) {
 }
 
 module.exports = {
-  mergeKnownClassRace, isUnknownClassRace,
+  mergeKnownClassRace, isUnknownClassRace, _fetchAllCharacters,
   runSync, syncRaidsList, syncRaidDetail, syncCharacters, syncAuctions, syncAuctionBids, syncPendingAuctionBids, syncAudits, syncAdjustments,
   reconcileRecentLoot, classifyAuditAction, lootDiffRemovals, dedupByConflictKey,
   foldLootObservations, resolveCatalogItemId, selectAllPaged,

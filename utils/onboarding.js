@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.70': [
+    'Officers: `/opendkplevels` previews and applies OpenDKP level updates from the levels we have seen in /who. Levels only go up, and nothing changes until you press Apply.',
+  ],
   '4.0.69': [
     'Behind the scenes: tighter protection on the Raid Mimic guild registry. Registering a Discord server now needs you to manage it, and invite codes are longer and rate-limited.',
   ],

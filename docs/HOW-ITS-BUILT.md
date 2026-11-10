@@ -366,6 +366,9 @@ boundaries, `#if 0` C++ — the index above stays the map of intent. The
 
 ## Bot features
 
+### OpenDKP levels from /who (bot 4.0.70, 2026-11-10)
+`/opendkplevels` (`commands/opendkplevels.js`, officers): preview then Apply. Planner `utils/opendkpLevels.js`, write `updateCharacter` in `utils/opendkp.js`, level read `who_directory_lookup`. Raise-only; audit rows `opendkp_level_update`.
+
 ### Guild RLS foundation: a parse written as one guild, under row security (bot 4.0.40, 2026-10-31; DECISIONS §496, §490)
 - **What:** the first slice of "the bot stops using `service_role` for guild data". The bot cannot SET ROLE through PostgREST, so it mints a
   2-minute HS256 JWT (`role: guild_scoped`, `guild_id` from `mimic_sessions.guild_id`) with the project's JWT secret and sends it as the bearer
