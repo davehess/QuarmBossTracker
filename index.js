@@ -3599,6 +3599,19 @@ function scheduleMidnightSummary(readyClient) {
         console.warn('[midnight] buff_casts retention skipped:', err?.message);
       }
 
+      // Invite-code guess log (hub_invite_attempts, web invite limiter): only the last 10 minutes are ever read, so
+      // anything older than a day is dropped, address hash included.
+      try {
+        const supabase = require('./utils/supabase');
+        if (supabase.isEnabled()) {
+          const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+          await supabase.del('hub_invite_attempts', `at=lt.${encodeURIComponent(cutoff)}`);
+          console.log('[midnight] swept hub_invite_attempts older than 1 day');
+        }
+      } catch (err) {
+        console.warn('[midnight] hub_invite_attempts retention skipped:', err?.message);
+      }
+
       // ── Retention sweep: raid history (utils/raidHistory.js) ──────────────
       // The six saved streams (mob sightings, mob HP, casts, zone changes, pet owners, trigger fires) keep 60 days in
       // Supabase (the guild lead, 2026-10-29); the Tower archive keeps them longer. Each table's time column leads its

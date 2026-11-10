@@ -57,6 +57,12 @@ function memDb(tables = {}) {
         if (tables[name] === null) return { data: null, error: { message: `relation "${name}" does not exist` } };
         const hit = (r) => q.filters.every(f => f(r));
         let out = [];
+        if (q.head) return { count: rows().filter(hit).length, error: null };
+        if (q.op === 'insert') {
+          writes.push({ table: name, op: 'insert', payload: JSON.parse(JSON.stringify(q.payload)) });
+          rows().push({ ...q.payload, at: new Date().toISOString() });
+          return { data: null, error: null };
+        }
         if (q.op === 'select') out = rows().filter(hit);
         else if (q.op === 'update') {
           out = rows().filter(hit);
@@ -77,7 +83,9 @@ function memDb(tables = {}) {
         return { data: q.op === 'select' || q.returning ? out.map(r => ({ ...r })) : null, error: null };
       };
       const b = {
-        select() { if (q.op !== 'select') q.returning = true; return b; },
+        select(_c, o) { if (o?.head) q.head = true; else if (q.op !== 'select') q.returning = true; return b; },
+        gte(c, v) { q.filters.push(r => r[c] >= v); return b; },   // hub_invite_attempts: failed tries in the last ten minutes
+        insert(p) { q.op = 'insert'; q.payload = p; return b; },
         eq(c, v) { q.filters.push(r => r[c] === v); return b; },
         is(c, v) { q.filters.push(r => (v === null ? r[c] == null : r[c] === v)); return b; },
         not(c, op, v) { q.filters.push(r => !(op === 'is' && v === null ? r[c] == null : r[c] === v)); return b; },
@@ -371,11 +379,13 @@ describe('the sign-in callback, run (web/app/auth/callback/route.ts)', () => {
       memberAvatarUrl: () => 'https://cdn.discordapp.com/x.png',
       memberDisplayName: (m) => m.nick,
       fetchUserGuilds: async (t) => { st.calls.fetchUserGuilds.push(t); return st.userGuilds; },
+      fetchManagedGuildIds: async () => st.userGuilds,
     }));
     vi.doMock('@/lib/lockout', () => ({ isLockedOut: async () => st.locked }));
     vi.doMock('@/lib/request-origin', async () => await import('../web/lib/request-origin.ts'));
     vi.doMock('@/lib/raidmimicHost', async () => await import('../web/lib/raidmimicHost.ts'));
     vi.doMock('@/lib/hubRegistry', async () => await import('../web/lib/hubRegistry.ts'));
+    vi.doMock('@/lib/hubManage', async () => await import('../web/lib/hubManage.ts'));
     vi.doMock('@/lib/openSignIn', async () => await import('../web/lib/openSignIn.ts'));
     // On beta the gated path also goes through lib/landing.ts (the /me hub as the sign-in landing, §481).
     vi.doMock('@/lib/landing', async () => await import('../web/lib/landing.ts'));
@@ -665,7 +675,8 @@ describe('redeemInviteCode', () => {
   });
   it('the code shape is the hub_invites check constraint', () => {
     const sql = stripSql(read('supabase/migrations/20261023160000_open_hub_registry.sql'));
-    expect(sql).toContain(INVITE_CODE_RX.source.replace(/\\/g, '\\'));
+    expect(sql).toContain('^[A-HJKMNP-Z2-9]{6}$');   // the original constraint; 20261110140000 widened it to six-or-eight (test/hub-hardening.test.js)
+    expect(INVITE_CODE_RX.test('K7M2QP') && INVITE_CODE_RX.test('K7M2QP4X')).toBe(true);
   });
   it('an unknown code', async () => {
     const d = db();
@@ -728,6 +739,7 @@ describe('the redeemInvite server action, run (web/app/guilds/actions.ts)', () =
   async function loadAction() {
     vi.resetModules();
     mockBoth('next/cache', () => ({ revalidatePath() {} }));
+    mockBoth('next/headers', () => ({ headers: () => ({ get: () => null }) }));
     vi.doMock('@/lib/supabase-server', () => ({ supabaseServer: () => ({ auth: { getUser: async () => ({ data: { user } }) } }) }));
     vi.doMock('@/lib/supabase', () => ({ supabaseAdmin: () => store }));
     vi.doMock('@/lib/lockout', async () => await import('../web/lib/lockout.ts'));
