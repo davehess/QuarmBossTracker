@@ -332,7 +332,10 @@ function getBosses() {
 // SUNO-mover ships inert until both switches are flipped.
 const _intents = [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildVoiceStates];
 if (process.env.MESSAGE_CONTENT_INTENT === '1') _intents.push(GatewayIntentBits.MessageContent);
-const client = new Client({ intents: _intents });
+// Default mention policy: never resolve @everyone/@here from message text. User and role mentions
+// keep working (the many intentional role/user pings rely on them); a send that wants none passes
+// its own allowedMentions, which overrides this default.
+const client = new Client({ intents: _intents, allowedMentions: { parse: ['users', 'roles'] } });
 
 // ── SUNO-link mover (the guild lead, 2026-07-19) ──────────────────────────────────────
 // Suno links from configured members belong in #the-slop: repost there with
