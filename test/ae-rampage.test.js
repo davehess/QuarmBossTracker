@@ -158,7 +158,7 @@ describe('mob-info wiring', () => {
   });
 
   it('selects size with the race and builds ae_rampage from the picked row', () => {
-    expect(src).toMatch(/see_improved_hide,race,size,gender&limit=200/);
+    expect(src).toMatch(/see_improved_hide,race,size,gender(,[a-z_]+)*&limit=200/);
     expect(src).toMatch(/const aeRampage = mobSpecials\.aeRampageInfo\(r\);/);
     expect(src).toMatch(/\.\.\.\(aeRampage \? \{ ae_rampage: aeRampage \} : \{\}\)/);
     expect(src).toMatch(/const rampage = mobSpecials\.rampageInfo\(r\);/);

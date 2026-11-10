@@ -44,6 +44,7 @@ export function buildTemplate(src, sc) {
     app: { getVersion: () => sc.version },
     currentStatus: () => sc.status,
     _agentOnly: () => sc.agentOnly,
+    _agentCall: () => Promise.resolve(null),   // the raid-code item polls the agent; no answer = no code
     loadConfig: () => sc.cfg,
     updatePending: sc.updatePending,
     autoUpdater: { quitAndInstall() {} },

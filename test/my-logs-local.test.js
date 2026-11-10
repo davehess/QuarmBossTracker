@@ -114,6 +114,9 @@ describe('recording a fight', () => {
   });
 
   it('comes from the History ring\'s own hook, before its one-entry-per-fight guard, so the ring has one entry and the log has both characters', () => {
+    // The fixture fight is dated Oct 4: pin the clock inside the ring's 7-day keep window so it does not age out.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
     agent._recordFightHistory(ET(), 'Brackwyn');
     agent._recordFightHistory(ET(), 'Corvale');
     expect(agent._fightHistoryForTest(), 'the ring still keeps one entry for the fight').toHaveLength(1);
