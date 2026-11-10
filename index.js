@@ -6523,6 +6523,7 @@ async function _handleAgentBossKill(req, res) {
   for (const kill of kills) {
     const { character, guild, boss: bossName, zone, ts } = kill || {};
     if (!bossName) continue;
+    if (!_relayTsInBounds(ts)) { _logRelayTsDropped('bosskill'); continue; }
 
     // Dead → off the Extended Target board, before anything else can `continue`
     // past it. Deliberately ABOVE the PoP lock check below: that gate is about
@@ -7080,6 +7081,19 @@ async function _characterBelongsToAnotherMember(identity, characterName) {
   const owner = await _characterOwnerDiscordId(name);
   if (!owner) return false;
   return !(await _householdDiscordIds(callerId)).has(owner);
+}
+// A kill relay's client clock must sit between 6 h ago and 5 min ahead; no ts means "now" (as before).
+// The window is the agent's live tail: it sends a kill within seconds, and a queued retry outlives an outage by hours.
+function _relayTsInBounds(ts, now = Date.now()) {
+  if (ts === undefined || ts === null || ts === '') return true;
+  const ms = typeof ts === 'number' ? ts : Date.parse(ts);
+  return Number.isFinite(ms) && ms >= now - 6 * 3600000 && ms <= now + 5 * 60000;
+}
+let _relayTsDropLogAt = 0;
+function _logRelayTsDropped(kind) {
+  if (Date.now() - _relayTsDropLogAt < 10 * 60000) return;   // once per 10 min, stdout only
+  _relayTsDropLogAt = Date.now();
+  console.log(`[${kind}] dropped relay entry with an out-of-range time`);
 }
 // The names in `names` the caller may act as (case-preserving, de-duplicated, order kept).
 async function _callerOwnNames(identity, names) {
@@ -11007,6 +11021,9 @@ async function _handleAgentLockout(req, res) {
   for (const entry of entries) {
     const { bossName, remainingMs, character } = entry || {};
     if (!bossName || typeof remainingMs !== 'number') continue;
+    // The entry has no clock of its own, only a remaining time: it must be positive and no longer than the longest
+    // boss timer (162 h on the board) with a day of slack.
+    if (!Number.isFinite(remainingMs) || remainingMs < 0 || remainingMs > 8 * 24 * 3600000) { _logRelayTsDropped('lockout'); continue; }
 
     // /sll names a mob → the server gives loot lockouts for it → card-worthy.
     // Promote its bosses_local row if it was auto-registered (fire-and-forget;

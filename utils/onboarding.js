@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.67': [
+    'Behind the scenes: uploaded fights are sanity-checked, so an impossible damage number or a wrong kill time can no longer land on a parse or a boss timer.',
+  ],
   '4.0.66': [
     'Behind the scenes: anonymous raider labels in shared raids now always use a private key, so nobody can work out who they are.',
   ],
