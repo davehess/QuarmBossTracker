@@ -72,7 +72,7 @@ export const STEP_HOME: Record<string, string> = {
   earth_key: 'earth', flag_arbitor: 'earth', flag_rathe: 'earth',
   essences_power: 'general', binden_final: 'general',
   // The Plane of Time (one group, so the page lists them without a sub-section)
-  time_vial: 'time', time_quintessence: 'time', time_muon: 'time', time_timelockout: 'time', flag_quarm: 'time',
+  time_vial: 'time', time_quintessence: 'time', time_muon: 'time', time_timelockout: 'time', time_join_late: 'time', flag_quarm: 'time',
 };
 
 // A plane's heading: the chart's own name, or the name the guide's steps use where the chart's is a place name.

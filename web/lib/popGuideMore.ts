@@ -209,6 +209,8 @@ const BRIEFS: Record<string, string> = {
   time_muon: 'Needs your Zebuxoruk flag and the Quintessence in your bags. Muon takes you up; clicking the time machine is the flag.',
   spells_turn_in: 'One at a time. Full bags hold the spell for you: make room, then speak to any planar spell turn-in vendor.',
   time_timelockout: 'Your guild has one fixed 6 day 18 hour cycle from its first entry; kills no longer extend it.',
+  time_quintessence: 'Hail each god’s Essence for its piece (no drop), then combine all four in the vial, which you can pass on.',
+  time_join_late: 'The Time A portal puts you in at your guild’s current phase; only another guild’s Time lockout stops you.',
   flag_quarm: 'Phase 1 loot is limited 12 hours, Phases 2 and 3 for 3.5 days, Phase 4 to 6 until the cycle ends. Raid cap 90.',
 };
 for (const [key, brief] of Object.entries(BRIEFS)) STEP_MORE[key] = { ...STEP_MORE[key], brief };
