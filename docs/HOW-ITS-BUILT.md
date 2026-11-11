@@ -3730,7 +3730,12 @@ Settings; IPCs `ui-account-characters` (bot `GET /api/agent/ui_layout/characters
 Zeal off on a PC with another account's characters. `fitLayout` clamps existing target blocks on-screen. Overlay
 positions: `apps/mimic/overlayBackup.js` (`mimic-overlays.json` in full bundles, `landOnScreens`). Dated
 `eqclient.ini`/`zeal.ini` copies and 5 local versions per character: `apps/mimic/localVersions.js`. Test:
-`test/ui-bring-setup.test.js`.
+`test/ui-bring-setup.test.js`. **Fixes, beta `3557318b` (FB-123..127):** `ui-account-characters` sends `parts` (it never had:
+the first bring-in restored overlays only); Zeal split into `zealchar` (the character's `[<Char>]` sections, always on) and
+`zeal` (shared, behind the tick); `ui-restore-parts` runs two halves split by `_uiNeedsEqClosed` (own files now or at camp via
+`_uiEqBusyFor`; keybinds/zeal/zealchar when EverQuest closes), `_queueUiRestore` keeps one entry per half; layout target
+`_uiTargetRes` (eqclient.ini `[VideoMode]`, live EQ window, screen); the card lists `files` and opens UI Studio's chat
+routing (`open-ui-studio` `{character, chat}`).
 **Compare-first restore, Keep in sync, This PC** (Mimic beta `d494250d`, 2026-11-01, DECISIONS §510): Settings' ↩ Restore
 calls `ui-restore-plan` (backup vs disk per part, from `apps/mimic/uiRestorePlan.js`: `classify` / `compare` / `fitLayout` /
 `buildRestore` / `windowRects`) and `ui-restore-parts` (write now, or queue `{kind:'restore'}` for after the camp). Parts: layout
