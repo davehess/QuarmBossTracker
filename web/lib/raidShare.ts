@@ -101,6 +101,18 @@ export function openWindow(fromMs: number): ShareWindow {
   return { fromMs: f, toMs: f + OPEN_SPAN_MS };
 }
 
+/**
+ * A link limited to some raids starts at the first minute the earliest of them was recorded (the guild lead, 2026-11-11:
+ * a link to a raid of 9 that formed at 8:51 PM opened at 6:47 PM on an empty map, two hours before its raid). Only ever
+ * later than the window's own start and before its end; an open (following) link keeps following from the new start.
+ */
+export function startAtRaids(win: ShareWindow, raids: readonly { fromMs: number }[], open: boolean): ShareWindow {
+  if (!raids.length) return win;
+  const first = Math.floor(Math.min(...raids.map(r => r.fromMs)) / MINUTE_MS) * MINUTE_MS;
+  if (!(first > win.fromMs) || first >= win.toMs) return win;
+  return open ? openWindow(first) : { fromMs: first, toMs: win.toMs };
+}
+
 export function isOpenShare(row: Pick<ShareRow, 'from_at' | 'to_at'>): boolean {
   const f = Date.parse(row.from_at);
   const t = Date.parse(row.to_at);

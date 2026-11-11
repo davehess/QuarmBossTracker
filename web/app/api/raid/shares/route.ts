@@ -14,7 +14,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
 import { GUILD_TAG } from '@/lib/guild';
 import {
-  expiryDays, hashToken, isOpenShare, makeWindow, newToken, openWindow, sharePath, shareStatus, SHARE_ORIGIN, windowIso,
+  expiryDays, hashToken, isOpenShare, makeWindow, newToken, openWindow, sharePath, shareStatus, SHARE_ORIGIN, startAtRaids, windowIso,
   windowOfShare, type ShareRow,
 } from '@/lib/raidShare';
 import { loadGroupIndex } from '@/lib/raidSessionLoad';
@@ -78,10 +78,11 @@ export async function POST(req: Request) {
   try { body = await req.json(); } catch { return fail(400, 'bad request'); }
   // `open: true` = follow the raid (see isOpenShare): only the start matters; the end is stored as the open marker.
   const fromMs = Date.parse(String(body.from ?? ''));
-  const win = body.open === true
+  const asked = body.open === true
     ? (Number.isFinite(fromMs) ? openWindow(fromMs) : null)   // not makeWindow: it would round the marker's end up to a whole day
     : makeWindow(fromMs, Date.parse(String(body.to ?? '')));
-  if (!win) return fail(400, 'bad window');
+  if (!asked) return fail(400, 'bad window');
+  let win = asked;
   const title = String(body.title ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
   const days = expiryDays(body.days);
 
@@ -90,11 +91,21 @@ export async function POST(req: Request) {
   // Absent = the whole window, as every older link.
   let groupIds: string[] | null = null;
   if (body.group_ids !== undefined && body.group_ids !== null) {
-    let present: Set<string>;
-    try { present = new Set((await loadGroupIndex(supabaseAdmin(), win)).groups.map(g => g.id)); } catch { return fail(502, 'raids unavailable'); }
-    const checked = checkShareGroups(body.group_ids, present);
+    let raids: { id: string; fromMs: number }[];
+    try { raids = (await loadGroupIndex(supabaseAdmin(), win)).groups; } catch { return fail(502, 'raids unavailable'); }
+    const checked = checkShareGroups(body.group_ids, new Set(raids.map(g => g.id)));
     if ('error' in checked) return fail(400, checked.error);
     groupIds = checked.ids;
+    // Start the link at its raids' first minute. The raids are counted again over the shorter window (the viewer counts
+    // them over the stored one), so the move is kept only when every chosen raid is still found there by the same id.
+    const ids = groupIds ?? [];
+    const later = startAtRaids(win, raids.filter(g => ids.includes(g.id)), body.open === true);
+    if (ids.length && later !== win) {
+      try {
+        const again = new Set((await loadGroupIndex(supabaseAdmin(), later)).groups.map(g => g.id));
+        if (ids.every(id => again.has(id))) win = later;
+      } catch { /* keep the asked window */ }
+    }
   }
 
   const token = newToken();
