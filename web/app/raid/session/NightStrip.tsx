@@ -11,7 +11,22 @@ import { KIND_LABEL, type FightMark, type MassDeath, type SliceKind } from '@/li
 import { groupLabel, raidsIn, type RaidGroup } from '@/lib/sessionGroups';
 import { KIND_BAR, etHour, etMin, fmtDur, plural } from './nightStyle';
 
-export type StripSlice = { id: string; fromMs: number; toMs: number; kind: SliceKind; label: string; draft?: boolean };
+export type StripSlice = { id: string; fromMs: number; toMs: number; kind: SliceKind; label: string; draft?: boolean; groups?: string[] };
+
+const MAX_SLICE_LANES = 4;
+
+/** Segments that overlap in time (two raids at once) go on separate thin rows; the index is each one's lane (the guild lead, 2026-11-11). */
+function sliceLanes(slices: readonly StripSlice[]): { lane: number; count: number }[] {
+  const ends: number[] = [];
+  const lane = new Map<StripSlice, number>();
+  for (const s of [...slices].sort((a, b) => a.fromMs - b.fromMs || a.toMs - b.toMs)) {
+    let k = ends.findIndex(e => e <= s.fromMs);
+    if (k < 0) k = ends.length < MAX_SLICE_LANES ? ends.length : MAX_SLICE_LANES - 1;
+    ends[k] = Math.max(ends[k] ?? 0, s.toMs);
+    lane.set(s, k);
+  }
+  return slices.map(s => ({ lane: lane.get(s) ?? 0, count: ends.length }));
+}
 
 const HOUR_MS = 60 * MINUTE_MS;
 
@@ -41,6 +56,11 @@ export default function NightStrip({ fromMs, toMs, spans, fights, mass, slices, 
   const pct = (ms: number) => `${(Math.min(toMs, Math.max(fromMs, ms)) - fromMs) / span * 100}%`;
   const width = (a: number, b: number) => `${Math.max(0.4, (Math.min(toMs, b) - Math.max(fromMs, a)) / span * 100)}%`;
 
+  const placed = sliceLanes(slices);
+  const laneCount = Math.max(1, ...placed.map(p => p.count));
+  // One lane keeps today's 2.25rem track; more lanes each get 1.5rem so the bars stay readable.
+  const trackH = laneCount === 1 ? '2.25rem' : `${laneCount * 1.5 + 0.25}rem`;
+
   const here = raidsIn(groups ?? [], { fromMs, toMs });
   const lanes = here.length > 1 ? laneRows(here) : [];
 
@@ -51,18 +71,24 @@ export default function NightStrip({ fromMs, toMs, spans, fights, mass, slices, 
   return (
     <div className="select-none">
       {/* segments */}
-      <div className="relative h-9 rounded border border-border bg-bg" role="group" aria-label="Segments of the night">
+      <div className="relative rounded border border-border bg-bg" style={{ height: trackH }} role="group" aria-label="Segments of the night">
         {slices.length === 0 && (
           <span className="pointer-events-none absolute inset-0 flex items-center px-2 text-xs text-dim">{drawRule ?? 'No segments yet.'}</span>
         )}
-        {slices.map(s => (
+        {slices.map((s, si) => {
+          const multi = laneCount > 1;
+          const style = multi
+            ? { left: pct(s.fromMs), width: width(s.fromMs, s.toMs), top: `${placed[si].lane * 1.5 + 0.125}rem`, height: '1.375rem' }
+            : { left: pct(s.fromMs), width: width(s.fromMs, s.toMs) };
+          return (
           <div key={s.id}
             title={`${KIND_LABEL[s.kind]}${s.label ? `: ${s.label}` : ''}, ${etMin.format(s.fromMs)} to ${etMin.format(s.toMs)} ET`}
-            style={{ left: pct(s.fromMs), width: width(s.fromMs, s.toMs) }}
-            className={`absolute top-0.5 bottom-0.5 overflow-hidden whitespace-nowrap rounded border px-1.5 text-left text-[11px] leading-7 ${KIND_BAR[s.kind]} ${s.draft ? 'opacity-80' : ''}`}>
+            style={style}
+            className={`absolute ${multi ? '' : 'top-0.5 bottom-0.5'} overflow-hidden whitespace-nowrap rounded border px-1.5 text-left text-[11px] ${multi ? 'leading-5' : 'leading-7'} ${KIND_BAR[s.kind]} ${s.draft ? 'opacity-80' : ''}`}>
             {s.label || KIND_LABEL[s.kind]}
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* raids on the ground: one row each when they overlap in time */}

@@ -22,7 +22,7 @@ import { MINUTE_MS } from '../web/lib/raidReplay.ts';
 import {
   GAP_BREAK_MS, KEEP_DAYS, MAX_LABEL, MAX_PER_WRITE, MIN_SEGMENT_MS, cleanLabel, detectSegments, deathsDuring, fightMark,
   markFights, massDeaths, mergeSegments, moveBoundary, nightLog, parseSliceStore, planSliceWrite, playerDeathName,
-  slicesIn, spanStats, splitSegment, suggestKind,
+  slicesIn, spanStats, splitByRaid, splitSegment, suggestKind,
 } from '../web/lib/nightSlices.ts';
 import { rosterCuts } from '../web/lib/liveRaidWindow.ts';
 import { loadNightMarks, saveSlices } from '../web/lib/nightSlicesLoad.ts';
@@ -269,6 +269,92 @@ describe('the slice store', () => {
     expect(parseSliceStore({ s: 'nope' }).s).toEqual([]);
     const all = [{ id: 'a0000001', fromMs: at(-10), toMs: at(5), kind: 'raid', label: '' }, { id: 'b0000001', fromMs: at(600), toMs: at(700), kind: 'raid', label: '' }];
     expect(slicesIn(all, WIN).map(s => s.id)).toEqual(['a0000001']);
+  });
+});
+
+// ── 4b. RAIDS AT ONCE (the guild lead, 2026-11-11) ───────────────────────────────────────────────────────────
+// One window held a raid of 32 all evening and a raid of 9 from 8:51 PM. Segments carry an optional raid set, and two
+// may overlap in time only when both name raids and share none. Behaviour tests: the real functions are called.
+describe('segments that name raids', () => {
+  const emptyCtx = { fights: [], deaths: [], mass: [] };
+  const S = at(0), E = at(154), B0 = at(124);             // 6:47 to 9:21, raid B from 8:51
+  const RA = { id: 'rbigraid', fromMs: S, toMs: E };
+  const RB = { id: 'rsmallcrew', fromMs: B0, toMs: E };
+  const seg = (over = {}) => ({ fromMs: S, toMs: E, kind: 'raid', label: '', why: 'saved', ...over });
+  const sl = (id, a, b, over = {}) => ({ id, fromMs: at(a), toMs: at(b), kind: 'raid', label: '', ...over });
+  const write = (store, incoming) => planSliceWrite(store, WIN, incoming, newId, NOW);
+
+  it('parse keeps valid raid ids sorted and deduped, drops bad ones, and leaves old stores byte-identical', () => {
+    const old = { v: 1, s: [{ id: 'old1', fromMs: at(0), toMs: at(10), kind: 'raid', label: 'x' }] };
+    expect(JSON.stringify(parseSliceStore(old))).toBe(JSON.stringify(old));
+    const p = parseSliceStore({ v: 1, s: [
+      { id: 'abcd', fromMs: at(0), toMs: at(10), kind: 'raid', label: '', groups: ['rzzz', 'raaa', 'rzzz', 'BAD ID', 7] },
+      { id: 'efgh', fromMs: at(20), toMs: at(30), kind: 'raid', label: '', groups: ['NOPE!'] },
+      { id: 'ijkl', fromMs: at(40), toMs: at(50), kind: 'raid', label: '', groups: 'raaa' },
+    ] });
+    expect(p.s).toHaveLength(3);
+    expect(p.s[0].groups).toEqual(['raaa', 'rzzz']);
+    expect('groups' in p.s[1]).toBe(false);
+    expect('groups' in p.s[2]).toBe(false);
+  });
+
+  it('a write accepts two overlapping slices with disjoint raid sets and stores their raids', () => {
+    const r = write({ v: 1, s: [] }, [sl('aaaa', 0, 154, { groups: ['rbigraid'] }), sl('bbbb', 124, 154, { groups: ['rsmallcrew'] })]);
+    expect(r.error).toBeUndefined();
+    expect(r.store.s.map(x => x.groups)).toEqual([['rbigraid'], ['rsmallcrew']]);
+  });
+
+  it('a write refuses overlap when the sets share a raid, or either slice has no set', () => {
+    expect(write({ v: 1, s: [] }, [sl('aaaa', 0, 100, { groups: ['rbigraid'] }), sl('bbbb', 50, 150, { groups: ['rbigraid', 'rsmallcrew'] })]).error).toBe('slices overlap');
+    expect(write({ v: 1, s: [] }, [sl('aaaa', 0, 100, { groups: ['rbigraid'] }), sl('bbbb', 50, 150)]).error).toBe('slices overlap');
+    expect(write({ v: 1, s: [] }, [sl('aaaa', 0, 100), sl('bbbb', 50, 150, { groups: ['rsmallcrew'] })]).error).toBe('slices overlap');
+  });
+
+  it('the overlap check looks past the neighbour (a long slice, a short one inside it, then one sharing the long one\'s raid)', () => {
+    const r = write({ v: 1, s: [] }, [
+      sl('aaaa', 0, 150, { groups: ['rbigraid'] }), sl('bbbb', 10, 20, { groups: ['rsmallcrew'] }), sl('cccc', 30, 40, { groups: ['rbigraid'] }),
+    ]);
+    expect(r.error).toBe('slices overlap');
+  });
+
+  it('a malformed groups value is refused, an empty list is no set', () => {
+    expect(write({ v: 1, s: [] }, [sl('aaaa', 0, 10, { groups: 'rbigraid' })]).error).toBe('bad raids');
+    expect(write({ v: 1, s: [] }, [sl('aaaa', 0, 10, { groups: ['BAD ID'] })]).error).toBe('bad raids');
+    const ok = write({ v: 1, s: [] }, [sl('aaaa', 0, 10, { groups: [] })]);
+    expect('groups' in ok.store.s[0]).toBe(false);
+  });
+
+  it('splitByRaid turns the 2026-11-10 shape into one segment per raid, clipped, each carrying its raid', () => {
+    const out = splitByRaid([seg({ label: 'old' })], 0, [RA, RB], emptyCtx);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({ fromMs: S, toMs: E, groups: ['rbigraid'], kind: 'raid', label: '', why: 'split by raid' });
+    expect(out[1]).toMatchObject({ fromMs: B0, toMs: E, groups: ['rsmallcrew'], kind: 'raid', label: '', why: 'split by raid' });
+    // and what it produced is something the store accepts
+    const saved = write({ v: 1, s: [] }, out.map((x, k) => ({ id: `seg${k}x`, fromMs: x.fromMs, toMs: x.toMs, kind: x.kind, label: x.label, groups: x.groups })));
+    expect(saved.error).toBeUndefined();
+  });
+
+  it('splitByRaid clips a raid that spills past the segment, skips one under a minute, and leaves one raid alone', () => {
+    const s = seg({ fromMs: at(10), toMs: at(60) });
+    const out = splitByRaid([s], 0, [{ id: 'rwide', fromMs: at(0), toMs: at(200) }, { id: 'rlate', fromMs: at(30), toMs: at(90) }], emptyCtx);
+    expect(out.map(x => [x.fromMs, x.toMs])).toEqual([[at(10), at(60)], [at(30), at(60)]]);
+    const blip = [{ id: 'rwide', fromMs: at(0), toMs: at(200) }, { id: 'rblip', fromMs: at(60) - 20_000, toMs: at(70) }];
+    const list = [s];
+    expect(splitByRaid(list, 0, blip, emptyCtx)).toEqual(list);
+    expect(splitByRaid(list, 0, [RA], emptyCtx)).toEqual(list);
+  });
+
+  it('merge and moveBoundary only join segments with equal raid sets; split keeps the set on both halves', () => {
+    const a = seg({ toMs: at(100), groups: ['rbigraid'] }), b = seg({ fromMs: at(100), groups: ['rsmallcrew'] });
+    expect(mergeSegments([a, b], 0, emptyCtx)).toEqual([a, b]);
+    expect(moveBoundary([a, b], 0, 5 * MINUTE_MS)).toEqual([a, b]);
+    const c = { ...b, groups: ['rbigraid'] };
+    const m = mergeSegments([a, c], 0, emptyCtx);
+    expect(m).toHaveLength(1);
+    expect(m[0].groups).toEqual(['rbigraid']);
+    expect(moveBoundary([a, c], 0, 5 * MINUTE_MS)[0].toMs).toBe(at(105));
+    const halves = splitSegment([a], 0, at(50), emptyCtx);
+    expect(halves.map(x => x.groups)).toEqual([['rbigraid'], ['rbigraid']]);
   });
 });
 
