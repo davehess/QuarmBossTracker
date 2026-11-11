@@ -202,3 +202,160 @@ describe('local versions and dated copies', () => {
     expect(lv.isLocalId('0e6b0c1e-0000-0000-0000-000000000000')).toBe(false);
   });
 });
+
+// ---- the 2026-11-11 member report: FB-123 / 124 / 125 / 126 / 127 ------------------------------------------------
+// A member brought one character from a 7-file backup onto a PC that also holds another account's characters (so key
+// bindings and Zeal were off). The hotbars, macros, spell sets and chat routing did not arrive.
+describe('a bring-in on a shared PC lands every file of the character (FB-124 / 126 / 127)', () => {
+  const backup = {
+    'UI_Aldenmar_pq.proj.ini': '[MainChat]\r\nXPos1920x1080=10\r\nYPos1920x1080=20\r\n[ChatManager]\r\nNumWindows=2\r\nChannelMap4=1\r\nChannelMap41=1\r\n',
+    'Aldenmar_pq.proj.ini': '[HotButtons]\r\nPage1Button1Name=Heal\r\n[Socials]\r\nPage1Button1Name=Hi\r\n[Options]\r\nT=1\r\n',
+    'Aldenmar_spellsets.ini': '[Set1]\r\nGem1=Heal\r\n',
+    'Aldenmar_bandolier.ini': '[Band]\r\nA=1\r\n',
+    'Aldenmar_protected.ini': '[Prot]\r\nA=1\r\n',
+    'eqclient.ini': '[VideoMode]\r\nWidth=1920\r\nHeight=1080\r\n[KeyMaps]\r\nKEY=1\r\n[Aldenmar]\r\nTellWindows=1\r\n',
+    'zeal.ini': '[Zeal]\r\nFoo=2\r\n[Aldenmar]\r\nExtended_ChannelMaps=7\r\n[TellWindows_Aldenmar]\r\nX=5\r\n',
+  };
+  const local = { 'eqclient.ini': '[VideoMode]\r\nWidth=1920\r\nHeight=1080\r\n[KeyMaps]\r\nKEY=9\r\n', 'zeal.ini': '[Zeal]\r\nFoo=1\r\n' };
+  const run = (parts) => plan.buildRestore({ backupFiles: backup, localFiles: local, character: 'Aldenmar', parts, knownChars: ['Zarrin'], target: { w: 1920, h: 1080 } });
+
+  it('the always-on parts write the layout (with chat routing), hotbars, socials, spell sets, bandolier and the character\'s Zeal sections', () => {
+    const r = run(sync.defaultParts({ otherAccountsOnPc: true }));
+    expect(Object.keys(r.writes).sort()).toEqual(['Aldenmar_bandolier.ini', 'Aldenmar_pq.proj.ini', 'Aldenmar_protected.ini', 'Aldenmar_spellsets.ini', 'UI_Aldenmar_pq.proj.ini', 'eqclient.ini', 'zeal.ini']);
+    expect(r.writes['UI_Aldenmar_pq.proj.ini']).toMatch(/ChannelMap41=1/);
+    expect(r.writes['Aldenmar_pq.proj.ini']).toMatch(/\[HotButtons\][\s\S]*\[Socials\]/);
+    expect(r.writes['zeal.ini']).toMatch(/\[Aldenmar\]\r\nExtended_ChannelMaps=7/);
+    expect(r.writes['zeal.ini']).toMatch(/Foo=1/);                                  // the shared [Zeal] section is the host's
+    expect(r.writes['eqclient.ini']).toMatch(/\[Aldenmar\]\r\nTellWindows=1/);
+    expect(r.writes['eqclient.ini']).toMatch(/KEY=9/);                              // key bindings stay the host's
+    expect(r.fileParts['Aldenmar_spellsets.ini']).toEqual(['spellsets']);
+    expect(r.fileParts['zeal.ini']).toEqual(['zealchar']);
+  });
+  it('the shared-PC tick adds the key bindings and the shared Zeal sections', () => {
+    const r = run(sync.defaultParts({ otherAccountsOnPc: false }));
+    expect(r.writes['eqclient.ini']).toMatch(/KEY=1/);
+    expect(r.writes['zeal.ini']).toMatch(/Foo=2/);
+  });
+  it('defaultParts keeps the character\'s own Zeal part on a shared PC and drops only the shared two', () => {
+    const p = sync.defaultParts({ otherAccountsOnPc: true });
+    expect(p).toContain('zealchar');
+    expect(p).not.toContain('zeal');
+    expect(p).not.toContain('keybinds');
+  });
+});
+
+describe('Mimic wiring for the 2026-11-11 report', () => {
+  const main = stripJs(readSource(path.join(ROOT, 'apps/mimic/main.js')));
+  it('ui-account-characters sends the parts list the card reads (it was never sent, so only overlays were restored)', () => {
+    const b = sliceBlock(main, "ipcMain.handle('ui-account-characters'", '\n});\n');
+    expect(b).toMatch(/parts:\s*uiSync\.defaultParts\(/);
+  });
+  it('the layout is fitted to eqclient.ini [VideoMode], else the EverQuest window, else the screen', () => {
+    const t = sliceBlock(main, 'async function _uiTargetRes(local) {', '\n}\n');
+    expect(t.indexOf('_eqResOf(local)')).toBeGreaterThan(-1);
+    expect(t.indexOf('_eqResOf(local)')).toBeLessThan(t.indexOf('_eqMainWindow'));
+    expect(t.indexOf('_eqMainWindow')).toBeLessThan(t.indexOf('_primarySize()'));
+    const parts = sliceBlock(main, "ipcMain.handle('ui-restore-parts'", '\n});\n');
+    expect(parts).toMatch(/_uiTargetRes\(_readUiBundle\(eqDir, character\)\)/);
+    expect(parts).toMatch(/_uiWriteRestore\(\{[^}]*target/);
+  });
+  it('the restore answer names the files written and the parts behind each', () => {
+    const parts = sliceBlock(main, "ipcMain.handle('ui-restore-parts'", '\n});\n');
+    expect(parts).toMatch(/files,/);
+    expect(sliceBlock(main, 'function _uiWriteRestore(entry, backupTag) {', '\n}\n')).toMatch(/written\.fileParts = r\.fileParts/);
+  });
+  it('UI Studio can be opened on one character\'s chat routing', () => {
+    expect(main).toMatch(/ipcMain\.handle\('open-ui-studio', \(_e, goto\)/);
+    expect(readSource(path.join(ROOT, 'apps/mimic/preload.js'))).toMatch(/onUiStudioGoto:/);
+    const html = stripJs(readSource(path.join(ROOT, 'apps/mimic/ui-studio.html')));
+    expect(html).toMatch(/onUiStudioGoto\(function\(goto\)/);
+    expect(html).toMatch(/inspectSocialsBtn'\)\.click\(\)/);
+  });
+});
+
+describe('the bring-in card (behaviour, a stub page)', () => {
+  const src = readSource(path.join(ROOT, 'apps/mimic/bring-setup.js'));
+  // A page just big enough for the card: innerHTML is kept, listeners are captured by selector.
+  function page() {
+    const handlers = {}, stubs = {};
+    const el = {
+      html: '',
+      set innerHTML(v) { this.html = v; }, get innerHTML() { return this.html; },
+      querySelector(sel) { return stubs[sel] || (stubs[sel] = { style: {}, checked: false, dataset: {}, addEventListener(ev, fn) { handlers[sel + ev] = fn; } }); },
+      querySelectorAll(sel) {
+        if (sel !== '[data-wpbs-chat]') return [];
+        return [...this.html.matchAll(/data-wpbs-chat="([^"]+)"/g)].map(m => ({ dataset: { wpbsChat: m[1] }, addEventListener(ev, fn) { handlers['chat:' + m[1]] = fn; } }));
+      },
+    };
+    return { el, handlers, stubs };
+  }
+  const tick = async () => { for (let i = 0; i < 12; i++) await new Promise(r => setTimeout(r, 0)); };
+  function boot({ parts, restore, all = false } = {}) {
+    const calls = { restore: [], studio: [] };
+    let onPc = false;
+    const mimic = {
+      uiAccountCharacters: async () => ({ ok: true, eqDir: 'C:/EQ', otherAccountsOnPc: true, parts,
+        characters: [{ character: 'Aldenmar', onThisPc: onPc, latestFull: { id: 'b1', created_at: '2026-11-10T00:00:00Z', source_width: 1920, source_height: 1080 }, machines: [], local: [] }] }),
+      uiRestorePlan: async () => ({ ok: true, parts: ['layout', 'hotkeys', 'socials', 'spellsets', 'zealchar', 'zeal', 'keybinds', 'other'].map(key => ({ key, inBackup: 1 })) }),
+      uiRestoreParts: async (p) => { calls.restore.push(p); onPc = true; return restore ? restore(p) : { ok: true, queued: false, files: [], savedCopies: [] }; },
+      openUiStudio: async (g) => { calls.studio.push(g); return true; },
+    };
+    const w = { mimic };
+    new Function('window', src)(w);
+    return { w, calls };
+  }
+  const click = async (pg) => { pg.handlers['[data-wpbs-go]click']({ target: { disabled: false } }); await tick(); };
+
+  it('restores the character\'s own parts even when the account answer carries no parts list, never the shared two unticked', async () => {
+    const { w, calls } = boot({ parts: undefined, all: true });
+    const pg = page();
+    await w.wpBringSetup.mount(pg.el, { all: true });
+    await click(pg);
+    expect(calls.restore).toHaveLength(1);
+    const parts = calls.restore[0].parts;
+    expect(parts).toEqual(expect.arrayContaining(['layout', 'hotkeys', 'socials', 'spellsets', 'zealchar', 'other']));
+    expect(parts).not.toContain('keybinds');
+    expect(parts).not.toContain('zeal');
+  });
+  it('the key bindings tick adds keybinds and the shared Zeal part', async () => {
+    const { w, calls } = boot({ parts: ['layout', 'zealchar'] });
+    const pg = page();
+    await w.wpBringSetup.mount(pg.el, {});
+    pg.stubs['[data-wpbs-keys]'].checked = true;
+    await click(pg);
+    expect(calls.restore[0].parts).toEqual(expect.arrayContaining(['layout', 'zealchar', 'keybinds', 'zeal']));
+  });
+  it('shows how many files were updated, which ones, the safety copy, and keeps the ticks (FB-123)', async () => {
+    const { w } = boot({
+      parts: ['layout', 'hotkeys'], all: true,
+      restore: () => ({ ok: true, queued: false, savedCopies: ['eqclient.ini.mimic-20261111-050000.bak'], target: { w: 1920, h: 1080, from: 'eqclient.ini' },
+        files: [{ name: 'UI_Aldenmar_pq.proj.ini', parts: ['Window layout'] }, { name: 'Aldenmar_pq.proj.ini', parts: ['Hotkeys', 'Socials'] }] }),
+    });
+    const pg = page();
+    await w.wpBringSetup.mount(pg.el, { all: true });
+    await click(pg);
+    const h = pg.el.html;
+    expect(h).toContain('2 files updated');
+    expect(h).toContain('UI_Aldenmar_pq.proj.ini');
+    expect(h).toContain('(Hotkeys, Socials)');
+    expect(h).toContain('Saved a copy of eqclient.ini first');
+    expect(h).toContain('fitted to 1920×1080');
+    // The character is on this PC now, which un-ticks it by default; the member's tick must survive the re-read.
+    expect(h).toMatch(/data-pick="aldenmar" checked/);
+  });
+  it('a queued character says it applies when that character camps; a done one offers "Sort your chat channels"', async () => {
+    const q = boot({ parts: ['layout'], restore: () => ({ ok: true, queued: true, busy: 'camp' }) });
+    const pq = page();
+    await q.w.wpBringSetup.mount(pq.el, {});
+    await click(pq);
+    expect(pq.el.html).toContain('apply when Aldenmar camps');
+    expect(pq.el.html).not.toContain('data-wpbs-chat');
+    const d = boot({ parts: ['layout'], all: true, restore: () => ({ ok: true, queued: false, files: [{ name: 'a.ini', parts: [] }], savedCopies: [] }) });
+    const pd = page();
+    await d.w.wpBringSetup.mount(pd.el, { all: true });
+    await click(pd);
+    expect(pd.el.html).toContain('Sort your chat channels');
+    pd.handlers['chat:Aldenmar']();
+    expect(d.calls.studio).toEqual([{ character: 'Aldenmar', eqDir: 'C:/EQ', chat: true }]);
+  });
+});

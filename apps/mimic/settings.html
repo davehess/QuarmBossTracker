@@ -753,7 +753,7 @@
     catch { _uiAcct = null; }
     if (window.wpBringSetup) window.wpBringSetup.mount(document.getElementById('uiBringIn'), { fresh: true, onDone: function () { _renderUiStudio(); } });
   }
-  const _UI_SYNC_PARTS = [['layout', 'Layout'], ['hotkeys', 'Hotkeys'], ['socials', 'Socials'], ['spellsets', 'Spell sets'], ['keybinds', 'Keybinds'], ['zeal', 'Zeal'], ['other', 'Other']];
+  const _UI_SYNC_PARTS = [['layout', 'Layout'], ['hotkeys', 'Hotkeys'], ['socials', 'Socials'], ['spellsets', 'Spell sets'], ['keybinds', 'Keybinds'], ['zealchar', 'Zeal (this character)'], ['zeal', 'Zeal (shared)'], ['other', 'Other']];
   async function _uiRenderSync() {
     const box = document.getElementById('uiSyncPanel');
     let s;

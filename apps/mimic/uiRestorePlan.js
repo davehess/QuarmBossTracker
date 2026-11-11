@@ -17,7 +17,12 @@ const PARTS = [
   { key: 'socials',   label: 'Socials',                  scope: 'character' },
   { key: 'spellsets', label: 'Spell sets',               scope: 'character' },
   { key: 'keybinds',  label: 'Keybinds',                 scope: 'all' },   // eqclient.ini is shared by every character on this PC
-  { key: 'zeal',      label: 'Zeal options',             scope: 'character' },
+  // The character's OWN Zeal settings (its [<Char>] sections, chat routing and spell sets that Zeal keeps keyed to
+  // it) are a part of their own, always brought in like the layout. Only Zeal's SHARED sections stay in 'zeal',
+  // behind the shared-PC tick (a member, 2026-11-11, FB-124 / FB-127: with the one Zeal part off on a shared PC,
+  // the character's own Zeal settings stayed behind with the shared ones).
+  { key: 'zealchar',  label: 'Zeal settings for this character', scope: 'character' },
+  { key: 'zeal',      label: 'Zeal options (shared)',    scope: 'character' },
   { key: 'other',     label: 'Other character settings', scope: 'character' },
 ];
 
@@ -107,16 +112,25 @@ function classify(files, character, { knownChars = [] } = {}) {
       res.keybinds.push({ file, mode: 'keys', test: (n) => /^KeyMaps$/i.test(n) });
       // Zeal also keeps settings in eqclient.ini: a shared [Zeal] section and a [<Char>] section per character
       // (TellWindows), seen in a real file 2026-11-01. Only those two; every other section stays as it is.
-      if (c) res.zeal.push({ file, mode: 'keys', test: (n) => /^Zeal$/i.test(n) || lc(n) === c, keyTest: (k) => !/ChannelAutoJoin|password/i.test(k) });
+      if (c) {
+        res.zeal.push({ file, mode: 'keys', test: (n) => /^Zeal$/i.test(n), keyTest: (k) => !/ChannelAutoJoin|password/i.test(k) });
+        res.zealchar.push({ file, mode: 'keys', test: (n) => lc(n) === c, keyTest: (k) => !/ChannelAutoJoin|password/i.test(k) });
+      }
     } else if (lf === 'zeal.ini') {
       // A bare section holding only TellWindows keys is a character's own ([<Char>]), even for a character this
       // PC has no files for; it is restored only for this character.
       const tellOnly = new Set(parseSections(files[file])
         .filter((s) => s.name && s.keys.length && s.keys.every((k) => /^TellWindows/i.test(k.key))).map((s) => lc(s.name)));
+      // This character's own sections are the 'zealchar' part; every other section that is nobody else's is shared.
+      if (c) res.zealchar.push({
+        file, mode: 'keys',
+        test: (n) => !/ChannelAutoJoin/i.test(n) && forChar(n, c),
+        keyTest: (k) => !/ChannelAutoJoin|password/i.test(k),
+      });
       res.zeal.push({
         file, mode: 'keys',
-        test: (n) => !/ChannelAutoJoin/i.test(n) &&
-          (forChar(n, c) || (!tellOnly.has(lc(n)) && !others.some((o) => forChar(n, o)))),
+        test: (n) => !/ChannelAutoJoin/i.test(n) && !(c && forChar(n, c)) &&
+          !tellOnly.has(lc(n)) && !others.some((o) => forChar(n, o)),
         keyTest: (k) => !/ChannelAutoJoin|password/i.test(k),
       });
     } else if (!c || !belongs(lf, c)) {
@@ -223,6 +237,7 @@ function unitsOf(entry, text) {
 const NOUN = {
   layout: ['window', 'windows'], hotkeys: ['button', 'buttons'], socials: ['social line', 'social lines'],
   spellsets: ['spell set', 'spell sets'], keybinds: ['keybind', 'keybinds'], zeal: ['setting', 'settings'],
+  zealchar: ['setting', 'settings'],
   other: ['setting', 'settings'],
 };
 const plural = (n, [one, many]) => n + ' ' + (n === 1 ? one : many);
@@ -347,7 +362,7 @@ function buildRestore({ backupFiles, localFiles, character, parts, knownChars, t
   const { files: backup, skipped } = filterRestorable(backupFiles);
   const classes = classify(backup, character, { knownChars });
   const chosen = new Set(parts || []);
-  const work = new Map();                              // lowercase name -> { name, orig, text }
+  const work = new Map();                              // lowercase name -> { name, orig, text, parts }
   for (const part of PARTS) {
     if (!chosen.has(part.key)) continue;
     for (const entry of classes[part.key]) {
@@ -355,20 +370,24 @@ function buildRestore({ backupFiles, localFiles, character, parts, knownChars, t
       const name = ln || entry.file;
       if (!work.has(lc(name))) {
         const orig = ln && typeof localFiles[ln] === 'string' ? localFiles[ln] : null;
-        work.set(lc(name), { name, orig, text: orig == null ? '' : orig });
+        work.set(lc(name), { name, orig, text: orig == null ? '' : orig, parts: new Set() });
       }
       const w = work.get(lc(name));
+      w.parts.add(part.key);
       const bText = prep(part.key, backup[entry.file], target);
       if (entry.mode === 'whole') w.text = bText;
       else if (entry.mode === 'sections') w.text = replaceSections(w.text, bText, entry.test);
       else w.text = mergeKeys(w.text, bText, entry);
     }
   }
-  const writes = {};
+  const writes = {}, fileParts = {};
   for (const w of work.values()) {
-    if (w.text !== (w.orig == null ? '' : w.orig)) writes[w.name] = w.text;     // unchanged files are not rewritten
+    if (w.text !== (w.orig == null ? '' : w.orig)) {                            // unchanged files are not rewritten
+      writes[w.name] = w.text;
+      fileParts[w.name] = PARTS.filter((p) => w.parts.has(p.key)).map((p) => p.key);   // which parts changed it, for the result list
+    }
   }
-  return { writes, skipped };
+  return { writes, skipped, fileParts };
 }
 
 // ---- windowRects -----------------------------------------------------------------------------

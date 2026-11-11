@@ -29,7 +29,7 @@ const filesOf = (cls, key) => cls[key].map((e) => e.file).sort();
 
 describe('PARTS', () => {
   it('lists the parts in order, keybinds as the only shared one', () => {
-    expect(PARTS.map((p) => p.key)).toEqual(['layout', 'hotkeys', 'socials', 'spellsets', 'keybinds', 'zeal', 'other']);
+    expect(PARTS.map((p) => p.key)).toEqual(['layout', 'hotkeys', 'socials', 'spellsets', 'keybinds', 'zealchar', 'zeal', 'other']);
     expect(PARTS.filter((p) => p.scope === 'all').map((p) => p.key)).toEqual(['keybinds']);
   });
 });
@@ -57,7 +57,8 @@ describe('classify', () => {
     expect(cls.socials.find((e) => e.file === 'Sock_Aldenmar_pq.proj.ini').mode).toBe('whole');
     expect(cls.keybinds).toMatchObject([{ file: 'eqclient.ini', mode: 'keys' }]);
     expect(filesOf(cls, 'zeal')).toEqual(['eqclient.ini', 'zeal.ini']);
-    expect(cls.zeal.every((e) => e.mode === 'keys')).toBe(true);
+    expect(filesOf(cls, 'zealchar')).toEqual(['eqclient.ini', 'zeal.ini']);
+    expect(cls.zeal.concat(cls.zealchar).every((e) => e.mode === 'keys')).toBe(true);
   });
 
   it('selects sections by name', () => {
@@ -93,28 +94,43 @@ describe('classify', () => {
   // The real layout (a member's files, 2026-11-01): eqclient.ini carries a shared [Zeal] and a [<Char>] TellWindows
   // section per character; zeal.ini has bare [<Char>] sections holding only TellWindows keys, for characters this PC
   // may have no files for.
-  it('zeal also covers eqclient.ini [Zeal] and this character\'s own section there, nothing else in that file', () => {
+  // The Zeal part is split (a member, 2026-11-11, FB-124 / FB-127): the character's OWN sections are 'zealchar', always
+  // brought in; only the shared ones stay in 'zeal', behind the shared-PC tick.
+  it('zeal covers eqclient.ini [Zeal] only; the character\'s own section there is zealchar', () => {
     const t = cls.zeal.find((e) => e.file === 'eqclient.ini').test;
-    expect([t('Zeal'), t('Aldenmar'), t('Brackwyn'), t('KeyMaps'), t('VideoMode'), t('Defaults')]).toEqual([true, true, false, false, false, false]);
+    expect([t('Zeal'), t('Aldenmar'), t('Brackwyn'), t('KeyMaps'), t('VideoMode'), t('Defaults')]).toEqual([true, false, false, false, false, false]);
+    const o = cls.zealchar.find((e) => e.file === 'eqclient.ini').test;
+    expect([o('Zeal'), o('Aldenmar'), o('Brackwyn'), o('KeyMaps')]).toEqual([false, true, false, false]);
   });
 
-  it('zeal: a bare TellWindows-only section is a character, restored only for this one', () => {
+  it('zeal: a bare TellWindows-only section is a character, restored only for this one (as zealchar)', () => {
     const z = '[Zeal]\r\nCamera=1\r\n[Holdfast]\r\nTellWindows=1\r\nTellWindowsHist=0\r\n[Aldenmar]\r\nTellWindows=1\r\n[AutoFollow]\r\nEnable=1\r\n';
-    const t = classify({ 'zeal.ini': z }, C).zeal[0].test;
-    expect([t('Holdfast'), t('Aldenmar'), t('AutoFollow'), t('Zeal')]).toEqual([false, true, true, true]);
+    const k = classify({ 'zeal.ini': z }, C);
+    const t = k.zeal[0].test, o = k.zealchar[0].test;
+    expect([t('Holdfast'), t('Aldenmar'), t('AutoFollow'), t('Zeal')]).toEqual([false, false, true, true]);
+    expect([o('Holdfast'), o('Aldenmar'), o('AutoFollow'), o('Zeal')]).toEqual([false, true, false, false]);
   });
 
-  it('zeal: own and global sections in, other known characters and ChannelAutoJoin out', () => {
+  it('zeal: global sections in, this character\'s, other known characters\' and ChannelAutoJoin out', () => {
     const t = cls.zeal.find((e) => e.file === 'zeal.ini').test;
-    expect(t('TellWindows_Aldenmar')).toBe(true);
-    expect(t('Aldenmar')).toBe(true);
     expect(t('RaidBars')).toBe(true);
+    expect(t('Zeal')).toBe(true);
+    expect(t('TellWindows_Aldenmar')).toBe(false);       // the character's own: zealchar
+    expect(t('Aldenmar')).toBe(false);
     expect(t('TellWindows_Brackwyn')).toBe(false);
     expect(t('Corvale')).toBe(false);
     expect(t('ChannelAutoJoin_Aldenmar')).toBe(false);
     expect(t('ChannelAutoJoin')).toBe(false);
     const k = cls.zeal.find((e) => e.file === 'zeal.ini').keyTest;
     expect([k('Foo'), k('ChannelAutoJoin1'), k('ServerPassword'), k('PASSWORD')]).toEqual([true, false, false, false]);
+  });
+
+  it('zealchar: only this character\'s sections of zeal.ini, never a password or another character', () => {
+    const t = cls.zealchar.find((e) => e.file === 'zeal.ini').test;
+    expect([t('TellWindows_Aldenmar'), t('Aldenmar'), t('RaidBars'), t('Zeal'), t('TellWindows_Brackwyn'), t('Corvale'), t('ChannelAutoJoin_Aldenmar')])
+      .toEqual([true, true, false, false, false, false, false]);
+    const k = cls.zealchar.find((e) => e.file === 'zeal.ini').keyTest;
+    expect([k('Foo'), k('ChannelAutoJoin1'), k('ServerPassword')]).toEqual([true, false, false]);
   });
 
   it('skips names the guard would not restore', () => {
@@ -221,11 +237,28 @@ describe('buildRestore', () => {
     };
     const lo = { 'zeal.ini': '[Zeal]\r\nFoo=1\r\n' };
     const r = buildRestore({
-      backupFiles: bk, localFiles: lo, character: C, parts: ['zeal'], knownChars: ['Aldenmar', 'Corvale'],
+      backupFiles: bk, localFiles: lo, character: C, parts: ['zeal', 'zealchar'], knownChars: ['Aldenmar', 'Corvale'],
     });
     const out = r.writes['zeal.ini'];
     expect(out).toBe('[Zeal]\r\nFoo=2\r\n[TellWindows_Aldenmar]\r\nX=5\r\n');
     expect(out).not.toMatch(/password|ChannelAutoJoin|Corvale|hunter2/i);
+  });
+
+  it('zealchar alone brings the character\'s own Zeal sections and leaves the shared ones as they are', () => {
+    const bk = { 'zeal.ini': '[Zeal]\r\nFoo=2\r\n[TellWindows_Aldenmar]\r\nX=5\r\n[Aldenmar]\r\nExtended=7\r\n' };
+    const lo = { 'zeal.ini': '[Zeal]\r\nFoo=1\r\n' };
+    const r = buildRestore({ backupFiles: bk, localFiles: lo, character: C, parts: ['zealchar'], knownChars: ['Corvale'] });
+    expect(r.writes['zeal.ini']).toBe('[Zeal]\r\nFoo=1\r\n[TellWindows_Aldenmar]\r\nX=5\r\n[Aldenmar]\r\nExtended=7\r\n');
+    expect(r.fileParts['zeal.ini']).toEqual(['zealchar']);
+    // ...and 'zeal' alone brings the shared sections but not the character's.
+    const s = buildRestore({ backupFiles: bk, localFiles: lo, character: C, parts: ['zeal'], knownChars: ['Corvale'] });
+    expect(s.writes['zeal.ini']).toBe('[Zeal]\r\nFoo=2\r\n');
+  });
+
+  it('reports which parts changed each written file', () => {
+    const r = buildRestore({ backupFiles: backup, localFiles: local, character: C, parts: ['hotkeys', 'socials'] });
+    expect(Object.keys(r.fileParts)).toEqual(Object.keys(r.writes));
+    for (const parts of Object.values(r.fileParts)) expect(parts.length).toBeGreaterThan(0);
   });
 
   it('reports names it will not write as skipped', () => {

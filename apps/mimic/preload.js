@@ -1793,7 +1793,9 @@ contextBridge.exposeInMainWorld('mimic', {
   // through this (and the deferred save queues the same edits), not the bundle.
   uiStudioWriteEdits:     (eqDir, edits, opts) => ipcRenderer.invoke('ui-studio-write-edits', eqDir, edits, opts),
   // Open the standalone UI Studio editor window from the dashboard's nav.
-  openUiStudio:           ()                 => ipcRenderer.invoke('open-ui-studio'),
+  // `goto` ({ character, eqDir, chat: true }) opens it on that character's chat routing (bring-in card, FB-125).
+  openUiStudio:           (goto)             => ipcRenderer.invoke('open-ui-studio', goto),
+  onUiStudioGoto:         (cb)               => ipcRenderer.on('ui-studio-goto', (_e, goto) => cb(goto)),
   // Bundled PvP rotation templates (Dirge Team 6™ etc.) — list by class,
   // load full content, and import = write a markdown summary alongside
   // the EQ folder so the user can build their hotkey pages by reference
