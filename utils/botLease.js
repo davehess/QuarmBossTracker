@@ -64,7 +64,12 @@ function createLease({
         if (released) return;
         let r = null;
         try { r = await acquire(); } catch { r = null; }
-        if (released) return;
+        // Shut down while that call was in flight: a row it took goes straight back, or the next bot waits out the TTL
+        // (2026-11-11: a standby stopped mid-deploy took the lease as it exited and left the new bot dark for ~35 s).
+        if (released) {
+          if (r === true) await Promise.resolve(rpc('bot_lease_release', { p_name: name, p_holder: holder })).catch(() => {});
+          return;
+        }
         if (r === true) {
           if (loggedStandby) log(`[lease] acquired ${name}; this bot is now the holder`);
           return done('acquired');
