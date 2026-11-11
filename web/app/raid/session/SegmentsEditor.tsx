@@ -9,18 +9,22 @@
 import { useMemo, useState, type MutableRefObject } from 'react';
 import Link from 'next/link';
 import {
-  KIND_LABEL, MAX_LABEL, SLICE_KINDS, detectSegments, isKind, mergeSegments, moveBoundary, spanStats, splitSegment,
+  KIND_LABEL, MAX_LABEL, SLICE_KINDS, detectSegments, isKind, mergeSegments, moveBoundary, raidSetKey, spanStats, splitByRaid, splitSegment,
   type NightCtx, type Segment, type Slice,
 } from '@/lib/nightSlices';
 import { MINUTE_MS } from '@/lib/raidReplay';
-import { raidsIn, type RaidGroup } from '@/lib/sessionGroups';
+import { groupLabel, raidsIn, type RaidGroup } from '@/lib/sessionGroups';
 import NightStrip, { type StripSlice } from './NightStrip';
 import RaidPicker from './RaidPicker';
 import ShareControls from './ShareControls';
 import { KIND_DOT, chip, chipIdle, chipOn, etDay, etMin, field, fmtSpan, plural, windowHref } from './nightStyle';
 import type { NightSave } from './NightPanel';
 
-const asSegments = (saved: readonly Slice[]): Segment[] => saved.map(s => ({ fromMs: s.fromMs, toMs: s.toMs, kind: s.kind, label: s.label, why: 'saved' }));
+const asSegments = (saved: readonly Slice[]): Segment[] => saved.map(s => ({ fromMs: s.fromMs, toMs: s.toMs, kind: s.kind, label: s.label, why: 'saved', ...(s.groups?.length ? { groups: s.groups } : {}) }));
+
+// A row's identity for "is this what is saved": its span and raid set (and, for dirty, kind and label).
+const winKey = (r: { fromMs: number; toMs: number; groups?: readonly string[] }) => `${r.fromMs}|${r.toMs}|${raidSetKey(r)}`;
+const fullKey = (r: { fromMs: number; toMs: number; kind: string; label: string; groups?: readonly string[] }) => `${winKey(r)}|${r.kind}|${r.label}`;
 
 export default function SegmentsEditor({ fromMs, toMs, spans, breaks, ctx, saved, groups, groupsParent, canEdit, save, go, playheadRef }: {
   fromMs: number; toMs: number; spans: { from: number; to: number }[]; breaks: number[]; ctx: NightCtx;
@@ -30,9 +34,9 @@ export default function SegmentsEditor({ fromMs, toMs, spans, breaks, ctx, saved
   const detect = () => detectSegments({ fromMs, toMs }, spans, breaks, ctx);
   const [rows, setRows] = useState<Segment[]>(() => (saved.length ? asSegments(saved) : canEdit ? detect() : []));
   const [mode, setMode] = useState<'saved' | 'suggested'>(saved.length ? 'saved' : 'suggested');
-  const savedKey = useMemo(() => new Set(saved.map(s => `${s.fromMs}|${s.toMs}|${s.kind}|${s.label}`)), [saved]);
-  const savedWin = useMemo(() => new Set(saved.map(s => `${s.fromMs}|${s.toMs}`)), [saved]);
-  const dirty = mode === 'suggested' ? rows.length > 0 : rows.length !== saved.length || rows.some(r => !savedKey.has(`${r.fromMs}|${r.toMs}|${r.kind}|${r.label}`));
+  const savedKey = useMemo(() => new Set(saved.map(fullKey)), [saved]);
+  const savedWin = useMemo(() => new Set(saved.map(winKey)), [saved]);
+  const dirty = mode === 'suggested' ? rows.length > 0 : rows.length !== saved.length || rows.some(r => !savedKey.has(fullKey(r)));
 
   const edit = (next: Segment[]) => setRows(next);
   const patch = (i: number, p: Partial<Segment>) => setRows(r => r.map((s, k) => (k === i ? { ...s, ...p } : s)));
@@ -42,7 +46,9 @@ export default function SegmentsEditor({ fromMs, toMs, spans, breaks, ctx, saved
     edit(splitSegment(rows, i, t != null && t > s.fromMs && t < s.toMs ? t : (s.fromMs + s.toMs) / 2, ctx));
   };
 
-  const strip: StripSlice[] = rows.map((r, i) => ({ id: String(i), fromMs: r.fromMs, toMs: r.toMs, kind: r.kind, label: r.label, draft: mode === 'suggested' || !savedWin.has(`${r.fromMs}|${r.toMs}`) }));
+  const raidName = (ids: readonly string[]) => ids.map(id => { const g = groups.find(x => x.id === id); return g ? groupLabel(g) : 'a chosen raid'; }).join(', ');
+  // An unnamed raid segment is called by its raid, so two of them side by side on the strip can be told apart.
+  const strip: StripSlice[] = rows.map((r, i) => ({ id: String(i), fromMs: r.fromMs, toMs: r.toMs, kind: r.kind, label: r.label || (r.groups?.length ? raidName(r.groups) : ''), groups: r.groups, draft: mode === 'suggested' || !savedWin.has(winKey(r)) }));
 
   return (
     <div>
@@ -61,11 +67,15 @@ export default function SegmentsEditor({ fromMs, toMs, spans, breaks, ctx, saved
           {rows.map((r, i) => {
             const st = spanStats(r, ctx);
             const next = rows[i + 1];
+            const gk = raidSetKey(r);
+            const sameSet = !!next && raidSetKey(next) === gk;
             const touches = !!next && next.fromMs === r.toMs;
-            const clean = savedWin.has(`${r.fromMs}|${r.toMs}`) && mode === 'saved';
-            const open = <Link href={windowHref(r.fromMs, r.toMs)} className={`${chip} ${chipIdle}`}>Open</Link>;
+            const clean = savedWin.has(winKey(r)) && mode === 'saved';
+            const rowRaids = r.groups?.length ? r.groups : null;
+            const rowRaidLabels = rowRaids ? rowRaids.map(id => raidName([id])) : [];
+            const open = <Link href={windowHref(r.fromMs, r.toMs, gk || null, groupsParent)} className={`${chip} ${chipIdle}`}>Open</Link>;
             return (
-              <li key={`${r.fromMs}|${r.toMs}`}>
+              <li key={`${r.fromMs}|${r.toMs}|${gk}`}>
                 <div className={`rounded-md border border-border bg-panel p-3 text-sm ${r.kind === 'downtime' ? 'opacity-80' : ''}`}>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                     <span aria-hidden="true" className={`inline-block h-2.5 w-2.5 rounded-full ${KIND_DOT[r.kind]}`} />
@@ -78,10 +88,16 @@ export default function SegmentsEditor({ fromMs, toMs, spans, breaks, ctx, saved
                     {[st.kills && plural(st.kills, 'kill'), st.wipes && plural(st.wipes, 'wipe'), st.otherGuild && `${plural(st.otherGuild, 'fight')} by another guild`,
                       st.deaths && plural(st.deaths, 'death'), st.mass && plural(st.mass, 'mass-death moment')].filter(Boolean).join(' · ') || 'no named fights'}
                   </p>
-                  {raidsIn(groups, r).length > 1 && (
+                  {rowRaids ? (
+                    <p className="mt-1.5 text-xs text-dim">{rowRaidLabels.length > 1 ? 'Raids' : 'Raid'}: {rowRaidLabels.join(', ')}</p>
+                  ) : raidsIn(groups, r).length > 1 && (
                     <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-dim">
                       <span>{raidsIn(groups, r).length} raids at once:</span>
                       <RaidPicker fromMs={r.fromMs} toMs={r.toMs} parent={groupsParent} raids={raidsIn(groups, r)} />
+                      {canEdit && (
+                        <button type="button" className={`${chip} ${chipIdle}`} onClick={() => edit(splitByRaid(rows, i, raidsIn(groups, r), ctx))}
+                          title="Replace this segment with one per raid, each limited to its own raiders. Name each one afterwards.">Split by raid</button>
+                      )}
                     </p>
                   )}
                   {canEdit ? (
@@ -91,25 +107,26 @@ export default function SegmentsEditor({ fromMs, toMs, spans, breaks, ctx, saved
                         {SLICE_KINDS.map(k => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
                       </select>
                       <input aria-label={`Name of segment ${i + 1}`} className={`${field} min-w-[10rem] flex-1`} value={r.label} maxLength={MAX_LABEL}
-                        placeholder={KIND_LABEL[r.kind]} onChange={e => patch(i, { label: e.target.value })} />
+                        placeholder={rowRaids ? rowRaidLabels.join(', ') : KIND_LABEL[r.kind]} onChange={e => patch(i, { label: e.target.value })} />
                       <button type="button" className={`${chip} ${chipIdle}`} onClick={() => splitAtPlayhead(i)}
                         title="Cut this segment at the replay's playhead (the middle when the playhead is elsewhere)">Split at playhead</button>
-                      {next && <button type="button" className={`${chip} ${chipIdle}`} onClick={() => edit(mergeSegments(rows, i, ctx))}>Merge with next</button>}
+                      {next && sameSet && <button type="button" className={`${chip} ${chipIdle}`} onClick={() => edit(mergeSegments(rows, i, ctx))}>Merge with next</button>}
                     </div>
                   ) : (
-                    <p className="mt-1 text-sm text-text">{r.label || KIND_LABEL[r.kind]} <span className="text-xs text-dim">· {KIND_LABEL[r.kind]}</span></p>
+                    <p className="mt-1 text-sm text-text">{r.label || (rowRaids ? rowRaidLabels.join(', ') : KIND_LABEL[r.kind])} <span className="text-xs text-dim">· {KIND_LABEL[r.kind]}</span></p>
                   )}
                   {clean && (
                     <div className="mt-2">
                       {canEdit && (r.kind === 'raid' || r.kind === 'event')
-                        ? <ShareControls key={`${r.fromMs}|${r.toMs}`} fromIso={new Date(r.fromMs).toISOString()} toIso={new Date(r.toMs).toISOString()}
-                            defaultTitle={`${r.label || KIND_LABEL[r.kind]}, ${etDay.format(r.fromMs)}`} lead={open} />
+                        ? <ShareControls key={`${r.fromMs}|${r.toMs}|${gk}`} fromIso={new Date(r.fromMs).toISOString()} toIso={new Date(r.toMs).toISOString()}
+                            defaultTitle={`${r.label || (rowRaids ? rowRaidLabels.join(', ') : KIND_LABEL[r.kind])}, ${etDay.format(r.fromMs)}`} lead={open}
+                            groups={rowRaids ? { ids: rowRaids, labels: rowRaidLabels } : null} />
                         : open}
                     </div>
                   )}
                 </div>
                 {next && (
-                  touches && canEdit ? (
+                  touches && canEdit && sameSet ? (
                     <div className="flex flex-wrap items-center gap-1.5 py-1.5 pl-3 text-xs text-dim" role="group" aria-label={`Boundary between segments ${i + 1} and ${i + 2}`}>
                       <span>Boundary at {etMin.format(r.toMs)}</span>
                       {[-5, -1, 1, 5].map(m => (
@@ -118,7 +135,7 @@ export default function SegmentsEditor({ fromMs, toMs, spans, breaks, ctx, saved
                       ))}
                     </div>
                   ) : (
-                    <p className="py-1.5 pl-3 text-xs text-dim">{touches ? '' : `${fmtSpan(next.fromMs - r.toMs)} not in a segment`}</p>
+                    <p className="py-1.5 pl-3 text-xs text-dim">{next.fromMs > r.toMs ? `${fmtSpan(next.fromMs - r.toMs)} not in a segment` : ''}</p>
                   )
                 )}
               </li>
@@ -130,7 +147,7 @@ export default function SegmentsEditor({ fromMs, toMs, spans, breaks, ctx, saved
       {canEdit && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button type="button" disabled={rows.length === 0 || (!dirty && mode === 'saved') || save.busy}
-            onClick={() => save.run(fromMs, toMs, rows.map(r => ({ id: '', fromMs: r.fromMs, toMs: r.toMs, kind: r.kind, label: r.label })))}
+            onClick={() => save.run(fromMs, toMs, rows.map(r => ({ id: '', fromMs: r.fromMs, toMs: r.toMs, kind: r.kind, label: r.label, ...(r.groups?.length ? { groups: r.groups } : {}) })))}
             className={`${chip} ${dirty || mode === 'suggested' ? chipOn : chipIdle}`}>
             {save.busy ? 'Saving…' : mode === 'suggested' ? `Confirm ${plural(rows.length, 'segment')}` : dirty ? `Save ${plural(rows.length, 'segment')}` : 'Saved'}
           </button>

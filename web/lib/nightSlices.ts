@@ -7,8 +7,9 @@
 // bot_kv row per guild (`night_slices:<guild>`, { v:1, s:[...] }), the same home and the same shape idea as the
 // roster cuts (raidCuts.ts), so there is no new table. A slice is not a record of anything that happened: it is a
 // label on a window, and each slice is an ordinary window to the session page (Open) and to the share flow (Share…).
-// Slices do not overlap each other. A write replaces every slice that lies INSIDE the window it was made for and
-// refuses to touch one that crosses the window's edge (open that slice's own window to change it).
+// Slices do not overlap each other, except two that each name a raid (`groups`) and share none. A write replaces every
+// slice that lies INSIDE the window it was made for and refuses to touch one that crosses the window's edge (open that
+// slice's own window to change it).
 //
 // WHAT IS DERIVED (never stored): the night's named fights (kill, wipe, other-guild) as marks, the moments of mass
 // death, and a first guess at the segments of the night from three sources: quiet gaps in the recording, the roster
@@ -20,6 +21,7 @@
 import { MINUTE_MS, type Span } from './raidReplay';
 import { snapCut, type Win } from './raidSplit';
 import { isWipe } from './encounterMarks';
+import { GROUP_ID_RE, MAX_GROUP_SET, groupKey, parseGroupIds } from './sessionGroups';
 
 // ── Kinds and slices ─────────────────────────────────────────────────────────
 
@@ -33,7 +35,16 @@ export const KIND_LABEL: Record<SliceKind, string> = {
 };
 export const isKind = (v: unknown): v is SliceKind => typeof v === 'string' && (SLICE_KINDS as readonly string[]).includes(v);
 
-export type Slice = { id: string; fromMs: number; toMs: number; kind: SliceKind; label: string };
+/**
+ * `groups`: the raids (RaidGroup.id, lib/sessionGroups.ts) the slice is about. Absent = everyone in the span, as every
+ * slice saved before 2026-11-11. Two slices may overlap in time only when both name raids and share none: a window that
+ * holds two raids at once (the guild lead, 2026-11-11: a raid of 32 all evening and a raid of 9 from 8:51 PM) cannot be
+ * saved as two segments by time alone.
+ */
+export type Slice = { id: string; fromMs: number; toMs: number; kind: SliceKind; label: string; groups?: string[] };
+
+/** The raid set of a slice or segment as one comparable string ('' = everyone). */
+export const raidSetKey = (x: { groups?: readonly string[] }): string => groupKey(x.groups ?? []);
 
 export const slicesKey = (guild: string) => `night_slices:${guild}`;
 export const MAX_LABEL = 60;
@@ -61,7 +72,9 @@ export function parseSliceStore(value: unknown): SliceStore {
       if (!r || typeof r.id !== 'string' || !ID_RX.test(r.id) || !isKind(r.kind)) continue;
       const fromMs = Number(r.fromMs), toMs = Number(r.toMs);
       if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) continue;
-      s.push({ id: r.id, fromMs, toMs, kind: r.kind, label: cleanLabel(r.label) });
+      // Invalid ids are dropped and the slice kept; the key is written only when something is left, so an old store round-trips as it was.
+      const groups = Array.isArray(r.groups) ? parseGroupIds(r.groups).sort() : [];
+      s.push({ id: r.id, fromMs, toMs, kind: r.kind, label: cleanLabel(r.label), ...(groups.length ? { groups } : {}) });
     }
   }
   return { v: 1, s: s.sort((a, b) => a.fromMs - b.fromMs) };
@@ -98,13 +111,25 @@ export function planSliceWrite(store: SliceStore, win: Win, incoming: unknown, n
     const fromMs = Math.max(win.fromMs, Math.round(a / MINUTE_MS) * MINUTE_MS);
     const toMs = Math.min(win.toMs, Math.round(b / MINUTE_MS) * MINUTE_MS);
     if (toMs <= fromMs) continue;
+    let groups: string[] = [];
+    if (r.groups != null) {
+      const g = r.groups;
+      if (!Array.isArray(g) || g.length > MAX_GROUP_SET || g.some(v => typeof v !== 'string' || !GROUP_ID_RE.test(v))) return { error: 'bad raids' };
+      groups = [...new Set(g as string[])].sort();
+    }
     let id = typeof r.id === 'string' && ID_RX.test(r.id) && !used.has(r.id) ? r.id : newId();
     while (used.has(id)) id = newId();
     used.add(id);
-    saved.push({ id, fromMs, toMs, kind: r.kind, label: cleanLabel(r.label) });
+    saved.push({ id, fromMs, toMs, kind: r.kind, label: cleanLabel(r.label), ...(groups.length ? { groups } : {}) });
   }
   saved.sort((a, b) => a.fromMs - b.fromMs);
-  for (let i = 1; i < saved.length; i++) if (saved[i].fromMs < saved[i - 1].toMs) return { error: 'slices overlap' };
+  // Every overlapping pair, not just neighbours: a long raid-A slice can overlap a raid-B slice and a later raid-C one.
+  for (let i = 0; i < saved.length; i++) {
+    for (let j = i + 1; j < saved.length && saved[j].fromMs < saved[i].toMs; j++) {
+      const a = saved[i].groups, b = saved[j].groups;
+      if (!a || !b || a.some(id => b.includes(id))) return { error: 'slices overlap' };
+    }
+  }
 
   const keep: Slice[] = [];
   for (const x of store.s) {
@@ -215,7 +240,7 @@ export function suggestKind(st: Pick<SpanStats, 'kills' | 'wipes' | 'otherGuild'
 export const GAP_BREAK_MS = 10 * MINUTE_MS;     // a hole in the recording this long splits the night
 export const MIN_SEGMENT_MS = 10 * MINUTE_MS;   // a guessed segment shorter than this is folded into its neighbour
 
-export type Segment = { fromMs: number; toMs: number; kind: SliceKind; label: string; why: string };
+export type Segment = { fromMs: number; toMs: number; kind: SliceKind; label: string; why: string; groups?: string[] };
 
 const fmtGap = (ms: number) => { const m = Math.round(ms / MINUTE_MS); return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`; };
 const side = (f: FightMark): 'guild' | 'other' | null => (f.tag === 'foreign' ? 'other' : f.tag === null ? 'guild' : null);
@@ -274,8 +299,8 @@ export function detectSegments(win: Win, spans: readonly Span[], breaks: readonl
 /** Segments i and i+1 as one (the gap between them, if any, is covered); its kind is suggested again from what it now holds. */
 export function mergeSegments(list: readonly Segment[], i: number, ctx: NightCtx): Segment[] {
   const a = list[i], b = list[i + 1];
-  if (!a || !b) return list.slice();
-  const m: Segment = { fromMs: a.fromMs, toMs: b.toMs, label: a.label || b.label, why: a.why, kind: 'raid' };
+  if (!a || !b || raidSetKey(a) !== raidSetKey(b)) return list.slice();   // two raids' segments are never one
+  const m: Segment = { fromMs: a.fromMs, toMs: b.toMs, label: a.label || b.label, why: a.why, kind: 'raid', ...(a.groups ? { groups: a.groups } : {}) };
   m.kind = suggestKind(spanStats(m, ctx));
   return [...list.slice(0, i), m, ...list.slice(i + 2)];
 }
@@ -286,15 +311,39 @@ export function splitSegment(list: readonly Segment[], i: number, atMs: number, 
   const at = s ? snapCut(atMs, { fromMs: s.fromMs, toMs: s.toMs }) : null;
   if (!s || at == null) return list.slice();
   const first: Segment = { ...s, toMs: at };
-  const second: Segment = { fromMs: at, toMs: s.toMs, label: '', why: 'split by an officer', kind: 'downtime' };
+  const second: Segment = { fromMs: at, toMs: s.toMs, label: '', why: 'split by an officer', kind: 'downtime', ...(s.groups ? { groups: s.groups } : {}) };
   second.kind = suggestKind(spanStats(second, ctx));
   return [...list.slice(0, i), first, second, ...list.slice(i + 1)];
+}
+
+/**
+ * Segment i replaced by one segment per raid that stood during it (the guild lead, 2026-11-11), each clipped to the part
+ * of the segment the raid covers, snapped to whole minutes, named for that raid only (`groups`), same kind, no label.
+ * A raid under a minute inside the segment is skipped; fewer than two left means there is nothing to split and the list
+ * comes back unchanged. The pieces overlap in time by design (that is what the disjoint raid sets allow).
+ */
+export function splitByRaid(
+  list: readonly Segment[], i: number, raids: readonly { id: string; fromMs: number; toMs: number }[], _ctx: NightCtx,
+): Segment[] {
+  const s = list[i];
+  if (!s) return list.slice();
+  const pieces: Segment[] = [];
+  for (const r of raids) {
+    // A clip that lands on the segment's own edge keeps that edge exactly; only a raid's edge is rounded.
+    const fromMs = r.fromMs <= s.fromMs ? s.fromMs : Math.round(r.fromMs / MINUTE_MS) * MINUTE_MS;
+    const toMs = r.toMs >= s.toMs ? s.toMs : Math.round(r.toMs / MINUTE_MS) * MINUTE_MS;
+    if (toMs - fromMs < MINUTE_MS) continue;
+    pieces.push({ fromMs, toMs, kind: s.kind, label: '', why: 'split by raid', groups: [r.id] });
+  }
+  if (pieces.length < 2) return list.slice();
+  pieces.sort((a, b) => a.fromMs - b.fromMs);       // Array.sort is stable
+  return [...list.slice(0, i), ...pieces, ...list.slice(i + 1)];
 }
 
 /** The boundary between segment i and i+1 moved by `deltaMs` (both stay at least a minute long). Only for segments that touch. */
 export function moveBoundary(list: readonly Segment[], i: number, deltaMs: number): Segment[] {
   const a = list[i], b = list[i + 1];
-  if (!a || !b || a.toMs !== b.fromMs) return list.slice();
+  if (!a || !b || a.toMs !== b.fromMs || raidSetKey(a) !== raidSetKey(b)) return list.slice();
   const at = Math.min(b.toMs - MINUTE_MS, Math.max(a.fromMs + MINUTE_MS, a.toMs + Math.round(deltaMs / MINUTE_MS) * MINUTE_MS));
   return list.map((s, k) => (k === i ? { ...s, toMs: at } : k === i + 1 ? { ...s, fromMs: at } : s));
 }

@@ -29,7 +29,7 @@ export type NightPanelData = {
 
 export type NightSave = {
   busy: boolean; msg: string | null; ok: boolean;
-  run: (fromMs: number, toMs: number, slices: { id?: string; fromMs: number; toMs: number; kind: SliceKind; label: string }[]) => void;
+  run: (fromMs: number, toMs: number, slices: { id?: string; fromMs: number; toMs: number; kind: SliceKind; label: string; groups?: string[] }[]) => void;
 };
 
 function useSave(): NightSave {
