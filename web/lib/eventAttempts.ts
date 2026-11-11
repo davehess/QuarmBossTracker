@@ -24,7 +24,29 @@ export type EncRow = {
   ended_at: string | null;
   classification: string | null;
   is_wipe: boolean | null;
+  /** Whose run it was (rowSide). Absent means ours. */
+  side?: Side;
 };
+
+/**
+ * Our raiders' clients also record another guild's fights when a member raids with them, stored under our guild id
+ * (the guild lead, 2026-11-11). Those runs are shown against ours but never count toward gold, bests or totals.
+ */
+export type Side = 'ours' | 'other';
+/** A fight needs this many players before the roster share can call it another guild's. */
+export const OTHER_MIN_PLAYERS = 5;
+
+/**
+ * Which side a fight row belongs to. An officer's 'foreign' mark is another guild's. Otherwise the roster decides: at
+ * least five players, under half of them Wolf Pack characters. 'live' (the open-world copy of a zone) is NOT a side:
+ * measured 2026-11-11, 16 of 80 'live' fights were mostly our own raiders. `wpNames` holds our characters' names lowercased.
+ */
+export function rowSide(classification: string | null, players: readonly string[], wpNames: ReadonlySet<string>): Side {
+  if (classification === 'foreign') return 'other';
+  if (players.length < OTHER_MIN_PLAYERS) return 'ours';
+  const ours = players.filter(p => wpNames.has(p.toLowerCase())).length;
+  return ours * 2 < players.length ? 'other' : 'ours';
+}
 
 export type AttemptMoment = {
   encounterId: string;
@@ -47,9 +69,10 @@ export type Attempt = {
   moments: (AttemptMoment | null)[];
   success: boolean;
   wiped: boolean;
+  side: Side;
 };
 
-type Ev = { id: string; npc: number; startMs: number; endMs: number | null; wipe: boolean; night: string | null };
+type Ev = { id: string; npc: number; startMs: number; endMs: number | null; wipe: boolean; night: string | null; side: Side };
 
 const matches = (mo: Moment, npc: number) => mo.npcIds === 'any' || mo.npcIds.includes(npc);
 const evTime = (ev: Ev, time: 'death' | 'engage') => (time === 'engage' ? ev.startMs : ev.endMs);
@@ -64,7 +87,7 @@ function toEvs(def: SplitsDef, rows: EncRow[]): Ev[] {
     const startMs = Date.parse(r.started_at);
     if (!Number.isFinite(startMs)) continue;
     const e = r.ended_at ? Date.parse(r.ended_at) : NaN;
-    out.push({ id: r.id, npc: r.npc_id, startMs, endMs: Number.isFinite(e) ? e : null, wipe: isWipe(r), night: r.raid_night_id });
+    out.push({ id: r.id, npc: r.npc_id, startMs, endMs: Number.isFinite(e) ? e : null, wipe: isWipe(r), night: r.raid_night_id, side: r.side ?? 'ours' });
   }
   return out;
 }
@@ -122,8 +145,9 @@ function succeeded(def: SplitsDef, moments: (AttemptMoment | null)[]): boolean {
 
 /** Group one event's encounter rows into attempts, newest last. */
 export function buildAttempts(def: SplitsDef, rows: EncRow[]): Attempt[] {
+  // Side first: two guilds' fights on one night interleave in time and must never share an attempt.
   const evs = toEvs(def, rows).sort((a, b) =>
-    (a.night ?? '').localeCompare(b.night ?? '') || a.startMs - b.startMs || a.id.localeCompare(b.id));
+    a.side.localeCompare(b.side) || (a.night ?? '').localeCompare(b.night ?? '') || a.startMs - b.startMs || a.id.localeCompare(b.id));
   const start = def.moments.find(mo => mo.kind === 'start');
   const end = def.moments.find(mo => mo.kind === 'end');
   const isStartEv = (ev: Ev) => !!start && start.npcIds !== 'any' && start.npcIds.includes(ev.npc)
@@ -135,7 +159,7 @@ export function buildAttempts(def: SplitsDef, rows: EncRow[]): Attempt[] {
   let curLast = 0;
   for (const ev of evs) {
     if (cur.length) {
-      const sameNight = cur[0].night === ev.night;
+      const sameNight = cur[0].night === ev.night && cur[0].side === ev.side;
       const gap = ev.startMs - curLast > ATTEMPT_GAP_MS;
       const secondStart = isStartEv(ev) && cur.some(isStartEv);
       const afterEnd = cur.some(isEndEv);
@@ -156,7 +180,8 @@ export function buildAttempts(def: SplitsDef, rows: EncRow[]): Attempt[] {
     const winFrom = Math.min(...g.map(e => e.startMs));
     const winTo = Math.max(...g.map(e => e.endMs ?? e.startMs));
     out.push({
-      key: `${g[0].night ?? 'none'}-${startMs}`,
+      key: `${g[0].side === 'other' ? 'other-' : ''}${g[0].night ?? 'none'}-${startMs}`,
+      side: g[0].side,
       raidNightId: g[0].night,
       startMs, endMs,
       windowFromMs: winFrom - REPLAY_MARGIN_MS,
@@ -168,6 +193,9 @@ export function buildAttempts(def: SplitsDef, rows: EncRow[]): Attempt[] {
   }
   return out.sort((a, b) => a.startMs - b.startMs);
 }
+
+/** Our own attempts: the only ones gold, bests, success counts and the index summary may use. */
+export const oursOnly = <T extends { side: Side }>(attempts: readonly T[]): T[] => attempts.filter(a => a.side === 'ours');
 
 export const parseHref = (encounterId: string) => `https://wolfpack.quest/parses/${encounterId}`;
 export const replayHref = (a: Pick<Attempt, 'windowFromMs' | 'windowToMs'>) =>

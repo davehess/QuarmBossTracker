@@ -11,6 +11,8 @@ export type TLAttempt = {
   when: string;
   success: boolean;
   wiped: boolean;
+  /** Another guild's run: shown against ours, never the fastest. */
+  other?: boolean;
   /** Seconds from the attempt's first moment, aligned to the moments; null = not seen. */
   rel: (number | null)[];
   /** The mob that took each slot, for the tooltip. */
@@ -40,7 +42,7 @@ export default function SplitsTimeline({ moments, attempts, replayBase }: { mome
     });
     const span = Math.max(1, ...rows.map(r => r.shift + r.dur));
     const next = attempts.map(a => (k != null && has(a) && a.rel[k + 1] != null ? (a.rel[k + 1] as number) - (a.rel[k] as number) : null));
-    const fastest = Math.min(...next.filter((x): x is number => x != null));
+    const fastest = Math.min(...next.filter((x, i): x is number => x != null && !attempts[i].other));
     return { rows, span, next, fastest: Number.isFinite(fastest) ? fastest : null };
   }, [align, attempts]);
 
@@ -78,7 +80,7 @@ export default function SplitsTimeline({ moments, attempts, replayBase }: { mome
         {attempts.map((a, ri) => {
           const g = geo.rows[ri];
           const dim = align != null && a.rel[align] == null;
-          const isFast = geo.next[ri] != null && geo.next[ri] === geo.fastest && attempts.length > 1;
+          const isFast = !a.other && geo.next[ri] != null && geo.next[ri] === geo.fastest && attempts.filter(x => !x.other).length > 1;
           const pts = a.rel.map((t, i) => ({ t, i })).filter((p): p is { t: number; i: number } => p.t != null);
           return (
             <li key={a.key} className={dim ? 'opacity-50' : ''}>
@@ -87,6 +89,7 @@ export default function SplitsTimeline({ moments, attempts, replayBase }: { mome
                   <input type="checkbox" checked={picked.has(a.key)} onChange={() => setPicked(s => { const n = new Set(s); if (n.has(a.key)) n.delete(a.key); else n.add(a.key); return n; })} />
                   <span className="text-text">{a.when}</span>
                 </label>
+                {a.other && <span className="rounded border border-orange/50 bg-orange/10 px-1.5 py-0.5 text-[11px] text-orange">Another guild</span>}
                 <span className={`rounded border px-1.5 py-0.5 text-[11px] ${a.success ? 'border-green/60 text-green' : 'border-red/60 text-red'}`}>
                   {a.success ? 'finished' : a.wiped ? 'wiped' : 'did not finish'}
                 </span>

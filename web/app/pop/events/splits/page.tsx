@@ -72,7 +72,7 @@ export default async function SplitsIndexPage() {
                       <div className="text-[11px] text-dim">{e.zoneName}</div>
                     </td>
                     <td className="px-2 py-2 text-right tabular-nums text-gold">{fmtClock(r.bestSec)}</td>
-                    <td className="px-2 py-2 text-right tabular-nums">{r.attempts}{r.successes < r.attempts ? <span className="text-dim"> ({r.successes} finished)</span> : null}</td>
+                    <td className="px-2 py-2 text-right tabular-nums">{r.attempts}{r.successes < r.attempts ? <span className="text-dim"> ({r.successes} finished)</span> : null}{r.otherAttempts > 0 ? <div className="text-[10px] text-dim">+{r.otherAttempts} by other guilds</div> : null}</td>
                     <td className="px-2 py-2 text-right text-dim">{r.lastMs ? day(r.lastMs) : '—'}</td>
                   </tr>
                 );

@@ -10,7 +10,7 @@ import { notFound, redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import NewPageTag from '@/components/NewPageTag';
 import { pageMetadata } from '@/lib/pageMetaData';
-import { parseHref, replayHref } from '@/lib/eventAttempts';
+import { oursOnly, parseHref, replayHref } from '@/lib/eventAttempts';
 import { loadEventAttempts } from '@/lib/eventAttemptsLoad';
 import { computeSplits, fmtClock, momentsShown } from '@/lib/goldSplits';
 import SplitsTimeline, { type TLAttempt } from './SplitsTimeline';
@@ -54,13 +54,23 @@ export default async function EventSplitsPage({ params }: { params: { slug: stri
     return { key: mo.key, label };
   });
   const npcName = new Map(event.npcs.map(x => [x.npcId, x.name]));
-  const sp = computeSplits(n, attempts);
+  // Gold, bests and time saves come from OUR runs alone; another guild's run is measured against them, never into
+  // them (the guild lead, 2026-11-11). Its own cumulative and segment times need no gold, so a one-run computeSplits gives them.
+  const sp = computeSplits(n, oursOnly(attempts));
+  let oi = 0;
+  const view = attempts.map(a => {
+    const other = a.side === 'other';
+    const idx = other ? -1 : oi++;
+    return { a, other, best: idx === sp.bestRun, s: other ? computeSplits(n, [a]).attempts[0] : sp.attempts[idx] };
+  });
+  const hasOther = view.some(v => v.other);
 
   const tl: TLAttempt[] = attempts.map(a => ({
     key: a.key,
     when: when(a.startMs),
     success: a.success,
     wiped: a.wiped,
+    other: a.side === 'other',
     rel: moments.map((_, i) => a.moments[i]?.relSec ?? null),
     names: moments.map((_, i) => (a.moments[i] ? npcName.get(a.moments[i]!.npcId) ?? null : null)),
     fromIso: new Date(a.windowFromMs).toISOString(),
@@ -102,8 +112,9 @@ export default async function EventSplitsPage({ params }: { params: { slug: stri
                 <tr>
                   <th className="px-2 py-2">Step</th>
                   <th className="px-2 py-2 text-right">Gold</th>
-                  {attempts.map(a => (
+                  {view.map(({ a, other }) => (
                     <th key={a.key} className="px-2 py-2 text-right font-normal">
+                      {other && <div className="mb-0.5"><span className="rounded border border-orange/50 bg-orange/10 px-1.5 py-0.5 text-[10px] normal-case text-orange">Another guild</span></div>}
                       <div className="text-text">{when(a.startMs)}</div>
                       <a href={replayHref(a)} className="normal-case text-blue hover:underline">replay</a>
                     </th>
@@ -115,10 +126,11 @@ export default async function EventSplitsPage({ params }: { params: { slug: stri
                   <tr key={mo.key} className="border-t border-border align-top">
                     <td className="px-2 py-1.5 text-text">{mo.label}</td>
                     <td className="px-2 py-1.5 text-right tabular-nums text-gold">{i === 0 ? '' : fmtClock(sp.gold[i])}</td>
-                    {attempts.map((a, ai) => {
+                    {view.map(({ a, other, s }) => {
                       const mm = a.moments[i];
-                      const seg = sp.attempts[ai].segments[i];
-                      const isGold = i > 0 && seg != null && seg === sp.gold[i];
+                      const seg = s.segments[i];
+                      const isGold = !other && i > 0 && seg != null && seg === sp.gold[i];
+                      const vsGold = other && i > 0 && seg != null && sp.gold[i] != null ? seg - (sp.gold[i] as number) : null;
                       return (
                         <td key={a.key} className={`px-2 py-1.5 text-right tabular-nums ${isGold ? 'border border-gold bg-gold/10 text-gold' : ''}`}>
                           {mm ? (
@@ -127,6 +139,7 @@ export default async function EventSplitsPage({ params }: { params: { slug: stri
                                 {i === 0 ? fmtClock(0) : fmtClock(seg)}
                               </a>
                               <div className="text-[10px] text-dim">{fmtClock(mm.relSec)}</div>
+                              {vsGold != null && <div className="text-[10px] text-dim" title="Against our best of this step">{vsGold > 0 ? '+' : vsGold < 0 ? '-' : ''}{fmtClock(Math.abs(vsGold))} vs gold</div>}
                               {def.moments[i].group && npcName.get(mm.npcId) && <div className="text-[10px] text-dim">{npcName.get(mm.npcId)}</div>}
                             </>
                           ) : '—'}
@@ -141,22 +154,22 @@ export default async function EventSplitsPage({ params }: { params: { slug: stri
                     <span className="border border-gold bg-gold/10 px-1">{fmtClock(sp.sumOfBest)}</span>
                     {!sp.complete && <div className="text-[10px] text-dim">some steps never run</div>}
                   </td>
-                  {attempts.map((a, ai) => (
-                    <td key={a.key} className="px-2 py-1.5 text-right tabular-nums text-dim">{ai === sp.bestRun ? 'fastest' : ''}</td>
+                  {view.map(({ a, best }) => (
+                    <td key={a.key} className="px-2 py-1.5 text-right tabular-nums text-dim">{best ? 'fastest' : ''}</td>
                   ))}
                 </tr>
                 <tr className="border-t border-border">
                   <td className="px-2 py-1.5 text-text">Total</td>
                   <td />
-                  {sp.attempts.map((s, ai) => (
-                    <td key={attempts[ai].key} className="px-2 py-1.5 text-right tabular-nums text-text">{fmtClock(s.total)}</td>
+                  {view.map(({ a, s }) => (
+                    <td key={a.key} className="px-2 py-1.5 text-right tabular-nums text-text">{fmtClock(s.total)}</td>
                   ))}
                 </tr>
                 <tr className="border-t border-border">
                   <td className="px-2 py-1.5 text-text">Possible time save</td>
                   <td />
-                  {sp.attempts.map((s, ai) => (
-                    <td key={attempts[ai].key} className="px-2 py-1.5 text-right tabular-nums text-dim">{s.timeSave == null ? '—' : `-${fmtClock(s.timeSave)}`}</td>
+                  {view.map(({ a, other, s }) => (
+                    <td key={a.key} className="px-2 py-1.5 text-right tabular-nums text-dim">{other || s.timeSave == null ? '—' : `-${fmtClock(s.timeSave)}`}</td>
                   ))}
                 </tr>
               </tbody>
@@ -164,6 +177,7 @@ export default async function EventSplitsPage({ params }: { params: { slug: stri
           </div>
           <p className="mt-3 text-[11px] text-dim">
             A dash is a step that run never reached or the uploaders did not see. Kills use the fight&apos;s end; a pull uses its start.
+            {hasOther && ' Runs tagged Another guild were recorded while a member raided with another guild: they are shown against our times and never count toward gold, the fastest run or the sum of best.'}
           </p>
         </>
       )}
