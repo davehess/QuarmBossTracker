@@ -189,14 +189,14 @@ describe('local versions and dated copies', () => {
     expect(lv.stampedCopy(d, 'eqclient.ini', new Date(2026, 10, 11, 5, 0, 12))).toMatch(/050012/);
     expect(fs.readdirSync(d).filter(f => f.includes('050012'))).toHaveLength(1);
   });
-  it('saveVersion keeps the newest 5, skips an unchanged set, and reads back', () => {
+  it('saveVersion keeps the newest 10, skips an unchanged set, and reads back', () => {
     const root = tmp();
-    for (let i = 0; i < 7; i++) lv.saveVersion(root, 'Aldenmar', { 'UI_Aldenmar_pq.proj.ini': 'v' + i }, new Date(2026, 10, 11, 5, i, 0));
+    for (let i = 0; i < 12; i++) lv.saveVersion(root, 'Aldenmar', { 'UI_Aldenmar_pq.proj.ini': 'v' + i }, new Date(2026, 10, 11, 5, i, 0));
     const list = lv.listVersions(root, 'aldenmar');
-    expect(list).toHaveLength(5);
-    expect(list[0].id).toBe('local-20261111-050600');
-    expect(lv.saveVersion(root, 'Aldenmar', { 'UI_Aldenmar_pq.proj.ini': 'v6' }, new Date(2026, 10, 11, 6, 0, 0))).toBeNull();   // unchanged
-    expect(lv.readVersion(root, 'Aldenmar', list[0].id)).toEqual({ 'UI_Aldenmar_pq.proj.ini': 'v6' });
+    expect(list).toHaveLength(10);
+    expect(list[0].id).toBe('local-20261111-051100');
+    expect(lv.saveVersion(root, 'Aldenmar', { 'UI_Aldenmar_pq.proj.ini': 'v11' }, new Date(2026, 10, 11, 6, 0, 0))).toBeNull();   // unchanged
+    expect(lv.readVersion(root, 'Aldenmar', list[0].id)).toEqual({ 'UI_Aldenmar_pq.proj.ini': 'v11' });
     expect(lv.readVersion(root, '../x', list[0].id)).toBeNull();
     expect(lv.isLocalId('local-20261111-050600')).toBe(true);
     expect(lv.isLocalId('0e6b0c1e-0000-0000-0000-000000000000')).toBe(false);

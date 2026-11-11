@@ -207,6 +207,7 @@
     <button id="captureBtn"        class="secondary" title="Scan your saved hotkeys/socials for a PvP layout draft you can review and share (writes a file into your EQ folder)">Capture PvP draft</button>
     <button id="cloudBackupBtn"    class="secondary" title="Upload encrypted backup of your UI ini files to the bot (existing capture flow)">☁ Backup</button>
     <button id="cloudRestoreBtn"   class="secondary" title="Pull a cloud backup into the editor — rescale it to this machine's monitor, then Save. Use this to deploy your layout on a new computer.">📥 Restore</button>
+    <button id="changesBtn"        class="secondary" title="Every change in this character's EverQuest and Zeal files since the previous version Mimic kept — the game's own changes too, not only the ones made here">🔍 Changes…</button>
     <span id="status"></span>
   </div>
   <!-- Named layouts for the picked character (uiLayouts.js): alternative screens ("Raid (full chat)",
@@ -246,6 +247,25 @@
     <button id="pvpImportBtn">Import to EQ folder</button>
     <button id="pvpDismissBtn"  class="secondary" style="margin-left:4px">Dismiss</button>
   </div>
+  <!-- Changes since a previous version (the guild lead, 2026-11-11): the versions Mimic keeps of the character's files
+       (newest 10, localVersions.js) against the files now, every key, labelled by who changed it. -->
+  <div id="chModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:80">
+    <div style="position:absolute;top:5%;left:50%;transform:translateX(-50%);width:min(760px,94vw);max-height:90%;display:flex;flex-direction:column;
+         background:var(--wp-panel);border:1px solid var(--wp-border);border-radius:8px;padding:16px;color:var(--wp-text);font-size:12px">
+      <button id="chClose" style="position:absolute;top:8px;right:10px;background:none;border:none;color:var(--wp-dim);cursor:pointer;font-size:16px">✕</button>
+      <h3 style="margin:0 0 4px">🔍 Changes since a previous version</h3>
+      <p id="chLine" style="margin:0 0 8px;color:var(--wp-dim);font-size:10px">Mimic keeps the last 10 copies of this character's files: after every camp, and before anything Mimic writes.</p>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        <label>Compare the files now with
+          <select id="chVersion" style="margin-left:4px;max-width:360px;background:var(--wp-bg);color:var(--wp-text);border:1px solid var(--wp-border);border-radius:4px;padding:3px"></select>
+        </label>
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="chHideMine"> Hide UI Studio's own changes</label>
+      </div>
+      <div id="chSummary" style="margin-bottom:8px;color:var(--wp-text);font-weight:600"></div>
+      <div id="chBody" style="overflow-y:auto;min-height:60px;user-select:text"></div>
+    </div>
+  </div>
+
   <!-- #187 Spell Sets bulk-swap — replace one song/spell with another across
        every named set in <Char>_spellsets.ini. Surgical id-value replace
        (CRLF-preserving); Save writes with a .bak backup. -->
@@ -2030,7 +2050,7 @@
   async function _writeEdits(built, opts){
     var deferred = opts && opts.deferred;
     var tgtSuffix = built.tgtSuffix;
-    var res = await window.mimic.uiStudioWriteEdits(STATE.eqDir, built.edits, deferred ? { backupTag: 'eq' } : null);
+    var res = await window.mimic.uiStudioWriteEdits(STATE.eqDir, built.edits, { character: STATE.character, backupTag: deferred ? 'eq' : null });
     if (!res || !res.ok) { setStatus('save failed: ' + (res && res.error ? res.error : 'unknown'), 'err'); return false; }
     _rebaselineWindows(STATE.windows);
     if (INSPECTOR_SAVED) INSPECTOR_SAVED(built.edits);
@@ -2229,6 +2249,94 @@
     var ap=document.getElementById('ssApply'); if (ap) ap.addEventListener('click', _ssApply);
     var oo=document.getElementById('ssOld'); if (oo) oo.addEventListener('change', _ssRefreshPreview);
     var nn=document.getElementById('ssNew'); if (nn) nn.addEventListener('input', _ssRefreshPreview);
+  })();
+
+  // ── Changes since a previous version (the guild lead, 2026-11-11) ──────────
+  // Lists EVERY changed key between a kept version and the files now (main.js 'ui-studio-diff' → iniDiff.js), each
+  // labelled with where it came from. "Hide UI Studio's own changes" leaves the game's, so those can be read alone.
+  var CH = { diff: null };
+  var CH_ORIGIN = {
+    'ui-studio': ['UI Studio', 'var(--wp-blue)'], 'restore': ['UI Studio restore', 'var(--wp-blue)'],
+    'layout': ['UI Studio layout', 'var(--wp-blue)'], 'game': ['in game / elsewhere', 'var(--wp-orange)'],
+    'unknown': ['unknown', 'var(--wp-dim)']
+  };
+  function _chMine(o){ return o === 'ui-studio' || o === 'restore' || o === 'layout'; }
+  function _chSrc(s){
+    return s === 'game' ? 'after a camp' : s === 'ui-studio' ? 'before a UI Studio save' : s === 'restore' ? 'before a restore'
+      : s === 'layout' ? 'before a layout switch' : 'older copy';
+  }
+  function _chVal(v){ return v == null ? '' : (String(v) === '' ? '(empty)' : String(v)); }
+  function _chRow(c){
+    var o = CH_ORIGIN[c.origin] || CH_ORIGIN.unknown;
+    var chip = '<span style="color:' + o[1] + ';font-size:9px;margin-left:8px;white-space:nowrap">' + escapeHtml(o[0]) + '</span>';
+    var val = c.kind === 'added' ? '<span style="color:var(--wp-green)">+ ' + escapeHtml(_chVal(c.new)) + '</span>'
+      : c.kind === 'removed' ? '<span style="color:var(--wp-red)">− ' + escapeHtml(_chVal(c.old)) + ' (removed)</span>'
+      : '<span style="color:var(--wp-dim)">' + escapeHtml(_chVal(c.old)) + '</span> → <span>' + escapeHtml(_chVal(c.new)) + '</span>';
+    return '<div style="padding:1px 0 1px 12px;font-family:var(--wp-font-mono);font-size:11px;word-break:break-all">'
+      + escapeHtml(c.key) + ' &nbsp;' + val + chip + '</div>';
+  }
+  function _chRender(){
+    var d = CH.diff, sum = document.getElementById('chSummary'), body = document.getElementById('chBody');
+    if (!d || !d.ok) { sum.textContent = ''; body.textContent = d && d.error ? d.error : ''; return; }
+    var hide = document.getElementById('chHideMine').checked;
+    var shown = 0, mine = 0, game = 0, unk = 0, html = '', nFiles = 0;
+    d.files.forEach(function(f){
+      var secHtml = '', n = 0;
+      f.sections.forEach(function(s){
+        var rows = s.changes.filter(function(c){ return !(hide && _chMine(c.origin)); });
+        if (!rows.length) return;
+        n += rows.length;
+        secHtml += '<div style="margin:6px 0 2px 8px;color:var(--wp-purple)">[' + escapeHtml(s.section) + ']</div>' + rows.map(_chRow).join('');
+      });
+      f.sections.forEach(function(s){ s.changes.forEach(function(c){
+        if (hide && _chMine(c.origin)) return;
+        if (_chMine(c.origin)) mine++; else if (c.origin === 'game') game++; else unk++;
+      }); });
+      if (!n) return;
+      nFiles++; shown += n;
+      var tag = f.status === 'added' ? ' (new file)' : f.status === 'removed' ? ' (file gone)' : '';
+      html += '<details ' + (n <= 60 ? 'open' : '') + ' style="margin-bottom:8px"><summary style="cursor:pointer;font-weight:600">'
+        + escapeHtml(f.file) + escapeHtml(tag) + ' <span style="color:var(--wp-dim);font-weight:400">— ' + n + ' change' + (n === 1 ? '' : 's') + '</span></summary>'
+        + secHtml + '</details>';
+    });
+    var parts = [];
+    if (game) parts.push(game + ' in game / elsewhere');
+    if (mine) parts.push(mine + ' from UI Studio');
+    if (unk) parts.push(unk + ' unknown');
+    sum.textContent = shown ? shown + ' change' + (shown === 1 ? '' : 's') + ' in ' + nFiles + ' file' + (nFiles === 1 ? '' : 's') + ': ' + parts.join(', ')
+      : (d.total ? 'Only UI Studio\'s own changes — untick "Hide" to see them.' : 'No differences — the files are the same as that version.');
+    body.innerHTML = html;
+    document.getElementById('chLine').textContent = (d.complete ? '' : 'This version is older than the change records, so changes nobody can vouch for are marked "unknown". ')
+      + 'Passwords and chat channels are never shown.';
+  }
+  async function _chLoad(id){
+    var body = document.getElementById('chBody'); body.textContent = 'Reading…';
+    CH.diff = await window.mimic.uiStudioDiff(STATE.character, STATE.eqDir, id).catch(function(e){ return { ok: false, error: String(e) }; });
+    _chRender();
+  }
+  async function _chOpen(){
+    if (!STATE.character || !STATE.eqDir) { setStatus('pick a character first', 'err'); return; }
+    var modal = document.getElementById('chModal'), sel = document.getElementById('chVersion');
+    modal.style.display = 'block';
+    sel.innerHTML = ''; document.getElementById('chSummary').textContent = ''; document.getElementById('chBody').textContent = 'Reading…';
+    var r = await window.mimic.uiStudioVersions(STATE.character, STATE.eqDir).catch(function(e){ return { ok: false, error: String(e) }; });
+    if (!r || !r.ok) { CH.diff = r; _chRender(); return; }
+    r.versions.forEach(function(v){
+      var o = document.createElement('option'); o.value = v.id;
+      o.textContent = new Date(v.at).toLocaleString() + ' — ' + _chSrc(v.source) + (v.same ? ' (same as now)' : '');
+      o.disabled = !!v.same; sel.appendChild(o);
+    });
+    var first = r.versions.filter(function(v){ return !v.same; })[0];
+    if (!first) { CH.diff = null; document.getElementById('chBody').textContent = 'No earlier version differs from the files now yet. A copy is kept after every camp and before anything Mimic writes.'; return; }
+    sel.value = first.id;
+    _chLoad(first.id);
+  }
+  (function(){
+    var b = document.getElementById('changesBtn'); if (b) b.addEventListener('click', _chOpen);
+    var c = document.getElementById('chClose'); if (c) c.addEventListener('click', function(){ document.getElementById('chModal').style.display = 'none'; });
+    var m = document.getElementById('chModal'); if (m) m.addEventListener('click', function(ev){ if (ev.target === m) m.style.display = 'none'; });
+    var s = document.getElementById('chVersion'); if (s) s.addEventListener('change', function(){ _chLoad(s.value); });
+    var h = document.getElementById('chHideMine'); if (h) h.addEventListener('change', _chRender);
   })();
 
   // A cloud backup loaded into the editor (📥 Restore) is a deliberate restore, often onto a new PC
