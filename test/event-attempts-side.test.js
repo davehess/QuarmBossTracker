@@ -27,10 +27,14 @@ describe('rowSide', () => {
     expect(rowSide(null, ['WP0', ...names(31, 'xx')], wp)).toBe('other');
     expect(rowSide(null, [...names(30, 'wp'), ...names(4, 'xx')], wp)).toBe('ours');
   });
-  it('under five players with no mark is ours, and the name match ignores case', () => {
-    expect(rowSide(null, names(4, 'xx'), wp)).toBe('ours');
+  it('under five players is ours when one of them is ours; no players listed is ours; the name match ignores case', () => {
+    expect(rowSide(null, ['wp0', ...names(3, 'xx')], wp)).toBe('ours');
     expect(rowSide(null, [], wp)).toBe('ours');
     expect(rowSide(null, ['WP1', 'Wp2', 'wP3', 'WP4', 'xx'], wp)).toBe('ours');
+  });
+  it('players listed and none of them ours is another guild at any size (2026-11-11: one player on their Guardian)', () => {
+    expect(rowSide(null, ['xx0'], wp)).toBe('other');
+    expect(rowSide(null, names(4, 'xx'), wp)).toBe('other');
   });
 });
 
