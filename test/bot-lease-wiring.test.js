@@ -29,8 +29,16 @@ describe('bot lease wiring in index.js', () => {
     const shut = src.slice(src.indexOf('function _gracefulShutdown('));
     const body = shut.slice(0, shut.indexOf("process.on('SIGTERM'"));
     const destroy = body.indexOf('client.destroy()');
-    const release = body.indexOf('_botLease.release()');
+    const release = body.lastIndexOf('_botLease.release()');   // the holder's release; the first is the standby's early one
     expect(destroy).toBeGreaterThan(-1);
     expect(release).toBeGreaterThan(destroy);
+  });
+
+  it('a standby being stopped stops waiting at once, before the drain', () => {
+    const shut = src.slice(src.indexOf('function _gracefulShutdown('));
+    const body = shut.slice(0, shut.indexOf("process.on('SIGTERM'"));
+    const early = body.indexOf('if (!_botLease.isHolder()) _botLease.release()');
+    expect(early).toBeGreaterThan(-1);
+    expect(early).toBeLessThan(body.indexOf('const drainMs'));
   });
 });
