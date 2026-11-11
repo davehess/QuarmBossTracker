@@ -26481,6 +26481,8 @@ if (process.env.RAILWAY_ENVIRONMENT && !process.env.SUPABASE_GUILD_ID) {
 function _gracefulShutdown(signal) {
   if (_shuttingDown) return;
   _shuttingDown = true;   // /health → 503 and new HTTP work → 503 from here on
+  // A standby that is being stopped stops waiting now, so it can never take the lease on its way out.
+  if (!_botLease.isHolder()) _botLease.release().catch(() => {});
   const drainMs = Number(process.env.SHUTDOWN_DRAIN_MS) || 10_000;
   console.log(`[shutdown] ${signal} received — health now 503, refusing new HTTP; draining in-flight for up to ${drainMs}ms`);
   try { httpServer.close(() => console.log('[shutdown] HTTP server closed (connections drained)')); } catch (e) { console.warn('[shutdown] server.close failed:', e && e.message); }

@@ -335,6 +335,33 @@ describe('release', () => {
     expect(s.calls.filter((c) => c[0] === 'bot_lease_release').length).toBe(1);
   });
 
+  it('a standby stopped while its acquire is in flight gives a won row straight back and never becomes holder', async () => {
+    // 2026-11-11: a standby being shut down mid-deploy took the lease on its way out; the next bot waited out the TTL.
+    const clock = makeClock();
+    const store = makeStore(clock);
+    store.rows.set('discord:test', { holder: 'old', expiresAt: clock.now() + 30_000 });
+    let gate;
+    const rpc = async (fn, p) => {
+      if (fn === 'bot_lease_acquire' && store.rows.get('discord:test')?.holder === 'old' && gate === undefined) {
+        // the old holder lets go while our acquire is on the wire
+        await new Promise((r) => { gate = r; });
+        store.rows.delete('discord:test');
+      }
+      return store.rpc(fn, p);
+    };
+    const { lease } = mk(clock, rpc);
+    let resolved = false;
+    lease.waitForLease().then(() => { resolved = true; });
+    await clock.advance(0);
+    lease.release();          // SIGTERM lands while the acquire is in flight
+    gate();
+    await clock.advance(10_000);
+    expect(resolved).toBe(false);
+    expect(lease.isHolder()).toBe(false);
+    expect(store.rows.has('discord:test')).toBe(false);   // taken and handed straight back
+    expect(store.calls.filter((c) => c[0] === 'bot_lease_release').length).toBe(1);
+  });
+
   it('does not call release when disabled or after losing the lease', async () => {
     const clock = makeClock();
     const s = scripted([true, false]);
