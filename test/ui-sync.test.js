@@ -64,9 +64,10 @@ describe('suggestScale', () => {
 });
 
 describe('cleanSyncCfg', () => {
-  it('is off and asks by default, with keybinds left out', () => {
+  it('backs up after camp unless switched off (2026-11-11), asks about newer copies, keybinds left out', () => {
     const c = sync.cleanSyncCfg(undefined);
-    expect(c).toMatchObject({ autoBackup: false, newer: 'ask', since: 0 });
+    expect(c).toMatchObject({ autoBackup: true, newer: 'ask', since: 0 });
+    expect(sync.cleanSyncCfg({ autoBackup: false }).autoBackup).toBe(false);
     expect(c.parts).not.toContain('keybinds');
   });
   it('refuses unknown modes', () => {

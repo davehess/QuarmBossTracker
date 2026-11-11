@@ -284,6 +284,21 @@ describe('fitLayout', () => {
     expect(r.text).toContain('YPos1920x1080=20');
   });
 
+  // The guild lead, 2026-11-11: chat windows stayed off the 1080 screen because an existing target block was kept as-is.
+  it('pulls a window back on screen when the target block already exists', () => {
+    const r = fitLayout('[Chat]\nXPos1920x1080=2400\nYPos1920x1080=1500\n[Buffs]\nXPos1920x1080=100\nYPos1920x1080=200\n', 1920, 1080);
+    const sec = Object.fromEntries(parseSections(r.text).map((s) => [s.name, Object.fromEntries(s.keys.map((k) => [k.key, k.value]))]));
+    expect(Number(sec.Chat.XPos1920x1080)).toBeLessThanOrEqual(1840);
+    expect(Number(sec.Chat.YPos1920x1080)).toBeLessThanOrEqual(1000);
+    expect(sec.Buffs).toMatchObject({ XPos1920x1080: '100', YPos1920x1080: '200' });
+    expect(r).toMatchObject({ added: 0, clamped: 1 });
+  });
+
+  it('leaves an on-screen existing block alone (no edit)', () => {
+    const t = '[Chat]\r\nXPos1920x1080=1840\r\nYPos1920x1080=0\r\n';
+    expect(fitLayout(t, 1920, 1080)).toMatchObject({ text: t, added: 0, clamped: 0 });
+  });
+
   it('skips sections with no position', () => {
     const r = fitLayout('[Colors]\nRed=1\n', 1920, 1080);
     expect(r).toMatchObject({ added: 0, text: '[Colors]\nRed=1\n' });

@@ -187,6 +187,7 @@
   <h2 id="uistudio">UI Studio <span style="background:#7c4a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">BETA</span></h2>
   <div class="sub">Back up your EQ window layout, hotkeys, chat tabs, bandolier, socials, and <code>eqclient.ini</code> to wolfpack.quest. Restore on any computer so you don't have to drag every window again. Files are encrypted before they leave this machine.</div>
 
+  <div id="uiBringIn"></div>
   <div id="uiSyncPrompts"></div>
   <div id="uiSyncPanel" style="margin-top:10px"></div>
   <div id="uiThisPc" style="margin-top:10px"></div>
@@ -488,6 +489,7 @@
 </script>
 
 <script src="voice.js"></script>
+<script src="bring-setup.js"></script>
 <script>
   // Toast helper — explicit save feedback that lives at the top of the
   // window so it's never missed. State machine: pending → success | error.
@@ -639,12 +641,23 @@
     const status = document.getElementById('uiStudioStatus');
     const list   = document.getElementById('uiStudioCharList');
     _uiRenderSync(); _uiRenderThisPc();
+    const acctP = _uiLoadAccount();
     try { _uiStudioChars = await window.mimic.uiStudioListCharacters(); }
     catch (e) { status.textContent = '✕ ' + (e && e.message ? e.message : String(e)); return; }
+    await acctP;
     if (!_uiStudioChars || _uiStudioChars.length === 0) {
       status.innerHTML = 'No characters found. Make sure you\'ve added an EQ folder above and logged in to at least one character.';
       list.innerHTML = '';
       return;
+    }
+    // The signed-in account's characters first; the rest of what is on this PC goes under "Other characters".
+    // Only when the bot named some: with no list (offline, nothing backed up yet) every character stays as before.
+    const mine = new Set(((_uiAcct && _uiAcct.characters) || []).map(c => c.character.toLowerCase()));
+    _uiMineN = _uiStudioChars.length;
+    if (mine.size) {
+      const a = [], b = [];
+      for (const c of _uiStudioChars) (mine.has(c.character.toLowerCase()) ? a : b).push(c);
+      _uiStudioChars = a.concat(b); _uiMineN = a.length;
     }
     _uiVisible = 5;
     _uiRowMsg = {};   // fresh list = fresh results
@@ -728,6 +741,18 @@
     }
     paint();
   }
+  // ── Bring your setup to this computer (the guild lead, 2026-11-10/11) ──────────────────────────────────
+  // A member signed in on another member's PC could not reach his own backups: every list here starts from a
+  // character found on disk. The card itself is shared with the setup walkthrough and UI Studio (bring-setup.js);
+  // here we also keep the account's list to put the signed-in account's characters first in the list below.
+  var _uiAcct = null;          // { characters, ... } from ui-account-characters
+  var _uiMineN = 0;            // how many of _uiStudioChars (the first ones) belong to the signed-in account
+  var _uiOtherOpen = false;    // the "Other characters" fold stays as the person left it across repaints
+  async function _uiLoadAccount() {
+    try { const r = await window.mimic.uiAccountCharacters(); _uiAcct = r && r.ok ? r : null; }
+    catch { _uiAcct = null; }
+    if (window.wpBringSetup) window.wpBringSetup.mount(document.getElementById('uiBringIn'), { fresh: true, onDone: function () { _renderUiStudio(); } });
+  }
   const _UI_SYNC_PARTS = [['layout', 'Layout'], ['hotkeys', 'Hotkeys'], ['socials', 'Socials'], ['spellsets', 'Spell sets'], ['keybinds', 'Keybinds'], ['zeal', 'Zeal'], ['other', 'Other']];
   async function _uiRenderSync() {
     const box = document.getElementById('uiSyncPanel');
@@ -801,11 +826,14 @@
     const status = document.getElementById('uiStudioStatus');
     const list   = document.getElementById('uiStudioCharList');
     const chars  = _uiStudioChars;
-    const shown  = chars.slice(0, _uiVisible);
-    const remaining = chars.length - shown.length;
-    status.textContent = 'Showing ' + shown.length + ' of ' + chars.length +
-      ' character' + (chars.length === 1 ? '' : 's') + ' — largest logs first.';
-    list.innerHTML = shown.map((c, i) =>
+    const mineN  = Math.min(_uiMineN, chars.length);
+    const shown  = chars.slice(0, Math.min(_uiVisible, mineN));
+    const others = chars.slice(mineN);        // not the signed-in account's: folded away below
+    const remaining = mineN - shown.length;
+    status.textContent = (mineN < chars.length
+      ? 'Showing ' + shown.length + ' of ' + mineN + ' of your character' + (mineN === 1 ? '' : 's') + '.'
+      : 'Showing ' + shown.length + ' of ' + chars.length + ' character' + (chars.length === 1 ? '' : 's') + ' — largest logs first.');
+    const rowHtml = (c, i) =>
       '<div data-charrow="' + i + '" style="border:1px solid #2a3140;border-radius:6px;padding:8px 10px;margin:6px 0;background:var(--wp-panel)">' +
         '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
           '<div><b style="color:var(--wp-text);font-size:13px">' + c.character.replace(/</g,'&lt;') + '</b>' +
@@ -818,19 +846,25 @@
         '</div>' +
         '<div class="ui-snapshots-list" data-snaps="' + i + '"></div>' +
         '<div class="ui-row-msg" data-msg="' + i + '" style="font-size:11px;margin-top:6px"></div>' +
-      '</div>'
-    ).join('')
+      '</div>';
+    list.innerHTML = shown.map((c, i) => rowHtml(c, i)).join('')
     + (remaining > 0
         ? '<button type="button" id="uiShowMore" style="margin:8px 0 0;background:#21262d;border:1px solid #2a3140;color:var(--wp-text);padding:6px 12px;font-size:11px;border-radius:6px;cursor:pointer">⬇ Show ' +
           Math.min(5, remaining) + ' more (' + remaining + ' remaining)</button>'
+        : '')
+    + (others.length
+        ? '<details id="uiOtherChars" style="margin-top:10px"' + (_uiOtherOpen ? ' open' : '') + '><summary style="cursor:pointer;color:var(--wp-dim);font-size:12px">Other characters on this computer (' + others.length + ')</summary>' +
+          others.map((c, k) => rowHtml(c, mineN + k)).join('') + '</details>'
         : '');
+    var otherEl = document.getElementById('uiOtherChars');
+    if (otherEl) otherEl.addEventListener('toggle', function () { _uiOtherOpen = otherEl.open; });
 
     var moreBtn = document.getElementById('uiShowMore');
     if (moreBtn) moreBtn.addEventListener('click', function () { _uiVisible += 5; _paintUiStudio(); });
 
     // Re-apply any backup confirmations from earlier this session so a repaint
     // (e.g. "Show more") never hides a completed upload.
-    shown.forEach((c, i) => {
+    shown.map((c, i) => [c, i]).concat(others.map((c, k) => [c, mineN + k])).forEach(([c, i]) => {
       const saved = _uiRowMsg[c.character];
       if (!saved) return;
       const msg = list.querySelector('[data-msg="' + i + '"]');
@@ -874,14 +908,24 @@
         btn.disabled = true; btn.textContent = 'Loading…';
         try {
           const r = await window.mimic.uiStudioListSnapshots(c.character);
+          // Versions this PC kept itself (localVersions.js), newest first: restorable offline, same compare-first path.
+          let lv = [];
+          try { lv = (await window.mimic.uiLocalVersions(c.character)) || []; } catch { lv = []; }
           if (!r || !r.ok) {
             slot.innerHTML = '<div style="color:#f87171;font-size:11px;margin-top:6px">✕ ' + (r && r.error ? r.error : 'failed to list backups') + '</div>';
-          } else if (!r.snapshots || r.snapshots.length === 0) {
+          } else if ((!r.snapshots || r.snapshots.length === 0) && lv.length === 0) {
             slot.innerHTML = '<div style="color:#6b7280;font-size:11px;font-style:italic;margin-top:6px">No backups yet. Click 📦 Back up first.</div>';
           } else {
             slot.innerHTML = '<table style="width:100%;margin-top:8px;font-size:11px;border-collapse:collapse">' +
               '<tr style="color:#8b949e"><th style="text-align:left;padding:2px 4px">When</th><th style="text-align:left;padding:2px 4px">Name</th><th style="text-align:left;padding:2px 4px">Source res.</th><th style="text-align:left;padding:2px 4px">Files</th><th style="text-align:right;padding:2px 4px">Restore</th></tr>' +
-              r.snapshots.map(s =>
+              lv.map(v =>
+                '<tr style="border-top:1px solid var(--wp-border)">' +
+                  '<td style="padding:3px 4px;color:var(--wp-text)">' + new Date(v.at).toLocaleString() + '</td>' +
+                  '<td style="padding:3px 4px;color:var(--wp-green)">💻 On this computer</td><td style="padding:3px 4px;color:var(--wp-dim)">—</td><td style="padding:3px 4px;color:var(--wp-dim)">' + v.file_count + '</td>' +
+                  '<td style="padding:3px 4px;text-align:right"><button type="button" class="ui-restore" data-id="' + v.id + '" data-charidx="' + idx + '" data-machine="" style="margin:0;padding:3px 9px;font-size:10px;background:var(--wp-green)">↩ Restore</button></td></tr>' +
+                '<tr data-restore-for="' + v.id + '" style="display:none"><td colspan="5" style="padding:4px 0 8px"></td></tr>'
+              ).join('') +
+              (r.snapshots || []).map(s =>
                 '<tr style="border-top:1px solid #2a3140">' +
                   '<td style="padding:3px 4px;color:var(--wp-text)">' + new Date(s.created_at).toLocaleString() + '</td>' +
                   // A named layout's backup carries "Layout: <name>" in its label (UI Studio); show the name.
