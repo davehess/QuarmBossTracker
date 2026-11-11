@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.74': [
+    'Behind the scenes: when the bot restarts for an update, the new copy waits for the old one to sign off, so Discord no longer gets a few seconds of double posts.',
+  ],
   '4.0.73': [
     'Behind the scenes: the code moved to its new home, github.com/davehess/raidmimic. Old links still work.',
   ],
