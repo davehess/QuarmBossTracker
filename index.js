@@ -9326,6 +9326,61 @@ async function _handleAgentUiLayoutList(req, res) {
   return res.end(JSON.stringify({ snapshots: Array.isArray(rows) ? rows : [] }));
 }
 
+// One row per character that has backups, newest first. `latestFull` is the newest WHOLE bundle (no label, or the
+// automatic after-camp one): a named layout holds only the UI file, so it must not stand in for "my setup".
+function _shapeUiAccountCharacters(rows) {
+  const pick = (r) => ({
+    id: r.id, created_at: r.created_at, label: r.label || null,
+    source_width: r.source_width ?? null, source_height: r.source_height ?? null,
+    file_count: r.file_count ?? null, machine_name: r.machine_name || null,
+  });
+  const by = new Map();
+  for (const r of Array.isArray(rows) ? rows : []) {
+    if (!r || !r.character_name) continue;
+    const k = String(r.character_name).toLowerCase();
+    let e = by.get(k);
+    if (!e) { e = { character: r.character_name, backups: 0, latest: null, latestFull: null, machines: [], _m: new Map() }; by.set(k, e); }
+    e.backups++;
+    if (!e.latest || String(r.created_at) > String(e.latest.created_at)) e.latest = pick(r);
+    if (!r.label || r.label === _UI_AUTO_LABEL) {
+      if (!e.latestFull || String(r.created_at) > String(e.latestFull.created_at)) e.latestFull = pick(r);
+      // The newest whole bundle per computer: a person who plays on two PCs picks which one's setup to bring over.
+      const mk = r.machine_name || '';
+      const cur = e._m.get(mk);
+      if (!cur || String(r.created_at) > String(cur.latestFull.created_at)) e._m.set(mk, { machine_name: r.machine_name || null, latestFull: pick(r), full_backups: (cur ? cur.full_backups : 0) + 1 });
+      else cur.full_backups++;
+    }
+  }
+  for (const e of by.values()) {
+    e.machines = [...e._m.values()].sort((a, b) => String(b.latestFull.created_at).localeCompare(String(a.latestFull.created_at)));
+    delete e._m;
+  }
+  return [...by.values()]
+    .sort((a, b) => String(b.latest.created_at).localeCompare(String(a.latest.created_at)))
+    .slice(0, 40);
+}
+
+// Every character of the signed-in person's household that has backups. Mimic uses it to offer a person their own
+// setup on a computer that has none of their files (the guild lead, 2026-11-10: a member signed in on another
+// member's PC and could not see his own backups, because the list above needs a character name taken from disk).
+// No payload column is read. ui_snapshots has no guild column; the owner id is the scope.
+async function _handleAgentUiLayoutCharacters(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) { res.writeHead(503).end(); return; }
+  const ids = [...(await _householdDiscordIds(identity.discord_id))].filter(i => /^\d+$/.test(i));
+  let rows = [];
+  if (ids.length) {
+    rows = await supabase.select(
+      'ui_snapshots',
+      `owner_discord_id=in.(${ids.join(',')})&character_name=not.is.null&select=id,character_name,label,source_width,source_height,file_count,machine_name,created_at&order=created_at.desc&limit=500`,
+    ).catch(() => []);
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ characters: _shapeUiAccountCharacters(rows) }));
+}
+
 async function _handleAgentUiLayoutDownload(req, res, snapshotId) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -26385,6 +26440,14 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentUiLayoutList(req, res); }
     catch (err) {
       console.error('[ui_layout list] handler error:', err);
+      res.writeHead(500).end();
+      return;
+    }
+  }
+  if (req.method === 'GET' && /^\/api\/agent\/ui_layout\/characters(\?|$)/.test(req.url)) {
+    try { return await _handleAgentUiLayoutCharacters(req, res); }
+    catch (err) {
+      console.error('[ui_layout characters] handler error:', err);
       res.writeHead(500).end();
       return;
     }
