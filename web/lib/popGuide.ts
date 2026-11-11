@@ -646,10 +646,15 @@ const BASE_ITEMS: GuideItem[] = [
     where: [L.clinka] },
 
   // ── Time ──────────────────────────────────────────────────────────────────
-  { key: 'time_vial', section: 'time', who: 'solo', title: 'Optional: craft an [[Odylic Vial#17186]]',
-    detail: 'A tradable four-slot pottery container; one per raid is enough.' },
+  // The vial and the combine, from the mirror (the guild lead, 2026-11-11: "the combine for getting into time is 4 items in
+  // a tradeable container and each of the components comes from hailing an avatar after each elemental plane's boss
+  // dies"): recipe 9042 makes the vial (pottery); recipe 9148 is the combine, nofail, replace_container 0, so the vial
+  // is kept. eqemu_items: the vial is tradable; the four hailed items and the Quintessence are NO DROP (the mirror's
+  // nodrop column is inverted, lib/itemDecode.ts isNoDrop).
+  { key: 'time_vial', section: 'time', who: 'solo', title: 'Optional: craft an [[Odylic Vial#17186]], or borrow one',
+    detail: 'A tradable four-slot pottery container. The combine does not use it up, so one vial can make the whole raid’s Quintessences: pass it to the next raider.' },
   { key: 'time_quintessence', section: 'time', who: 'solo', must: true, title: 'Combine the four essences into the [[Quintessence of Elements#29165]]',
-    detail: 'In the Odylic Vial: the Globe of Dancing Flame, Amorphous Cloud of Air, Sphere of Coalesced Water and Mound of Living Stone.' },
+    detail: 'In the Odylic Vial: the Globe of Dancing Flame, Amorphous Cloud of Air, Sphere of Coalesced Water and Mound of Living Stone. Each comes from hailing the Essence that appears where that elemental plane’s god falls (Fennin Ro, Xegony, Coirnav, the Avatar of Earth; see those steps). All four are no drop, and so is the Quintessence, so every raider earns and combines their own; only the vial can be traded. The combine cannot fail.' },
   // time_1 is the click on the machine (poinnovation/player.lua door 145), not either NPC: Muon only carries
   // you up, and Loreseeker Maelin's "researched" is story that the click never checks.
   { key: 'time_muon', section: 'time', who: 'solo', must: true, flag: 'time_1', title: 'Enter the Plane of Time from Innovation',
@@ -662,6 +667,13 @@ const BASE_ITEMS: GuideItem[] = [
     where: [L.muon, L.loreseeker, L.timeMachine] },
   { key: 'time_timelockout', section: 'time', who: 'solo', title: 'Type #timelockout',
     detail: 'Shows your guild’s timeline, when it retires, and which encounters are open in each phase. Since the October 18 patch your guild has one fixed cycle of 6 days 18 hours from its first entry: kills no longer extend it, and when it ends the next run starts fresh.' },
+  // Read from the scripts on 2026-11-11 (the guild lead asked whether someone flagged for Time who missed the earlier
+  // raids can fight later ones): potimea/player.lua (doors 8-12: level 65, a raid of 7+, the foreign-guild lockout
+  // check), potimea/219053.lua (signal 3: the cap of 90, 18 per Phase 1 wing, 36/18/36 in Phase 2, and the phase's
+  // landing spot; no check of earlier phases) and potimeb/223077.lua (signal 8: a non-portal zone-in while a boss is
+  // engaged goes to the graveyard unless inside before the pull or just resurrected).
+  { key: 'time_join_late', section: 'time', who: 'raid', title: 'Missed the first nights? You can still join',
+    detail: 'You arrive in the first Plane of Time zone (Time A); every phase is fought in your guild’s own copy of the second (Time B), for the whole cycle. The five portals in Time A put you in at whatever phase your guild has reached, so missing the Phase 1 to 3 raids does not stop you fighting in the later ones. The portal asks for level 65, a raid of at least 7, and room inside (90 in all; 18 per wing in Phase 1). It refuses you with “Your fate is bound to another guild’s thread of time” while you are saved to another guild’s Plane of Time whose boss timers are still running, so anyone who raided Time with another guild this cycle should try the portal before the raid. Always go in by the portal: someone who zones or logs into the fighting area another way while a boss is engaged is moved to the graveyard, unless they were inside before the pull or were just resurrected.' },
   { key: 'flag_quarm', section: 'time', who: 'raid', must: true, flag: 'quarm_dead', title: 'Kill Quarm', link: popZone('time'),
     detail: 'Loot from Phase 1 bosses is limited for 12 hours and from Phases 2 and 3 for 3.5 days (never past the end of the cycle); Phase 4 to 6 bosses stay down until the cycle ends. Once your guild clears Phase 3 it keeps a checkpoint for the cycle: later visits clear Phase 1, then continue at the first unfinished phase from Phase 4. A visit ends after 10 minutes with no participating players in the zone. The raid cap is 90, with 18 straight into each Phase 1 wing.' },
 ];
