@@ -39,12 +39,15 @@ export const OTHER_MIN_PLAYERS = 5;
 /**
  * Which side a fight row belongs to. An officer's 'foreign' mark is another guild's. Otherwise the roster decides: at
  * least five players, under half of them Wolf Pack characters. 'live' (the open-world copy of a zone) is NOT a side:
- * measured 2026-11-11, 16 of 80 'live' fights were mostly our own raiders. `wpNames` holds our characters' names lowercased.
+ * measured 2026-11-11, 16 of 80 'live' fights were mostly our own raiders. A fight whose listed players include no
+ * Wolf Pack character at all is another guild's at any size (2026-11-11: another guild's Guardian of Coirnav was uploaded
+ * with one player listed, none ours). `wpNames` holds our characters' names lowercased.
  */
 export function rowSide(classification: string | null, players: readonly string[], wpNames: ReadonlySet<string>): Side {
   if (classification === 'foreign') return 'other';
-  if (players.length < OTHER_MIN_PLAYERS) return 'ours';
   const ours = players.filter(p => wpNames.has(p.toLowerCase())).length;
+  if (players.length > 0 && ours === 0) return 'other';
+  if (players.length < OTHER_MIN_PLAYERS) return 'ours';
   return ours * 2 < players.length ? 'other' : 'ours';
 }
 
