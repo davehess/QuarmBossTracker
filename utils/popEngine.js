@@ -2275,8 +2275,8 @@ const BASE_ITEMS = [
 		key: "time_vial",
 		section: "time",
 		who: "solo",
-		title: "Optional: craft an [[Odylic Vial#17186]]",
-		detail: "A tradable four-slot pottery container; one per raid is enough."
+		title: "Optional: craft an [[Odylic Vial#17186]], or borrow one",
+		detail: "A tradable four-slot pottery container. The combine does not use it up, so one vial can make the whole raid’s Quintessences: pass it to the next raider."
 	},
 	{
 		key: "time_quintessence",
@@ -2284,7 +2284,7 @@ const BASE_ITEMS = [
 		who: "solo",
 		must: true,
 		title: "Combine the four essences into the [[Quintessence of Elements#29165]]",
-		detail: "In the Odylic Vial: the Globe of Dancing Flame, Amorphous Cloud of Air, Sphere of Coalesced Water and Mound of Living Stone."
+		detail: "In the Odylic Vial: the Globe of Dancing Flame, Amorphous Cloud of Air, Sphere of Coalesced Water and Mound of Living Stone. Each comes from hailing the Essence that appears where that elemental plane’s god falls (Fennin Ro, Xegony, Coirnav, the Avatar of Earth; see those steps). All four are no drop, and so is the Quintessence, so every raider earns and combines their own; only the vial can be traded. The combine cannot fail."
 	},
 	{
 		key: "time_muon",
@@ -2323,6 +2323,13 @@ const BASE_ITEMS = [
 		who: "solo",
 		title: "Type #timelockout",
 		detail: "Shows your guild’s timeline, when it retires, and which encounters are open in each phase. Since the October 18 patch your guild has one fixed cycle of 6 days 18 hours from its first entry: kills no longer extend it, and when it ends the next run starts fresh."
+	},
+	{
+		key: "time_join_late",
+		section: "time",
+		who: "raid",
+		title: "Missed the first nights? You can still join",
+		detail: "You arrive in the first Plane of Time zone (Time A); every phase is fought in your guild’s own copy of the second (Time B), for the whole cycle. The five portals in Time A put you in at whatever phase your guild has reached, so missing the Phase 1 to 3 raids does not stop you fighting in the later ones. The portal asks for level 65, a raid of at least 7, and room inside (90 in all; 18 per wing in Phase 1). It refuses you with “Your fate is bound to another guild’s thread of time” while you are saved to another guild’s Plane of Time whose boss timers are still running, so anyone who raided Time with another guild this cycle should try the portal before the raid. Always go in by the portal: someone who zones or logs into the fighting area another way while a boss is engaged is moved to the graveyard, unless they were inside before the pull or were just resurrected."
 	},
 	{
 		key: "flag_quarm",
@@ -3858,6 +3865,8 @@ for (const [key, brief] of Object.entries({
 	time_muon: "Needs your Zebuxoruk flag and the Quintessence in your bags. Muon takes you up; clicking the time machine is the flag.",
 	spells_turn_in: "One at a time. Full bags hold the spell for you: make room, then speak to any planar spell turn-in vendor.",
 	time_timelockout: "Your guild has one fixed 6 day 18 hour cycle from its first entry; kills no longer extend it.",
+	time_quintessence: "Hail each god’s Essence for its piece (no drop), then combine all four in the vial, which you can pass on.",
+	time_join_late: "The Time A portal puts you in at your guild’s current phase; only another guild’s Time lockout stops you.",
 	flag_quarm: "Phase 1 loot is limited 12 hours, Phases 2 and 3 for 3.5 days, Phase 4 to 6 until the cycle ends. Raid cap 90."
 })) STEP_MORE[key] = {
 	...STEP_MORE[key],

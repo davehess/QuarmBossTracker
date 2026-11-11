@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-132-2026-11-11',
+    title: 'Web 2.1.132',
+    version: 'Web 2.1.132',
+    date: '2026-11-11',
+    headline: 'The PoP guide answers the Plane of Time questions: who can join a Time raid late, and how the key combine works.',
+    features: [
+      { name: 'Missed the first Time nights?', blurb: 'You can still join: the portal puts you in at the phase your guild has reached. Only being saved to another guild’s Plane of Time with its timers still running keeps you out.' },
+      { name: 'The Quintessence, step by step', blurb: 'Each elemental god’s Essence gives you one no-drop piece; one vial can make the whole raid’s keys because it is not used up.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'mimic-3-0-9-2026-11-09',
     title: 'Mimic 3.0.9',
     version: 'Mimic 3.0.9 · Agent 4.0.83 · Bot 4.0.63 · Web 2.1.123',

@@ -142,6 +142,7 @@ const PLANE_OF = {
   time_quintessence: 'time',
   time_muon: 'time',
   time_timelockout: 'time',
+  time_join_late: 'time',
   flag_quarm: 'time',
 };
 
