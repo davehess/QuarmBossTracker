@@ -3722,6 +3722,15 @@ pieces, draw templates, `Ui2DAnimation` frames — and decodes TGA/PNG/BMP textu
 size (`layoutScreen`, anchors via `anchorRect`) and paints it (`renderScreen`). UI Studio's `_lookRun` renders each visible window
 once per screen and size into `STATE.lookCache` and `renderStage` paints it as the rectangle's background (`_lookScreen` maps a
 section to its screen). `scripts/sidl-preview.js` renders screens from a skin dir to PNGs for review. Tests: `test/sidl-skin.test.js`.
+**Bring your setup to this computer** (Mimic beta `697ca2cd` + bot 4.0.77, 2026-11-11, DECISIONS §563): one card,
+`apps/mimic/bring-setup.js`, mounted in the walkthrough (`welcome.html`, step after sign-in), UI Studio's top bar and
+Settings; IPCs `ui-account-characters` (bot `GET /api/agent/ui_layout/characters`, `_handleAgentUiLayoutCharacters` /
+`_shapeUiAccountCharacters`: the household's characters with backups, newest whole bundle per machine) and
+`ui-local-versions`. Restores through `ui-restore-plan` / `ui-restore-parts`; `uiSync.defaultParts` leaves keybinds and
+Zeal off on a PC with another account's characters. `fitLayout` clamps existing target blocks on-screen. Overlay
+positions: `apps/mimic/overlayBackup.js` (`mimic-overlays.json` in full bundles, `landOnScreens`). Dated
+`eqclient.ini`/`zeal.ini` copies and 5 local versions per character: `apps/mimic/localVersions.js`. Test:
+`test/ui-bring-setup.test.js`.
 **Compare-first restore, Keep in sync, This PC** (Mimic beta `d494250d`, 2026-11-01, DECISIONS §510): Settings' ↩ Restore
 calls `ui-restore-plan` (backup vs disk per part, from `apps/mimic/uiRestorePlan.js`: `classify` / `compare` / `fitLayout` /
 `buildRestore` / `windowRects`) and `ui-restore-parts` (write now, or queue `{kind:'restore'}` for after the camp). Parts: layout
