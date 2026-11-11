@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { createRequire } from 'module';
 import fs from 'fs';
-import { stripJs, sliceBlock } from './_source-slice.js';
+import { stripJs, sliceBlock, evalBlock } from './_source-slice.js';
 
 const require = createRequire(import.meta.url);
 const sync = require('../apps/mimic/uiSync.js');
@@ -89,7 +89,35 @@ describe('main.js wiring', () => {
   });
   it('a restore with keybinds waits for every EverQuest to close', () => {
     const tick = stripJs(sliceBlock(main, 'async function _tickUiDeferred() {', '\n}\n'));
-    expect(tick).toMatch(/entry\.kind === 'restore' && \(entry\.parts \|\| \[\]\)\.includes\('keybinds'\)/);
+    expect(tick).toMatch(/entry\.kind === 'restore' && !ownOnly/);
+    const needs = stripJs(sliceBlock(main, 'function _uiNeedsEqClosed(parts) {', '\n}\n'));
+    expect(needs).toMatch(/'keybinds'/);
+    expect(needs).toMatch(/'zeal'/);
+  });
+  it('a restore of only the character\'s own files does not wait for ANOTHER character\'s EverQuest (FB-126/127)', () => {
+    const { _uiNeedsEqClosed } = evalBlock(sliceBlock(main, 'function _uiNeedsEqClosed(parts) {', '\n}\n'), ['_uiNeedsEqClosed']);
+    expect(_uiNeedsEqClosed(['layout', 'hotkeys', 'socials', 'spellsets', 'other', 'overlays'])).toBe(false);
+    expect(_uiNeedsEqClosed(['layout', 'keybinds'])).toBe(true);
+    expect(_uiNeedsEqClosed(['layout', 'zeal'])).toBe(true);
+    // The character's own Zeal sections live INSIDE eqclient.ini / zeal.ini, which a running client rewrites.
+    expect(_uiNeedsEqClosed(['zealchar'])).toBe(true);
+    expect(_uiNeedsEqClosed(undefined)).toBe(true);               // unknown parts: assume the strict case
+    const busy = stripJs(sliceBlock(main, 'async function _uiEqBusyFor(character, parts, eqDir) {', '\n}\n'));
+    expect(busy.indexOf('_uiCharActiveInZeal')).toBeLessThan(busy.indexOf('_uiNeedsEqClosed'));
+    expect(busy).toMatch(/_uiCharLogFresh\(eqDir, cl\)/);          // in game with the pipe down still counts as camp
+  });
+  it('a restore runs in two halves: own files now or at camp, shared-file parts when EverQuest closes, and the queue keeps both', () => {
+    const h = stripJs(sliceBlock(main, "ipcMain.handle('ui-restore-parts', async (_e, params) => {", '\n});\n'));
+    expect(h).toMatch(/const halves = \[parts\.filter\(k => !_uiNeedsEqClosed\(\[k\]\)\), parts\.filter\(k => _uiNeedsEqClosed\(\[k\]\)\)\]/);
+    expect(h).toMatch(/const busy = await _uiEqBusyFor\(character, g, eqDir\);/);
+    expect(h).toMatch(/queuedParts: queued/);
+    const q = stripJs(sliceBlock(main, 'function _queueUiRestore(entry) {', '\n}\n'));
+    expect(q).toMatch(/_uiNeedsEqClosed\(e\.parts\) === shared/);
+  });
+  it('the old single Zeal choice still brings the character\'s own Zeal settings', () => {
+    expect(sync.cleanSyncCfg({ parts: ['layout', 'zeal'] }).parts).toEqual(expect.arrayContaining(['zeal', 'zealchar']));
+    expect(sync.cleanSyncCfg({ parts: ['layout'] }).parts).not.toContain('zealchar');
+    expect(sync.cleanSyncCfg({}).parts).toContain('zealchar');
   });
   it('a queued restore survives a restart', () => {
     const load = stripJs(sliceBlock(main, 'function _loadUiDeferred() {', '\n}\n'));

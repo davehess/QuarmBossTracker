@@ -375,7 +375,35 @@
       if (other.children.length) { other.label = 'Other characters on this computer (' + other.children.length + ')'; sel.appendChild(other); }
     } catch (e) { setStatus('IPC unavailable — open via tray', 'err'); }
   }
-  bootstrap();
+  var _bootDone = bootstrap();
+  // "Sort your chat channels" on the bring-in card (a member, 2026-11-11, FB-125): open on that character and show the
+  // chat routing inspector (drag chips between windows, + New chat window). Only an entry point; the routing UI is
+  // the one in the Hotbar Pages inspector. The character may be new to this PC (brought in a moment ago), so it is
+  // added to the list when the bootstrap list does not have it yet.
+  if (window.mimic && window.mimic.onUiStudioGoto) window.mimic.onUiStudioGoto(function(goto){
+    Promise.resolve(_bootDone).then(async function(){
+      if (!goto || !goto.character) return;
+      var sel = document.getElementById('charSelect');
+      var want = String(goto.character).toLowerCase(), found = null;
+      for (var i = 0; i < sel.options.length; i++) if (String(sel.options[i].value).split('|')[0].toLowerCase() === want) { found = sel.options[i]; break; }
+      if (!found) {
+        found = document.createElement('option');
+        found.value = goto.character + '|' + (goto.eqDir || '');
+        found.textContent = goto.character;
+        sel.appendChild(found);
+      }
+      sel.value = found.value;
+      await loadAndRescale(true);
+      if (goto.chat) {
+        document.getElementById('inspectSocialsBtn').click();
+        var tries = 0, t = setInterval(function(){
+          var b = document.getElementById('chatRoutingBlock');
+          if (b) { clearInterval(t); b.scrollIntoView({ block: 'start' }); }
+          else if (++tries > 40) clearInterval(t);
+        }, 150);
+      }
+    }).catch(function(e){ setStatus('could not open ' + (goto && goto.character) + ': ' + (e && e.message), 'err'); });
+  });
   // 📦 Bring in / restore a backup: the shared card with every character in the account. Nothing is ticked for a
   // character that is already on this PC, so a restore is always a choice.
   document.getElementById('bringBtn').addEventListener('click', function(){

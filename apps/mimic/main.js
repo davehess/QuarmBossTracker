@@ -1891,15 +1891,23 @@ async function _tickUiDeferred() {
       if (_uiCharActiveInZeal(charLower)) { entry.sawActive = true; keep.push(entry); continue; }
       // Keybinds live in eqclient.ini, which EVERY running EverQuest writes on exit: a restore that carries
       // them waits for all of EverQuest to close, not just this character's camp.
-      if (entry.kind === 'restore' && (entry.parts || []).includes('keybinds')) {
+      // Zeal's shared sections ride in the same two files, so they wait the same way.
+      const ownOnly = entry.kind === 'restore' && !_uiNeedsEqClosed(entry.parts);
+      if (entry.kind === 'restore' && !ownOnly) {
         if (eqUp === null) { try { eqUp = await _isEqRunning(); } catch { eqUp = false; } }
         if (eqUp) { keep.push(entry); continue; }
       }
       // Not in Zeal. Apply when we previously saw it in-game (logged out now),
       // or it was never in-game AND no EverQuest is running (nothing to clobber).
+      // A restore of only this character's own files has nothing to clobber while ANOTHER character plays, so it
+      // waits only for this character's own log to go quiet (it may be in game with the Zeal pipe down).
       if (!entry.sawActive) {
-        if (eqUp === null) { try { eqUp = await _isEqRunning(); } catch { eqUp = false; } }
-        if (eqUp) { keep.push(entry); continue; }   // EQ up, char not seen → wait
+        if (ownOnly) {
+          if (_uiCharLogFresh(entry.eqDir, charLower)) { keep.push(entry); continue; }
+        } else {
+          if (eqUp === null) { try { eqUp = await _isEqRunning(); } catch { eqUp = false; } }
+          if (eqUp) { keep.push(entry); continue; }   // EQ up, char not seen → wait
+        }
       }
       // Stabilization: let EQ finish its logout write before we overwrite.
       if (Date.now() - (entry.queuedAt || 0) < 6000) { keep.push(entry); continue; }
@@ -6828,8 +6836,15 @@ function openLocalSite(page) {
 // section, rescales 1440 → 1080 (or any source→target res), lets the user
 // drag/resize windows with snap-to-edges, then writes back with .bak
 // backups. Lets users prep a UI for a new monitor without launching EQ.
-function openUiStudio() {
-  if (uiStudioWindow) { uiStudioWindow.focus(); return; }
+// `goto` = { character, eqDir, chat: true }: open on that character with the chat-routing inspector (the bring-in
+// card's "Sort your chat channels", FB-125). An open window is told; a new one is told once its page has loaded.
+function _sendUiStudioGoto(goto) {
+  if (!goto || !uiStudioWindow || uiStudioWindow.isDestroyed()) return;
+  const send = () => { try { uiStudioWindow.webContents.send('ui-studio-goto', goto); } catch { /* window closing */ } };
+  if (uiStudioWindow.webContents.isLoading()) uiStudioWindow.webContents.once('did-finish-load', send); else send();
+}
+function openUiStudio(goto) {
+  if (uiStudioWindow) { uiStudioWindow.focus(); _sendUiStudioGoto(goto); return; }
   uiStudioWindow = new BrowserWindow({
     width: 1200, height: 780, title: 'Raid Mimic — UI Studio',
     backgroundColor: '#0d1117',
@@ -6839,6 +6854,7 @@ function openUiStudio() {
   uiStudioWindow.setMenu(null);
   uiStudioWindow.loadFile('ui-studio.html');
   uiStudioWindow.on('closed', () => { uiStudioWindow = null; });
+  _sendUiStudioGoto(goto);
 }
 
 // Read a character's full ini bundle (existing UI Studio capture helper
@@ -6907,7 +6923,12 @@ ipcMain.handle('ui-studio-write-bundle', (_e, eqDir, bundle, opts) => {
 // Open UI Studio from the dashboard nav button. Same entry point as the
 // tray menu item — openUiStudio focuses the existing window if one is
 // already open instead of stacking duplicates.
-ipcMain.handle('open-ui-studio', () => { openUiStudio(); return true; });
+ipcMain.handle('open-ui-studio', (_e, goto) => {
+  const g = goto && typeof goto === 'object' && /^[A-Za-z]+$/.test(String(goto.character || ''))
+    ? { character: String(goto.character), eqDir: String(goto.eqDir || ''), chat: goto.chat === true } : null;
+  openUiStudio(g);
+  return true;
+});
 
 // ── PvP Sets (bundled in apps/mimic/pvp-sets/) ─────────────────────────────
 // Shared rotations contributed by guildies — pre-built hotkey pages,
@@ -14121,11 +14142,47 @@ function _uiMainLayoutText(files, character) {
   return name ? files[name] : null;
 }
 // Why a restore cannot write now: 'camp' (the character is in game), 'close' (EverQuest is running), or null.
-async function _uiEqBusyFor(character) {
-  if (_uiCharActiveInZeal(String(character).toLowerCase())) return 'camp';
+// The parts that write the two files EVERY running EverQuest rewrites when it exits (eqclient.ini, zeal.ini): those wait
+// for all of EverQuest to close. Every other part writes only this character's own files, which only this character's
+// client rewrites (a member, 2026-11-11, FB-126 / FB-127: with the guild lead's EverQuest running, a bring-in of a
+// character that was not logged in anywhere was queued "until EverQuest closes" and so never landed in the session).
+// 'zealchar' is the character's own sections, but they sit INSIDE those two shared files, so it waits as well.
+function _uiNeedsEqClosed(parts) {
+  return !Array.isArray(parts) || parts.some(k => k === 'keybinds' || k === 'zeal' || k === 'zealchar');
+}
+// A character that is in game without Zeal's pipe reporting it (the pipe fails on some PCs) still writes its log.
+function _uiCharLogFresh(eqDir, charLower) {
+  try {
+    for (const f of fs.readdirSync(eqDir)) {
+      if (!_isEqLogFile(eqDir, f)) continue;
+      const n = _characterFromLogName(f);
+      if (!n || n.toLowerCase() !== charLower) continue;
+      if (Date.now() - fs.statSync(path.join(eqDir, f)).mtimeMs < 120000) return true;
+    }
+  } catch { /* no folder to look in */ }
+  return false;
+}
+async function _uiEqBusyFor(character, parts, eqDir) {
+  const cl = String(character).toLowerCase();
+  if (_uiCharActiveInZeal(cl)) return 'camp';
   let up = false;
   try { up = await _isEqRunning(); } catch { up = false; }
-  return up ? 'close' : null;
+  if (!up) return null;
+  if (_uiNeedsEqClosed(parts)) return 'close';
+  return eqDir && _uiCharLogFresh(eqDir, cl) ? 'camp' : null;
+}
+// The resolution EverQuest runs at on THIS PC, which the layout is fitted to (the guild lead, 2026-11-11: "resized for
+// the window"): eqclient.ini [VideoMode] when it holds one, else the EverQuest window that is open, else the screen.
+async function _uiTargetRes(local) {
+  const ini = _eqResOf(local);
+  if (ini) return { ...ini, from: 'eqclient.ini' };
+  try {
+    await _eqWindowGeometry(3000);
+    const win = _eqMainWindow(10000);
+    if (win) return { w: Math.round(win.client.width), h: Math.round(win.client.height), from: 'the EverQuest window' };
+  } catch { /* no window to measure */ }
+  const s = _primarySize();
+  return s ? { ...s, from: 'the screen' } : null;
 }
 function _uiPartKeys(parts) {
   // 'overlays' is Mimic's own overlay layout (overlayBackup.js); the rest are EverQuest's files (uiRestorePlan.PARTS).
@@ -14145,7 +14202,8 @@ function _uiWriteRestore(entry, backupTag) {
   const savedCopies = _uiSafetyCopies(entry.eqDir);
   const local = _readUiBundle(entry.eqDir, entry.character);
   try { localVersions.saveVersion(_localVersionsRoot(), entry.character, local); } catch { /* undo copy is best effort */ }
-  const target = _eqResOf(local) || _primarySize();
+  // eqclient.ini as it is NOW, else what was measured when the restore was asked for (a queued one), else the screen.
+  const target = _eqResOf(local) || entry.target || _primarySize();
   const r = uiRestorePlan.buildRestore({
     backupFiles: entry.files, localFiles: local, character: entry.character,
     parts: _uiPartKeys(entry.parts), knownChars: _knownCharsIn(entry.eqDir, entry.character), target,
@@ -14157,12 +14215,17 @@ function _uiWriteRestore(entry, backupTag) {
     written.push(name);
   }
   written.savedCopies = savedCopies;
+  written.fileParts = r.fileParts || {};
   written.overlays = _uiPartKeys(entry.parts).includes('overlays') && entry.overlays ? _applyOverlayBackup(entry.overlays) : null;
   return written;
 }
 function _queueUiRestore(entry) {
   const cl = String(entry.character).toLowerCase();
-  _uiDeferred = _uiDeferred.filter(e => !(e.kind === 'restore' && String(e.character).toLowerCase() === cl && e.eqDir === entry.eqDir));
+  // A restore is queued in up to two halves (own files until the character camps, shared-file parts until EverQuest
+  // closes); a new half replaces only the same half for that character.
+  const shared = _uiNeedsEqClosed(entry.parts);
+  _uiDeferred = _uiDeferred.filter(e => !(e.kind === 'restore' && String(e.character).toLowerCase() === cl && e.eqDir === entry.eqDir
+    && _uiNeedsEqClosed(e.parts) === shared));
   _uiDeferred.push({ ...entry, kind: 'restore', queuedAt: Date.now(), sawActive: _uiCharActiveInZeal(cl) });
   _saveUiDeferred();
 }
@@ -14192,7 +14255,7 @@ ipcMain.handle('ui-restore-plan', async (_e, params) => {
     const snap = await _loadUiSource(cfg, token, character, id);
     const local = _readUiBundle(eqDir, character);
     const knownChars = _knownCharsIn(eqDir, character);
-    const target = _eqResOf(local) || _primarySize();
+    const target = await _uiTargetRes(local);
     const parts = uiRestorePlan.PARTS.map(p => ({ key: p.key, label: p.label, scope: p.scope,
       ...uiRestorePlan.compare(p.key, snap.files, local, character, { knownChars, target }) }));
     // Mimic's own overlay layout: a part of its own when the backup holds one (no per-item compare; it is a layout).
@@ -14207,13 +14270,13 @@ ipcMain.handle('ui-restore-plan', async (_e, params) => {
       ok: true,
       source: { machine: params?.machine ? String(params.machine).slice(0, 64) : null,
         w: snap.source_width || null, h: snap.source_height || null, label: snap.label || null },
-      target: { machine: _thisMachine(), w: target ? target.w : null, h: target ? target.h : null },
+      target: { machine: _thisMachine(), w: target ? target.w : null, h: target ? target.h : null, from: target ? target.from : null },
       parts,
       preview: {
         backup: fitted ? uiRestorePlan.windowRects(fitted, target.w, target.h) : [],
         mine: ml && target ? uiRestorePlan.windowRects(ml, target.w, target.h) : [],
       },
-      busy: await _uiEqBusyFor(character),
+      busy: await _uiEqBusyFor(character, undefined, eqDir),
     };
   } catch (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
 });
@@ -14230,14 +14293,34 @@ ipcMain.handle('ui-restore-parts', async (_e, params) => {
   try {
     const snap = await _loadUiSource(cfg, token, character, id);
     if (!localVersions.isLocalId(id)) _uiSyncPatchState(character, { seenId: id });
-    const busy = await _uiEqBusyFor(character);
-    if (busy) {
-      _queueUiRestore({ character, eqDir, files: snap.files, overlays: snap.overlays || null, parts, label: snap.label || null });
-      return { ok: true, queued: true, busy };
+    // The size the layout is fitted to is measured now (the EverQuest window needs an async look); a queued
+    // restore keeps it for the case eqclient.ini has no [VideoMode] when it applies.
+    const target = await _uiTargetRes(_readUiBundle(eqDir, character));
+    // Two halves, so one never holds the other back: the character's own files go now (or when that character camps),
+    // and the parts inside eqclient.ini / zeal.ini wait for EverQuest to close, since a running client rewrites them.
+    const halves = [parts.filter(k => !_uiNeedsEqClosed([k])), parts.filter(k => _uiNeedsEqClosed([k]))].filter(g => g.length);
+    const queued = [];
+    const written = [], fileParts = {}, savedCopies = [];
+    let overlays = null;
+    for (const g of halves) {
+      const busy = await _uiEqBusyFor(character, g, eqDir);
+      if (busy) {
+        _queueUiRestore({ character, eqDir, files: snap.files, overlays: snap.overlays || null, parts: g, label: snap.label || null, target });
+        queued.push({ parts: g, busy });
+        continue;
+      }
+      const w = _uiWriteRestore({ character, eqDir, files: snap.files, overlays: snap.overlays || null, parts: g, target });
+      for (const n of w) if (!written.includes(n)) written.push(n);
+      for (const [n, ps] of Object.entries(w.fileParts || {})) fileParts[n] = [...new Set([...(fileParts[n] || []), ...ps])];
+      for (const s of (w.savedCopies || [])) if (!savedCopies.includes(s)) savedCopies.push(s);
+      if (w.overlays) overlays = w.overlays;
     }
-    const written = _uiWriteRestore({ character, eqDir, files: snap.files, overlays: snap.overlays || null, parts });
-    _uiSyncPatchState(character, { lastSyncAt: Date.now() });
-    return { ok: true, queued: false, written, savedCopies: written.savedCopies || [], overlays: written.overlays || null };
+    if (written.length) _uiSyncPatchState(character, { lastSyncAt: Date.now() });
+    // What was written, file by file with the parts that cover it, so the card can show it (FB-123).
+    const partLabel = (k) => (uiRestorePlan.PARTS.find(p => p.key === k) || { label: k }).label;
+    const files = written.map(name => ({ name, parts: (fileParts[name] || []).map(partLabel) }));
+    return { ok: true, character, queued: queued.length > 0, busy: queued.length ? queued[0].busy : null, queuedParts: queued,
+      written, files, savedCopies, overlays, target: target ? { w: target.w, h: target.h, from: target.from } : null };
   } catch (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
 });
 
@@ -14340,7 +14423,7 @@ async function _uiSyncCheck() {
         if (!parts.length) continue;
         try {
           const full = await _fetchUiSnapshot(cfg, token, character, snap.id);
-          if (await _uiEqBusyFor(character)) _queueUiRestore({ character, eqDir, files: full.files, parts, label: snap.label || null });
+          if (await _uiEqBusyFor(character, parts, eqDir)) _queueUiRestore({ character, eqDir, files: full.files, parts, label: snap.label || null });
           else {
             const written = _uiWriteRestore({ character, eqDir, files: full.files, parts });
             _uiSyncPatchState(character, { lastSyncAt: Date.now() });
@@ -14501,6 +14584,9 @@ ipcMain.handle('ui-account-characters', async () => {
     return {
       ok: true, characters, eqDir,
       otherAccountsOnPc: uiSync.otherCharsOnPc(characters, names).length > 0,
+      // What a bring-in restores before the member's own ticks (bring-setup.js reads this). It was never sent, so the
+      // card restored no part but overlays and the shared ticks (a member, 2026-11-11, FB-124 / FB-126 / FB-127).
+      parts: uiSync.defaultParts({ otherAccountsOnPc: uiSync.otherCharsOnPc(characters, names).length > 0 }),
       otherCharsOnPc: uiSync.otherCharsOnPc(characters, names),
       thisPc: { machine: _thisMachine(), w: (_primarySize() || {}).w || null, h: (_primarySize() || {}).h || null },
     };

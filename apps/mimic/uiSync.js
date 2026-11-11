@@ -15,7 +15,7 @@ const AUTO_LABEL = 'Auto: after camp';
 const NEWER_MODES = ['ask', 'quiet', 'never'];
 // What a newer copy from another PC brings over unless the member picks otherwise. Keybinds are shared by every
 // character on a PC, so they stay off until asked for.
-const DEFAULT_SYNC_PARTS = ['layout', 'hotkeys', 'socials', 'spellsets', 'zeal', 'other'];
+const DEFAULT_SYNC_PARTS = ['layout', 'hotkeys', 'socials', 'spellsets', 'zealchar', 'zeal', 'other'];
 
 const SECRET_RX = /ChannelAutoJoin|password/i;
 
@@ -91,6 +91,9 @@ function suggestScale({ width, height, scaleFactor = 1, inches = null } = {}) {
 function cleanSyncCfg(c) {
   const v = c && typeof c === 'object' ? c : {};
   const parts = Array.isArray(v.parts) ? v.parts.filter(p => typeof p === 'string' && /^[a-z]{2,12}$/.test(p)) : DEFAULT_SYNC_PARTS.slice();
+  // The one 'zeal' part was split into the character's own ('zealchar') and the shared sections (2026-11-11): a choice
+  // saved before that, with Zeal ticked, still means the character's own settings come over.
+  if (parts.includes('zeal') && !parts.includes('zealchar')) parts.push('zealchar');
   return {
     // On unless switched off (the guild lead, 2026-11-11: the latest setup should always be in the cloud). It only
     // ever uploads the signed-in account's own characters and only when their files changed.
@@ -120,12 +123,12 @@ function otherCharsOnPc(accountChars, diskNames) {
   return (diskNames || []).filter(n => !mine.has(String(n).toLowerCase()));
 }
 
-// Which parts a bring-in restores. Keybinds come from eqclient.ini [KeyMaps], and the Zeal part writes Zeal's shared
-// sections as well as the character's own; every character on the PC shares those. So on a PC that also holds another
-// account's characters both stay off unless the member ticks them (the guild lead, 2026-11-11: a guest's setup must not
-// change the host's own).
+// Which parts a bring-in restores. Keybinds come from eqclient.ini [KeyMaps], and the 'zeal' part writes Zeal's SHARED
+// sections; every character on the PC shares those. So on a PC that also holds another account's characters both stay
+// off unless the member ticks them (the guild lead, 2026-11-11: a guest's setup must not change the host's own). The
+// character's own Zeal settings ('zealchar') are always on, like the layout (FB-124 / FB-127).
 function defaultParts({ otherAccountsOnPc = false } = {}) {
-  const all = ['layout', 'hotkeys', 'socials', 'spellsets', 'keybinds', 'zeal', 'other', 'overlays'];
+  const all = ['layout', 'hotkeys', 'socials', 'spellsets', 'zealchar', 'keybinds', 'zeal', 'other', 'overlays'];
   return otherAccountsOnPc ? all.filter(k => k !== 'keybinds' && k !== 'zeal') : all;
 }
 
