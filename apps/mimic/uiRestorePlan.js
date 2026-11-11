@@ -148,15 +148,29 @@ function fitLayout(text, targetW, targetH) {
   const secs = firstBlocks(parseSections(src));
   const main = mainRes(secs);
   const sourceRes = main ? main.w + 'x' + main.h : null;
-  if (!(tw > 0 && th > 0)) return { text: src, added: 0, sourceRes };
+  if (!(tw > 0 && th > 0)) return { text: src, added: 0, clamped: 0, sourceRes };
 
   const tx = 'XPos' + tw + 'x' + th, ty = 'YPos' + tw + 'x' + th;
   const edits = [];
-  let added = 0;
+  let added = 0, clamped = 0;
   for (const s of secs) {
     if (!s.name) continue;
     const m = keyMap(s);
-    if (m.has(lc(tx))) continue;
+    if (m.has(lc(tx))) {
+      // A block for this screen already exists (the layout came from a PC with the same resolution but a
+      // different monitor arrangement, e.g. a second screen to the right): keep it, but pull any window that
+      // sits past the edge back on screen, the same way the added ones are. The guild lead, 2026-11-11: chat
+      // windows came up off the 1080 screen after a restore because an existing block was left as it was.
+      if (!m.has(lc(ty))) continue;
+      const ox = parseInt(m.get(lc(tx)), 10), oy = parseInt(m.get(lc(ty)), 10);
+      if (!Number.isFinite(ox) || !Number.isFinite(oy)) continue;
+      const cx = clamp(ox, 0, Math.max(0, tw - 80)), cy = clamp(oy, 0, Math.max(0, th - 80));
+      if (cx === ox && cy === oy) continue;
+      if (cx !== ox) edits.push({ section: s.name, key: tx, value: String(cx) });
+      if (cy !== oy) edits.push({ section: s.name, key: ty, value: String(cy) });
+      clamped++;
+      continue;
+    }
     // Prefer the main block; then the old bare XPos/YPos (resolution unknown, kept unscaled); then any other block.
     let sx = null, sy = null, rw = 0, rh = 0;
     if (main && m.has('xpos' + main.w + 'x' + main.h) && m.has('ypos' + main.w + 'x' + main.h)) {
@@ -176,8 +190,8 @@ function fitLayout(text, targetW, targetH) {
     edits.push({ section: s.name, key: ty, value: String(clamp(Math.round(y), 0, Math.max(0, th - 80))) });
     added++;
   }
-  if (!edits.length) return { text: src, added: 0, sourceRes };
-  return { text: applyIniKeyEdits(src, edits).text, added, sourceRes };
+  if (!edits.length) return { text: src, added: 0, clamped: 0, sourceRes };
+  return { text: applyIniKeyEdits(src, edits).text, added, clamped, sourceRes };
 }
 
 // ---- compare ---------------------------------------------------------------------------------

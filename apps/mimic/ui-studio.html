@@ -156,6 +156,9 @@
 <body>
   <div id="bar">
     <h1>🎨 UI Studio</h1>
+    <!-- The guild lead, 2026-11-11: restoring a backup has to be clear here, not only in Settings. The card is the
+         shared one (bring-setup.js), listing every character in the account, on this PC or not. -->
+    <button id="bringBtn" title="Bring in a backup from your account (or a version kept on this computer)" style="background:var(--wp-accent);color:var(--wp-text);border:0;font-weight:600">📦 Bring in / restore a backup</button>
     <label>Character
       <select id="charSelect"><option value="">— pick —</option></select>
     </label>
@@ -306,6 +309,13 @@
       <div class="meta" id="sideMeta"></div>
     </aside>
   </div>
+<div id="bringPane" hidden style="position:fixed;inset:0;background:color-mix(in srgb, black 65%, transparent);z-index:50;overflow:auto;padding:40px 16px">
+  <div style="max-width:720px;margin:0 auto;background:var(--wp-panel);border:1px solid var(--wp-border);border-radius:8px;padding:12px 16px">
+    <div style="display:flex;justify-content:flex-end"><button id="bringClose" class="secondary" aria-label="Close">✕ Close</button></div>
+    <div id="bringCard"></div>
+  </div>
+</div>
+<script src="bring-setup.js"></script>
 <script src="sidlRender.js"></script>
 <script>
   // ── State ────────────────────────────────────────────────────────────────
@@ -347,16 +357,33 @@
     try {
       var chars = await window.mimic.uiStudioListCharacters();
       var sel = document.getElementById('charSelect');
+      // The signed-in account's characters first, the rest of this PC's under one group (the guild lead,
+      // 2026-11-11). With no answer from the bot the list stays as it was.
+      var mine = {}, hasMine = false;
+      try {
+        var acct = await window.mimic.uiAccountCharacters();
+        if (acct && acct.ok) (acct.characters || []).forEach(function(a){ mine[a.character.toLowerCase()] = 1; hasMine = true; });
+      } catch (e2) {}
+      var other = document.createElement('optgroup');
       for (var i = 0; i < chars.length; i++) {
         var c = chars[i];
         var opt = document.createElement('option');
         opt.value = c.character + '|' + c.eqDir;
         opt.textContent = c.character + (c.ini_count ? ' (' + c.ini_count + ' ini files)' : ' (no inis)');
-        sel.appendChild(opt);
+        (hasMine && !mine[c.character.toLowerCase()] ? other : sel).appendChild(opt);
       }
+      if (other.children.length) { other.label = 'Other characters on this computer (' + other.children.length + ')'; sel.appendChild(other); }
     } catch (e) { setStatus('IPC unavailable — open via tray', 'err'); }
   }
   bootstrap();
+  // 📦 Bring in / restore a backup: the shared card with every character in the account. Nothing is ticked for a
+  // character that is already on this PC, so a restore is always a choice.
+  document.getElementById('bringBtn').addEventListener('click', function(){
+    var pane = document.getElementById('bringPane');
+    pane.hidden = false;
+    window.wpBringSetup.mount(document.getElementById('bringCard'), { all: true, fresh: true });
+  });
+  document.getElementById('bringClose').addEventListener('click', function(){ document.getElementById('bringPane').hidden = true; });
 
   // Show the active EQ folder for the picked character — so a multi-folder user
   // can see which install they're editing (the dropdown only shows the name).

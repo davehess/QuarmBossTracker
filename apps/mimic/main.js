@@ -40,6 +40,8 @@ const uiLayouts = require('./uiLayouts');
 const { restorableName, filterRestorable } = require('./uiRestoreGuard');
 const uiRestorePlan = require('./uiRestorePlan');
 const uiSync = require('./uiSync');
+const overlayBackup = require('./overlayBackup');
+const localVersions = require('./localVersions');
 const soundLib = require('./sounds');
 const neuralVoice = require('./neuralVoice');
 const hubs = require('./hubs');
@@ -1731,6 +1733,10 @@ function _backupAndWriteFile(targetPath, contents, backupTag) {
   const bakPath = `${targetPath}.${tag}-${ts}`;
   if (fs.existsSync(targetPath)) {
     fs.copyFileSync(targetPath, bakPath);
+    // eqclient.ini and zeal.ini are shared by every character on the PC: whatever writes them, a dated copy
+    // (newest 10 kept) is taken first (the guild lead, 2026-11-11). A restore already took one in the same second.
+    const base = path.basename(targetPath);
+    if (/^(eqclient|zeal)\.ini$/i.test(base)) localVersions.stampedCopy(path.dirname(targetPath), base);
   }
   const tmp = targetPath + `.tmp-${ts}`;
   fs.writeFileSync(tmp, contents, 'utf8');
@@ -14029,7 +14035,82 @@ async function _fetchUiSnapshot(cfg, token, character, id) {
   const snap = await _httpsJson(`${_botBaseUrl(cfg)}/api/agent/ui_layout/${encodeURIComponent(id)}?character=${encodeURIComponent(character)}`,
     { headers: { 'Authorization': `Bearer ${token}` } });
   if (!snap || !snap.files) throw new Error('snapshot empty');
-  return { ...snap, files: filterRestorable(snap.files).files };   // UI settings files only (uiRestoreGuard.js)
+  // Mimic's own overlay layout is taken out BEFORE the filter: it is not an EQ file and never goes to the EQ folder.
+  const overlays = typeof snap.files[overlayBackup.FILE] === 'string' ? overlayBackup.parse(snap.files[overlayBackup.FILE]) : null;
+  return { ...snap, overlays, files: filterRestorable(snap.files).files };   // UI settings files only (uiRestoreGuard.js)
+}
+// A restore source: a cloud backup, or a version Mimic kept on this computer ('local-<stamp>', localVersions.js).
+async function _loadUiSource(cfg, token, character, id) {
+  if (localVersions.isLocalId(id)) {
+    const files = localVersions.readVersion(_localVersionsRoot(), character, id);
+    if (!files) throw new Error('that saved version is gone');
+    return { files: filterRestorable(files).files, overlays: null, source_width: _eqResOf(files) ? _eqResOf(files).w : null,
+      source_height: _eqResOf(files) ? _eqResOf(files).h : null, label: null, local: true };
+  }
+  if (!token) throw new Error('no token configured');
+  return _fetchUiSnapshot(cfg, token, character, id);
+}
+function _localVersionsRoot() { return path.join(app.getPath('userData'), 'char-versions'); }
+
+// ── Overlay positions as a part of a backup (the guild lead, 2026-11-11) ─────────────────────────────────────
+function _overlayBackupText() {
+  try {
+    if (_agentOnly()) return null;
+    const cfg = loadConfig();
+    const sig = _screenSignature();
+    const flagsSrc = _hideAllActive && _hideAllPrev ? _hideAllPrev : cfg;       // hide-all has every flag off in cfg
+    const flags = {};
+    for (const f of _HIDEALL_FLAGS) flags[f] = f === 'showTriggerOverlay' ? flagsSrc[f] !== false : !!flagsSrc[f];
+    const remembered = ((cfg.overlayLayoutBySig || {})[sig] || {}).rects || {};
+    const rects = Object.assign({}, remembered, _overlayRectsNow());
+    const eq = _eqMainWindow(10 * 60 * 1000);
+    return overlayBackup.build({
+      rects, flags, sig, machine: _thisMachine(), now: Date.now(),
+      displays: screen.getAllDisplays().map(d => d.bounds),
+      eq: eq ? { x: eq.client.x, y: eq.client.y, width: eq.client.width, height: eq.client.height } : null,
+    });
+  } catch { return null; }
+}
+// Fit a backup's overlay layout onto THIS computer's screens, with the same planner the screen-change question
+// uses (an overlay keeps its side: with EverQuest's screen or on another one), then bring anything still off every
+// screen to EverQuest's. Written to the saved layout either way; windows are moved and shown/hidden only while
+// overlays are locked and not being dragged, otherwise it takes effect at the next Mimic start.
+function _applyOverlayBackup(ob) {
+  if (!ob || _agentOnly()) return { applied: false };
+  const cfg = loadConfig();
+  const curSig = _screenSignature();
+  const eqWin = _eqMainWindow();
+  let target;
+  try { target = eqWin ? screen.getDisplayMatching(eqWin.client) : screen.getPrimaryDisplay(); } catch { target = screen.getPrimaryDisplay(); }
+  const displays = screen.getAllDisplays();
+  let rects = ob.rects;
+  if (ob.sig && ob.sig !== curSig) {
+    const plan = _displayChangePlan({
+      prevSig: ob.sig, curSig, memory: { [ob.sig]: { rects: ob.rects, eq: ob.eq } }, currentRects: ob.rects,
+      curDisplays: displays.map(d => ({ bounds: d.bounds, workArea: d.workArea })),
+      target: { bounds: target.bounds, workArea: target.workArea },
+    });
+    rects = Object.assign({}, ob.rects, plan.moves);
+  }
+  rects = overlayBackup.landOnScreens(rects, displays.map(d => d.workArea), target.workArea);
+  for (const [k, r] of Object.entries(rects)) {
+    if (!/Bounds(_|$)/.test(k) || k.startsWith('canvas:')) continue;          // only keys the windows restore from
+    cfg[k] = r;
+    _rememberLayout(cfg, curSig, k, r);
+  }
+  const flagStore = _hideAllActive && _hideAllPrev ? _hideAllPrev : cfg;
+  for (const [f, v] of Object.entries(ob.flags)) if (_HIDEALL_FLAGS.includes(f)) flagStore[f] = v;
+  saveConfig(cfg);
+  const live = cfg.overlaysLocked !== false && !setupMode;
+  if (live) {
+    for (const [key, win] of _overlayEntries()) {
+      const bk = _boundsKeyForEntry(key, win);
+      if (bk && rects[bk] && win && !win.isDestroyed() && !_holdForMove(win, 'overlay backup restore')) { try { win.setBounds(rects[bk]); } catch { /* mid-close */ } }
+    }
+    if (!_hideAllActive) { try { applyAllVisibility(); } catch { /* next start */ } }
+  }
+  appendAgentLog(`[ui-restore] overlay positions applied (${Object.keys(rects).length} overlay(s), ${live ? 'now' : 'at next start'})\n`);
+  return { applied: true, live, count: Object.keys(rects).length };
 }
 // The character's main layout file (UI_<char>_pq.proj.ini, else any UI_<char>*.ini), for the preview.
 function _uiMainLayoutText(files, character) {
@@ -14047,11 +14128,23 @@ async function _uiEqBusyFor(character) {
   return up ? 'close' : null;
 }
 function _uiPartKeys(parts) {
-  return (Array.isArray(parts) ? parts : []).filter(k => uiRestorePlan.PARTS.some(p => p.key === k));
+  // 'overlays' is Mimic's own overlay layout (overlayBackup.js); the rest are EverQuest's files (uiRestorePlan.PARTS).
+  return (Array.isArray(parts) ? parts : []).filter(k => k === 'overlays' || uiRestorePlan.PARTS.some(p => p.key === k));
+}
+// The two files every character on this PC shares get a dated copy before ANY restore touches the folder, whether
+// or not their parts are ticked (the guild lead, 2026-11-11): a keybind or Zeal section, or a write from another
+// path, must always be undoable. _backupAndWriteFile adds the same copy for every other write to them.
+function _uiSafetyCopies(eqDir) {
+  const out = [];
+  for (const n of ['eqclient.ini', 'zeal.ini']) { const c = localVersions.stampedCopy(eqDir, n); if (c) out.push(c); }
+  return out;
 }
 // Merge the chosen parts of a backup into the files as they are on disk NOW, and write what changed.
+// Returns the names written; `.savedCopies` lists the dated copies taken first, `.overlays` the overlay result.
 function _uiWriteRestore(entry, backupTag) {
+  const savedCopies = _uiSafetyCopies(entry.eqDir);
   const local = _readUiBundle(entry.eqDir, entry.character);
+  try { localVersions.saveVersion(_localVersionsRoot(), entry.character, local); } catch { /* undo copy is best effort */ }
   const target = _eqResOf(local) || _primarySize();
   const r = uiRestorePlan.buildRestore({
     backupFiles: entry.files, localFiles: local, character: entry.character,
@@ -14063,6 +14156,8 @@ function _uiWriteRestore(entry, backupTag) {
     _backupAndWriteFile(path.join(entry.eqDir, name), text, backupTag || null);
     written.push(name);
   }
+  written.savedCopies = savedCopies;
+  written.overlays = _uiPartKeys(entry.parts).includes('overlays') && entry.overlays ? _applyOverlayBackup(entry.overlays) : null;
   return written;
 }
 function _queueUiRestore(entry) {
@@ -14092,14 +14187,20 @@ ipcMain.handle('ui-restore-plan', async (_e, params) => {
   if (!character || !eqDir || !id) return { ok: false, error: 'character + eqDir + id required' };
   const cfg = loadConfig();
   const token = resolveUploadToken(cfg);
-  if (!token) return { ok: false, error: 'no token configured' };
+  if (!token && !localVersions.isLocalId(id)) return { ok: false, error: 'no token configured' };
   try {
-    const snap = await _fetchUiSnapshot(cfg, token, character, id);
+    const snap = await _loadUiSource(cfg, token, character, id);
     const local = _readUiBundle(eqDir, character);
     const knownChars = _knownCharsIn(eqDir, character);
     const target = _eqResOf(local) || _primarySize();
     const parts = uiRestorePlan.PARTS.map(p => ({ key: p.key, label: p.label, scope: p.scope,
       ...uiRestorePlan.compare(p.key, snap.files, local, character, { knownChars, target }) }));
+    // Mimic's own overlay layout: a part of its own when the backup holds one (no per-item compare; it is a layout).
+    if (snap.overlays) {
+      const n = Object.keys(snap.overlays.rects).length;
+      parts.push({ key: 'overlays', label: 'Overlay positions', scope: 'pc', inBackup: n, same: false, added: n, changed: 0, removed: 0,
+        summary: n + ' overlay' + (n === 1 ? '' : 's') + ', fitted to this PC\'s screens' });
+    }
     const bl = _uiMainLayoutText(snap.files, character), ml = _uiMainLayoutText(local, character);
     const fitted = bl && target ? uiRestorePlan.fitLayout(bl, target.w, target.h).text : null;
     return {
@@ -14125,18 +14226,18 @@ ipcMain.handle('ui-restore-parts', async (_e, params) => {
   if (!parts.length) return { ok: false, error: 'pick at least one part to restore' };
   const cfg = loadConfig();
   const token = resolveUploadToken(cfg);
-  if (!token) return { ok: false, error: 'no token configured' };
+  if (!token && !localVersions.isLocalId(id)) return { ok: false, error: 'no token configured' };
   try {
-    const snap = await _fetchUiSnapshot(cfg, token, character, id);
-    _uiSyncPatchState(character, { seenId: id });
+    const snap = await _loadUiSource(cfg, token, character, id);
+    if (!localVersions.isLocalId(id)) _uiSyncPatchState(character, { seenId: id });
     const busy = await _uiEqBusyFor(character);
     if (busy) {
-      _queueUiRestore({ character, eqDir, files: snap.files, parts, label: snap.label || null });
+      _queueUiRestore({ character, eqDir, files: snap.files, overlays: snap.overlays || null, parts, label: snap.label || null });
       return { ok: true, queued: true, busy };
     }
-    const written = _uiWriteRestore({ character, eqDir, files: snap.files, parts });
+    const written = _uiWriteRestore({ character, eqDir, files: snap.files, overlays: snap.overlays || null, parts });
     _uiSyncPatchState(character, { lastSyncAt: Date.now() });
-    return { ok: true, queued: false, written };
+    return { ok: true, queued: false, written, savedCopies: written.savedCopies || [], overlays: written.overlays || null };
   } catch (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
 });
 
@@ -14156,7 +14257,7 @@ const _uiAutoTimers = new Map();
 // Called when a character leaves the Zeal pipe (camped, swapped, client closed). EQ writes its files on the way
 // out, so the backup waits 15 s, and skips itself if the character came straight back.
 function _uiScheduleAutoBackup(character) {
-  if (!_uiSyncCfg().autoBackup) return;
+  // No autoBackup check here any more: the local copy (below) always runs; only the cloud upload honours the setting.
   const k = String(character || '').toLowerCase();
   if (!/^[a-z]+$/.test(k)) return;
   clearTimeout(_uiAutoTimers.get(k));
@@ -14167,14 +14268,25 @@ async function _uiAutoBackup(character) {
   if (_uiCharActiveInZeal(k)) return;
   const eqDir = _uiDirForChar(character);
   if (!eqDir) return;
-  const files = uiSync.redactForAutoBackup(_readUiBundle(eqDir, character));
-  if (!Object.keys(files).length) return;
+  const whole = _readUiBundle(eqDir, character);
+  if (!Object.keys(whole).length) return;
+  // The last few versions of the character's files stay on THIS computer (newest 5, only when something changed),
+  // so a mess-up can be undone offline (the guild lead, 2026-11-11). Kept whole: it never leaves the machine.
+  try { localVersions.saveVersion(_localVersionsRoot(), character, whole); } catch { /* best effort */ }
+  if (!_uiSyncCfg().autoBackup) return;
+  const files = uiSync.redactForAutoBackup(whole);
   const hash = uiSync.bundleHash(files);
   const cfg = loadConfig();
   if (((cfg.uiSyncState || {})[k] || {}).lastHash === hash) return;   // nothing changed since the last one
   const token = resolveUploadToken(cfg);
   if (!token) return;
-  const r = await _uiUploadBundle(cfg, token, character, files, uiSync.AUTO_LABEL);
+  // On by default now, so on a PC shared with another player it must not upload (or file a link request for)
+  // a character that is not the signed-in account's: only characters the bot already lists for this account.
+  try {
+    const mine = await _httpsJson(`${_botBaseUrl(cfg)}/api/agent/ui_layout/characters`, { headers: { 'Authorization': `Bearer ${token}` } });
+    if (!uiSync.markOnThisPc(mine && mine.characters, []).some(c => c.character.toLowerCase() === k)) return;
+  } catch { return; }
+  const r =await _uiUploadBundle(cfg, token, character, files, uiSync.AUTO_LABEL);
   if (!r.ok) { appendAgentLog(`[ui-sync] backup after camp failed for ${character}: ${r.error}\n`); return; }
   _uiSyncPatchState(character, { lastHash: hash, lastSyncAt: Date.now() });
   appendAgentLog(`[ui-sync] backed up ${character} after camp (${r.file_count} file(s))\n`);
@@ -14320,7 +14432,8 @@ ipcMain.handle('ui-studio-list-displays', () => {
 
 // UI Studio — list characters available for capture across configured EQ
 // folders. Returns [{ character, eqDir, ini_count, has_eqclient }, ...].
-ipcMain.handle('ui-studio-list-characters', () => {
+ipcMain.handle('ui-studio-list-characters', () => _uiStudioDiskCharacters());
+function _uiStudioDiskCharacters() {
   const cfg = loadConfig();
   const userPaths = Array.isArray(cfg.eqPaths) && cfg.eqPaths.length > 0
                   ? cfg.eqPaths
@@ -14365,6 +14478,35 @@ ipcMain.handle('ui-studio-list-characters', () => {
   // Biggest log first (most-played characters at the top of the picker).
   out.sort((a, b) => (b.log_size || 0) - (a.log_size || 0));
   return out;
+}
+
+// "Bring your setup to this computer": the signed-in account's characters that have cloud backups, each marked with
+// whether this PC has files for it. The per-character calls above all start from a name read off the disk, so a
+// person with no files here could not reach their own backups (the guild lead, 2026-11-10).
+// The versions of one character's files this PC kept itself, newest first (localVersions.js).
+ipcMain.handle('ui-local-versions', (_e, character) => localVersions.listVersions(_localVersionsRoot(), character));
+ipcMain.handle('ui-account-characters', async () => {
+  const cfg = loadConfig();
+  const token = resolveUploadToken(cfg);
+  if (!token) return { ok: false, error: 'no token configured' };
+  try {
+    const r = await _httpsJson(`${_botBaseUrl(cfg)}/api/agent/ui_layout/characters`, { headers: { 'Authorization': `Bearer ${token}` } });
+    const disk = _uiStudioDiskCharacters();
+    const names = disk.map(d => d.character);
+    // + the versions this PC kept itself ("On this computer"), newest first, so a mess-up can be undone offline.
+    const characters = uiSync.markOnThisPc(r && r.characters, names)
+      .map(c => ({ ...c, local: localVersions.listVersions(_localVersionsRoot(), c.character) }));
+    // A restore needs a folder to write into: the first EverQuest folder this PC has (none = nothing to bring into).
+    const eqDir = (disk[0] && disk[0].eqDir) || _uiEqDirs()[0] || null;
+    return {
+      ok: true, characters, eqDir,
+      otherAccountsOnPc: uiSync.otherCharsOnPc(characters, names).length > 0,
+      otherCharsOnPc: uiSync.otherCharsOnPc(characters, names),
+      thisPc: { machine: _thisMachine(), w: (_primarySize() || {}).w || null, h: (_primarySize() || {}).h || null },
+    };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
 });
 
 // Enumerate every character detected in the user's configured EQ folders by
@@ -14434,6 +14576,12 @@ ipcMain.handle('ui-studio-capture', async (_e, params) => {
 // (eqclient.ini [VideoMode]) when the bundle has it, so a restore on another PC knows what the layout was made
 // for; else the main screen's full size (EQ runs fullscreen, so not the work area).
 async function _uiUploadBundle(cfg, token, character, files, label) {
+  // Mimic's own overlay layout rides in the bundle as one extra entry (overlayBackup.js), except in a named layout,
+  // which holds only the layout file.
+  if (!/^Layout: /.test(label || '') && !files[overlayBackup.FILE]) {
+    const ob = _overlayBackupText();
+    if (ob) files = { ...files, [overlayBackup.FILE]: ob };
+  }
   const fileCount = Object.keys(files).length;
   const res = _eqResOf(files) || _primarySize();
   try {

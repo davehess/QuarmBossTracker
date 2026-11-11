@@ -1776,6 +1776,8 @@ contextBridge.exposeInMainWorld('mimic', {
   // Compare-first restore, Keep in sync and This PC (main.js "compare-first restore" block).
   uiRestorePlan:          (params)  => ipcRenderer.invoke('ui-restore-plan', params),
   uiRestoreParts:         (params)  => ipcRenderer.invoke('ui-restore-parts', params),
+  uiLocalVersions:        (character) => ipcRenderer.invoke('ui-local-versions', character),
+  uiAccountCharacters:    ()        => ipcRenderer.invoke('ui-account-characters'),
   uiSyncGet:              ()        => ipcRenderer.invoke('ui-sync-get'),
   uiSyncSet:              (patch)   => ipcRenderer.invoke('ui-sync-set', patch),
   uiSyncDismiss:          (character) => ipcRenderer.invoke('ui-sync-dismiss', character),
