@@ -26483,7 +26483,9 @@ function _gracefulShutdown(signal) {
   _shuttingDown = true;   // /health → 503 and new HTTP work → 503 from here on
   // A standby that is being stopped stops waiting now, so it can never take the lease on its way out.
   if (!_botLease.isHolder()) _botLease.release().catch(() => {});
-  const drainMs = Number(process.env.SHUTDOWN_DRAIN_MS) || 10_000;
+  // 6 s, not 10: the platform force-kills about 10 s after SIGTERM, and the lease release below needs the rest. At a
+  // 10 s drain the kill landed on the release every time (2026-11-11), so each new bot waited out the 30 s lease.
+  const drainMs = Number(process.env.SHUTDOWN_DRAIN_MS) || 6_000;
   console.log(`[shutdown] ${signal} received — health now 503, refusing new HTTP; draining in-flight for up to ${drainMs}ms`);
   try { httpServer.close(() => console.log('[shutdown] HTTP server closed (connections drained)')); } catch (e) { console.warn('[shutdown] server.close failed:', e && e.message); }
   // Rows held for the next 2-second batch (utils/liveMemory.js) go out now, inside the drain window.
