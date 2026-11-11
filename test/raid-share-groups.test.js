@@ -23,7 +23,7 @@ import { ROOT, stripJs } from './_source-slice.js';
 import { MINUTE_MS } from '../web/lib/raidReplay.ts';
 import { clearOptedOutCache } from '../web/lib/raidShareLookup.ts';
 import { loadGroupFightIds, loadSessionReview } from '../web/lib/raidSessionLoad.ts';
-import { makeWindow, windowIso } from '../web/lib/raidShare.ts';
+import { OPEN_SPAN_MS, makeWindow, openWindow, startAtRaids, windowIso } from '../web/lib/raidShare.ts';
 import {
   MAX_GROUP_SET, buildGroups, checkShareGroups, groupIdsOf, groupKey, groupLabels, inGroupAt, inGroupEver, inSet, narrowRows,
   parseGroupIds, raidKey, resolveGroupKey, setMembers, shareGroupKey,
@@ -262,7 +262,7 @@ describe('every share route narrows to the link\'s raids', () => {
   });
   it('the shares POST validates group_ids against the link\'s own window and stores them', () => {
     const s = src('app', 'api', 'raid', 'shares', 'route.ts');
-    expect(s).toMatch(/checkShareGroups\(body\.group_ids, present\)/);
+    expect(s).toMatch(/checkShareGroups\(body\.group_ids, new Set\(raids\.map\(g => g\.id\)\)\)/);
     expect(s).toMatch(/loadGroupIndex\(supabaseAdmin\(\), win\)/);
     expect(s).toMatch(/group_ids: groupIds,/);
   });
@@ -276,5 +276,42 @@ describe('every share route narrows to the link\'s raids', () => {
     expect(s).toMatch(/Show selected \(\{picked\.length\}\)/);
     expect(src('app', 'raid', 'session', 'SegmentsEditor.tsx')).toMatch(/<RaidPicker /);
     expect(src('app', 'raid', 'session', 'RaidGroupsBar.tsx')).toMatch(/<RaidPicker /);
+  });
+});
+
+// 6. START   a link limited to raids starts when the earliest of them does (the guild lead, 2026-11-11: a raid of 9 that
+//            formed at 8:51 PM was shared from 6:47 PM, two hours of empty map before it).
+describe('a raid-limited link starts at its raids', () => {
+  const at = (hhmm) => Date.parse(`2026-11-11T${hhmm}:00Z`);
+  const fixed = { fromMs: at('23:47'), toMs: at('02:21') + 86_400_000 };
+
+  it('moves the start of a fixed window to the first raid, minute-rounded, keeping the end', () => {
+    const w = startAtRaids(fixed, [{ fromMs: at('01:51') + 86_400_000 + 20_000 }], false);   // 8:51:20 PM ET, next UTC day
+    expect(w.fromMs).toBe(at('01:51') + 86_400_000);
+    expect(w.toMs).toBe(fixed.toMs);
+  });
+
+  it('takes the earliest of several raids', () => {
+    const w = startAtRaids(fixed, [{ fromMs: at('23:59') }, { fromMs: at('23:52') }], false);
+    expect(w.fromMs).toBe(at('23:52'));
+  });
+
+  it('an open (following) link keeps following from the new start', () => {
+    const open = openWindow(at('23:47'));
+    const w = startAtRaids(open, [{ fromMs: at('23:58') }], true);
+    expect(w.fromMs).toBe(at('23:58'));
+    expect(w.toMs - w.fromMs).toBe(OPEN_SPAN_MS);
+  });
+
+  it('never moves earlier, past the end, or with no raids', () => {
+    expect(startAtRaids(fixed, [{ fromMs: at('23:00') }], false)).toBe(fixed);
+    expect(startAtRaids(fixed, [{ fromMs: fixed.toMs + MINUTE_MS }], false)).toBe(fixed);
+    expect(startAtRaids(fixed, [], false)).toBe(fixed);
+  });
+
+  it('the share POST applies it only after re-checking the chosen raids over the shorter window', () => {
+    const s = stripJs(fs.readFileSync(path.join(ROOT, 'web', 'app', 'api', 'raid', 'shares', 'route.ts'), 'utf8'));
+    expect(s).toMatch(/const later = startAtRaids\(win, raids\.filter\(g => ids\.includes\(g\.id\)\), body\.open === true\)/);
+    expect(s).toMatch(/if \(ids\.every\(id => again\.has\(id\)\)\) win = later;/);
   });
 });

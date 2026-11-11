@@ -117,7 +117,7 @@ export default function SegmentsEditor({ fromMs, toMs, spans, breaks, ctx, saved
                   )}
                   {clean && (
                     <div className="mt-2">
-                      {canEdit && (r.kind === 'raid' || r.kind === 'event')
+                      {canEdit
                         ? <ShareControls key={`${r.fromMs}|${r.toMs}|${gk}`} fromIso={new Date(r.fromMs).toISOString()} toIso={new Date(r.toMs).toISOString()}
                             defaultTitle={`${r.label || (rowRaids ? rowRaidLabels.join(', ') : KIND_LABEL[r.kind])}, ${etDay.format(r.fromMs)}`} lead={open}
                             groups={rowRaids ? { ids: rowRaids, labels: rowRaidLabels } : null} />
