@@ -51,6 +51,10 @@ describe('hashToken / isIdleExpired (pure)', () => {
   it('never expires a guest (own expires_at), a row with no stamp, or when switched off', () => {
     const now = Date.now(), old = new Date(now - 400 * DAY).toISOString();
     expect(mimicLink.isIdleExpired({ scope: 'guest', last_used_at: old }, now)).toBe(false);
+    // Members only (DECISIONS §573): a player who only syncs flags or characters is left alone; both member shapes expire.
+    expect(mimicLink.isIdleExpired({ scope: 'player', last_used_at: old }, now)).toBe(false);
+    expect(mimicLink.isIdleExpired({ scope: 'member', last_used_at: old }, now)).toBe(true);
+    expect(mimicLink.isIdleExpired({ scope: null, last_used_at: old }, now)).toBe(true);
     expect(mimicLink.isIdleExpired({}, now)).toBe(false);
     expect(mimicLink.isIdleExpired({ last_used_at: old }, now, 0)).toBe(false);
   });
