@@ -99,3 +99,17 @@ describe('the middleware decides a guild host before the raidmimic branch', () =
     expect(mw.slice(guild, landing)).toMatch(/url\.search = ''/);
   });
 });
+
+describe('a guild\'s address is never indexed (the home guild\'s is a copy of its own domain)', () => {
+  it('next.config.js sends X-Robots-Tag noindex for every raidmimic.com subdomain, and not for the apex', async () => {
+    const config = (await import('../web/next.config.js')).default;
+    const rules = await config.headers();
+    const rule = rules.find(r => (r.has || []).some(h => h.type === 'host' && /raidmimic/.test(h.value)));
+    expect(rule, 'the host rule').toBeTruthy();
+    expect(rule.source).toBe('/(.*)');
+    expect(rule.headers.find(h => h.key === 'X-Robots-Tag').value).toMatch(/noindex/);
+    const rx = new RegExp('^' + rule.has[0].value + '$');   // Next matches a `has` value against the whole host
+    for (const h of [HOME, 'breakfast-club.raidmimic.com', 'b.raidmimic.com']) expect(rx.test(h), h).toBe(true);
+    for (const h of ['raidmimic.com', 'wolfpack.quest', 'b.wolfpack.quest', 'x.raidmimic.com.evil.com', 'raidmimic.net']) expect(rx.test(h), h).toBe(false);
+  });
+});
