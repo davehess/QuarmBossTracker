@@ -76,6 +76,7 @@ beforeEach(() => {
   };
   supabase.select = async (table, q) => {
     calls.push(['select', table, q]);
+    if (table === 'mimic_sessions' && q.startsWith('token_hash=')) return [];   // phase 1: the plaintext fallback answers
     if (table === 'mimic_sessions' && q.startsWith('session_token=')) {
       const t = decodeURIComponent(q.slice('session_token=eq.'.length).split('&')[0]);
       if (t === tokens.guest) return [{ ...rows, session_token: t }];

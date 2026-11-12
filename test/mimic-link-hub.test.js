@@ -259,7 +259,7 @@ describe('poll mints the session in the code\'s guild, and only for a member of 
     delete codeRow.hub;
     const out = await poll();
     expect('guild_id' in sessions[0].row).toBe(false);
-    expect(Object.keys(sessions[0].row).sort()).toEqual(['agent_version', 'discord_id', 'linked_by_discord_id', 'linked_via', 'session_token', 'user_id']);
+    expect(Object.keys(sessions[0].row).sort()).toEqual(['agent_version', 'discord_id', 'linked_by_discord_id', 'linked_via', 'session_token', 'token_hash', 'user_id']);
     expect(out).toMatchObject({ status: 'linked', display_name: 'Brackwyn', is_officer: true, role_names: ['Officer'] });
     expect('scope' in out).toBe(false);
     expect(tables._reads.some(([t]) => t.startsWith('hub_'))).toBe(false);

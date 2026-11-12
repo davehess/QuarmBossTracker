@@ -47,6 +47,27 @@ const SESSION_RETRY_MS = 15 * 1000;   // how soon a failed member read is tried 
 // A real token is exactly this (see _generateSessionToken). Anything else is rejected before ANY lookup or cache write.
 const SESSION_TOKEN_RE = /^wpms_[0-9a-f]{64}$/;
 
+// Hash at rest (readiness audit #15). A token is 32 random bytes, so it cannot be guessed or dictionary-attacked and a
+// plain SHA-256 is the right hash (a slow KDF would only add per-request latency). The database looks the row up by
+// token_hash on a unique index, so no token comparison happens in JS and there is nothing to make constant-time.
+// PHASE 1 (this file): dual-read. Hash first, plaintext column as the fallback, the hash backfilled on a plaintext hit.
+// PHASE 2 (a later migration): null session_token. Set SESSION_PLAINTEXT_FALLBACK=off first to prove nothing needs it.
+function hashToken(token) { return crypto.createHash('sha256').update(String(token)).digest('hex'); }
+const _plaintextFallback = () => String(process.env.SESSION_PLAINTEXT_FALLBACK || 'on').toLowerCase() !== 'off';
+
+// 90-day idle expiry for member sessions (guests carry their own expires_at). last_used_at is stamped at most hourly
+// per token (SESSION_TOUCH_MS), so a raider who plays weekly is never near the line. A missing stamp is not expired.
+const SESSION_IDLE_DAYS_DEFAULT = 90;
+function _idleDays() {
+  const n = Number(process.env.SESSION_IDLE_DAYS);
+  return Number.isFinite(n) && n >= 0 && process.env.SESSION_IDLE_DAYS !== undefined && process.env.SESSION_IDLE_DAYS !== '' ? n : SESSION_IDLE_DAYS_DEFAULT;
+}
+function isIdleExpired(row, nowMs = Date.now(), idleDays = _idleDays()) {
+  if (!row || row.scope === 'guest' || !idleDays) return false;
+  const last = Date.parse(row.last_used_at || row.created_at || '');
+  return Number.isFinite(last) && nowMs - last > idleDays * 86_400_000;
+}
+
 // ── Guest sessions (the guild lead, 2026-10-30) ──────────────────────────────────────────────────────────────
 // An officer-approved, time-limited link for a raider from another guild: scope 'guest' on mimic_sessions, an
 // expires_at, and a synthetic discord_id `guest:<session id>` (every consumer wants a non-null string; it is text in
@@ -147,7 +168,7 @@ function _touchSession(token) {
   _setBounded(_lastTouched, SESSION_CACHE_MAX, token, now);
   supabase.update(
     'mimic_sessions',
-    `session_token=eq.${encodeURIComponent(token)}`,
+    `token_hash=eq.${hashToken(token)}`,
     { last_used_at: new Date(now).toISOString() },
   ).catch(() => null);
 }
@@ -362,7 +383,8 @@ async function handlePoll(req, res) {
       expires_at:  row.guest_expires_at,
       guest_label: String(row.guest_label).slice(0, GUEST_LABEL_MAX),
     } : {}),
-    session_token: sessionToken,
+    session_token: sessionToken,   // phase 1 keeps the plaintext column written; phase 2 stops and nulls it
+    token_hash:    hashToken(sessionToken),
     user_id:       row.authorized_user_id || null,
     discord_id:    isGuest ? `guest:${guestSessionId}` : row.authorized_discord_id,
     agent_version: row.agent_version || null,
@@ -475,7 +497,7 @@ async function handleRevoke(req, res) {
   if (!supabase.isEnabled()) { res.writeHead(503, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'service unavailable' })); }
   await supabase.update(
     'mimic_sessions',
-    `session_token=eq.${encodeURIComponent(token)}`,
+    `or=(token_hash.eq.${hashToken(token)},session_token.eq.${encodeURIComponent(token)})`,
     { revoked_at: new Date().toISOString() },
   ).catch(() => null);
   invalidateSessionCache(token);
@@ -599,14 +621,29 @@ async function _lookupSessionToken(token, ip) {
   // (5xx / network — it never rejects) and to an array (possibly []) on
   // success. So: null = the store is down (retryable), [] = token genuinely not
   // found. The extra .catch is belt-and-suspenders in case _request ever throws.
-  const rows = await supabase.select(
+  let rows = await supabase.select(
     'mimic_sessions',
     // select=*: scope / expires_at / guest_label arrive with a migration (see handlePoll's note on naming columns).
-    `session_token=eq.${encodeURIComponent(token)}&select=*&limit=1`,
+    `token_hash=eq.${hashToken(token)}&select=*&limit=1`,
   ).catch(() => null);
   if (rows === null) return LOOKUP_ERROR;   // store down — do NOT cache, do NOT 401
+  if (Array.isArray(rows) && rows.length === 0 && _plaintextFallback()) {
+    // Phase 1 only: a row minted by an old process between the migration and the deploy has no hash yet.
+    rows = await supabase.select(
+      'mimic_sessions',
+      `session_token=eq.${encodeURIComponent(token)}&select=*&limit=1`,
+    ).catch(() => null);
+    if (rows === null) return LOOKUP_ERROR;
+    if (Array.isArray(rows) && rows[0] && !rows[0].revoked_at && !isIdleExpired(rows[0])) {   // backfill; never revives last_used_at
+      supabase.update(
+        'mimic_sessions',
+        `session_token=eq.${encodeURIComponent(token)}`,
+        { token_hash: hashToken(token) },
+      ).catch(() => null);
+    }
+  }
   const row = Array.isArray(rows) ? rows[0] : null;
-  if (!row || row.revoked_at || (row.scope === 'guest' && (!row.expires_at || Date.parse(row.expires_at) <= Date.now()))) {
+  if (!row || row.revoked_at || isIdleExpired(row) || (row.scope === 'guest' && (!row.expires_at || Date.parse(row.expires_at) <= Date.now()))) {
     // Not found / revoked / an expired guest: short-lived, separate, bounded cache, and one strike against this IP.
     _sessionCache.delete(token);
     _setBounded(_sessionMissCache, SESSION_MISS_MAX, token, Date.now());
@@ -794,7 +831,7 @@ async function requireAgentAuth(req, res) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       error: 'session token invalid or revoked',
-      hint:  'Run /token in Discord to mint a new one.',
+      hint:  'Run /token in Discord to mint a new one (sessions unused for 90 days expire), or sign in again in Mimic.',
     }));
     return null;
   }
@@ -872,8 +909,14 @@ function invalidateSessionCache(token) {
 // identity is trusted from cache with its OLD expires_at, so drop it by token when the caller has it and, in case it
 // does not, by the synthetic discord_id every guest identity carries. The miss cache is token-keyed only, which is why
 // a caller reviving a lapsed key must pass the token.
-function forgetGuestSession(sessionId, token) {
+// Phase 2 nulls session_token, so a caller may pass the row's token_hash instead.
+function invalidateSessionCacheByHash(hash) {
+  if (!hash) return;
+  for (const t of [..._sessionCache.keys(), ..._sessionMissCache.keys()]) if (hashToken(t) === hash) invalidateSessionCache(t);
+}
+function forgetGuestSession(sessionId, token, hash = null) {
   invalidateSessionCache(token);
+  invalidateSessionCacheByHash(hash);
   const did = `guest:${sessionId}`;
   for (const [t, c] of _sessionCache) if (c.value && c.value.discord_id === did) _sessionCache.delete(t);
 }
@@ -892,6 +935,7 @@ async function mintSessionForUser({ userId, discordId, agentVersion = null, mach
   const sessionToken = _generateSessionToken();
   const inserted = await supabase.insert('mimic_sessions', [{
     session_token: sessionToken,
+    token_hash:    hashToken(sessionToken),
     user_id:       userId || null,
     discord_id:    discordId,
     agent_version: agentVersion,
@@ -909,7 +953,7 @@ async function revokeSessionForUser({ sessionId, discordId }) {
   // Look up the token so we can clear the cache after the update.
   const rows = await supabase.select(
     'mimic_sessions',
-    `id=eq.${encodeURIComponent(sessionId)}&discord_id=eq.${encodeURIComponent(discordId)}&select=session_token&limit=1`,
+    `id=eq.${encodeURIComponent(sessionId)}&discord_id=eq.${encodeURIComponent(discordId)}&select=session_token,token_hash&limit=1`,
   ).catch(() => null);
   const row = Array.isArray(rows) ? rows[0] : null;
   if (!row) return false;
@@ -919,7 +963,22 @@ async function revokeSessionForUser({ sessionId, discordId }) {
     { revoked_at: new Date().toISOString() },
   ).catch(() => null);
   if (row.session_token) invalidateSessionCache(row.session_token);
+  else if (row.token_hash) invalidateSessionCacheByHash(row.token_hash);   // phase 2: the plaintext is gone
   return true;
+}
+
+// Hygiene sweep: revoke member sessions idle past the window so they drop out of /token's list. The lookup already
+// refuses them; this only makes the table say so. Not yet called from a job (wiring is one line in the midnight chain).
+async function sweepIdleSessions(nowMs = Date.now()) {
+  const days = _idleDays();
+  if (!supabase.isEnabled() || !days) return 0;
+  const cutoff = new Date(nowMs - days * 86_400_000).toISOString();
+  const rows = await supabase.update(
+    'mimic_sessions',
+    `revoked_at=is.null&scope=neq.guest&last_used_at=lt.${encodeURIComponent(cutoff)}`,
+    { revoked_at: new Date(nowMs).toISOString() },
+  ).catch(() => null);
+  return Array.isArray(rows) ? rows.length : 0;
 }
 
 // List all of a user's active sessions for the /token UI. Returns rows
@@ -944,6 +1003,7 @@ module.exports = {
   forgetGuestSession,   // utils/guestLinks.js: an extended guest's new expiry applies at once
   mintSessionForUser,
   revokeSessionForUser,
+  sweepIdleSessions, hashToken, isIdleExpired,
   listSessionsForUser,
   guestRouteAllowed, GUEST_ALLOWED_ROUTES, GUEST_LABEL_MAX,   // the guest-link allowlist (test/guest-link.test.js)
   // the hub-session allowlists: everything a hub session may call, the free part of it, and the paid test
