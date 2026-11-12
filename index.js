@@ -23495,7 +23495,9 @@ function _bossPersistKeys(bossName, matchedBossId) {
 // With `trackUncurated: false` (the 2026-09-04 gate) an uncurated mob returns
 // { internalId: null, gated: 'uncurated' } instead — distinguishable from the
 // junk null so the call site does not log it as a miss.
-async function _resolveBossForPersist(bossName, matchedBossId, supabase, { trackUncurated = true } = {}) {
+// `registerNew: false` (an upload for another hosted guild) reads the shared catalog but never writes it: bosses_local is
+// keyed by npc_id / internal_id with no guild in the key, so a row written here would be stamped with the home guild.
+async function _resolveBossForPersist(bossName, matchedBossId, supabase, { trackUncurated = true, registerNew = true } = {}) {
   const { keys, rawSlug, eqemuForms } = _bossPersistKeys(bossName, matchedBossId);
   if (!keys.length || !rawSlug) return null;
   const GATED = { internalId: null, gated: 'uncurated' };
@@ -23531,6 +23533,7 @@ async function _resolveBossForPersist(bossName, matchedBossId, supabase, { track
     return { internalId: byNpc[0].internal_id, registered: false };
   }
   if (!trackUncurated) return GATED;
+  if (!registerNew) return null;
   await supabase.insertIgnoreDuplicates('bosses_local', [{
     npc_id: npcId, internal_id: rawSlug, nicknames: [],
     added_at: new Date().toISOString(),
@@ -23648,6 +23651,14 @@ async function _recordKillLockouts({
 }
 
 const _foreignUploadLogged = new Set();
+// The guild an upload belongs to: the scoped client's, else the session's, else this process's own. A home-guild upload
+// resolves to the process guild tag, as the charm_sessions stamp always did.
+function _uploadGuildId(guildDb, identity) {
+  return (guildDb && guildDb.guildId) || (identity && identity.hub_guild) || require('./utils/supabase').guildId();
+}
+function _uploadIsForeignGuild(guildDb, identity) {
+  return _uploadGuildId(guildDb, identity) !== require('./utils/supabase').guildId();
+}
 async function _handleAgentUpload(req, res) {
   // Auth: per-user session token (wpms_...), checked by requireAgentAuth.
   const identity = await mimicLink.requireAgentAuth(req, res);
@@ -24960,7 +24971,8 @@ async function _handleAgentUpload(req, res) {
       // Arbiter P1, 2026-08-16).
       const trackUncurated = await _trackUncuratedMobs();
       const resolved = await _resolveBossForPersist(
-        encounter.boss_name, matchedBoss?.id || null, supabase, { trackUncurated });
+        encounter.boss_name, matchedBoss?.id || null, supabase,
+        { trackUncurated, registerNew: !_uploadIsForeignGuild(guildDb, identity) });
       const bossInternalId = resolved?.internalId
         || (encounter.boss_name || '').toLowerCase().replace(/\W+/g, '_');
       if (resolved?.internalId) {
@@ -25016,7 +25028,7 @@ async function _handleAgentUpload(req, res) {
         // (guild_id, pet_name, owner, started_at) so re-uploads from
         // backfill don't duplicate rows.
         if (recParseResult?.encounterId && Array.isArray(encounter.charm_sessions) && encounter.charm_sessions.length > 0) {
-          const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+          const guildId = _uploadGuildId(guildDb, identity);
           const charmRows = encounter.charm_sessions.map(s => ({
             guild_id:      guildId,
             pet_name:      s.pet,

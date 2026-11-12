@@ -385,8 +385,10 @@ describe('the encounter handler (POST /api/agent/encounter)', () => {
     expect(code).toMatch(/guildScoped\.forIdentity\(identity, await _overlayTuningMap\(\)\)/);
     expect(code).toMatch(/supabase\.recordParse\(\{[\s\S]*?scoped: guildDb,[\s\S]*?\}\)\.catch/);
     expect(code).toMatch(/guildScoped\.run\(guildDb, \(\) => supabase\.update\('encounters'/);
-    // let, assignment, scoped:, run, and the hub gate's null check (a hub session waits without a client: test/mimic-link-hub.test.js)
-    expect(code.match(/guildDb/g).length).toBe(5);
+    // let, assignment, scoped:, run, and the hub gate's null check (a hub session waits without a client: test/mimic-link-hub.test.js),
+    // plus the two reads of the client's guild id (the charm_sessions stamp, the bosses_local registration switch:
+    // test/hub-upload-guild-leaks.test.js)
+    expect(code.match(/guildDb/g).length).toBe(7);
     expect(code).toMatch(/if \(identity\.hub_guild && !guildDb\) \{/);
     // the guild is never taken from the process tag on this path
     expect(code.slice(code.indexOf('guildScoped.forIdentity'), code.indexOf('guildScoped.forIdentity') + 120)).not.toMatch(/SUPABASE_GUILD_ID/);
