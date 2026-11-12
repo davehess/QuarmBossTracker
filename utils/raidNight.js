@@ -74,11 +74,21 @@ const RAID_START_MIN = 20 * 60 + 30;
 
 const DEFAULT_ROLLOVER_HOUR = 6;
 
+const _DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+const { getSchedule } = require('./guildSchedule');
+
+// The guild's saved schedule (utils/guildSchedule.js). With no saved row it is today's constants, and the time zone stays
+// the DEFAULT_TIMEZONE env value, so an existing deploy behaves exactly as before.
+function _tz() {
+  const s = getSchedule();
+  return s.source === 'row' ? s.tz : getDefaultTz();
+}
+
 // ── Pure night-key helpers ───────────────────────────────────────────────────
 
 function rolloverHour() {
   const n = parseInt(process.env.RAID_NIGHT_ROLLOVER_HOUR, 10);
-  return Number.isInteger(n) && n >= 0 && n <= 12 ? n : DEFAULT_ROLLOVER_HOUR;
+  return Number.isInteger(n) && n >= 0 && n <= 12 ? n : getSchedule().cutoffHour;
 }
 
 /** The instant used for naming/keying: `ts` pulled back over the rollover so a
@@ -92,14 +102,14 @@ function nightAnchorMs(ts) {
  *  `raidSession.date`. Do NOT change without changing that too. */
 function dateKeyForMs(ms) {
   return new Date(ms).toLocaleDateString('en-US', {
-    timeZone: getDefaultTz(), year: 'numeric', month: '2-digit', day: '2-digit',
+    timeZone: _tz(), year: 'numeric', month: '2-digit', day: '2-digit',
   });
 }
 
 /** "Thursday, July 31, 2026" — the format /raidnight puts in thread names. */
 function labelForMs(ms) {
   return new Date(ms).toLocaleDateString('en-US', {
-    timeZone: getDefaultTz(), weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+    timeZone: _tz(), weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
   });
 }
 
@@ -114,14 +124,15 @@ function nightLabel(ts) { return labelForMs(nightAnchorMs(ts)); }
  * belongs to, so 00:20 Friday is still Thursday's raid night.
  */
 function isRaidNightAt(ts) {
-  const tz     = getDefaultTz();
+  const sch    = getSchedule();
+  const tz     = _tz();
   const at     = Number.isFinite(ts) ? ts : Date.now();
   const anchor = partsInTzAt(nightAnchorMs(at), tz);
-  if (!RAID_DAY_NAMES.has(anchor.dayOfWeek)) return false;
+  if (!sch.days.has(_DAY_NAMES.indexOf(anchor.dayOfWeek))) return false;
   const p = partsInTzAt(at, tz);
-  // Same calendar day as the anchor → must be at/after the 20:30 start.
+  // Same calendar day as the anchor → must be at/after the start (20:30 by default).
   // Different day → we're in the post-midnight spillover of that night.
-  if (p.dayOfWeek === anchor.dayOfWeek) return (p.hour * 60 + p.minute) >= RAID_START_MIN;
+  if (p.dayOfWeek === anchor.dayOfWeek) return (p.hour * 60 + p.minute) >= sch.startMin;
   return true;
 }
 
