@@ -1,4 +1,4 @@
-// test/map-per-character-view.test.js — the Map remembers zoom, Pan / zoom mode and its settings per character.
+// test/map-per-character-view.test.js — the Map remembers zoom and its settings per character; Pan / zoom mode starts off.
 //
 // FB-129 (a raider on Mimic 3.0.9): "Persistent Pan/zoom click when clicked on Map. Resets with every log in/out. Map settings
 // can be saved and loaded when a character logs in." The Map kept ONE global set of keys in localStorage, and Pan / zoom mode was
@@ -56,7 +56,7 @@ async function boot(store = {}) {
 }
 
 describe('Map view settings are per character (FB-129)', () => {
-  it('Pan / zoom mode and the zoom a character set come back when that character is the one shown', async () => {
+  it('the zoom a character set comes back when that character is the one shown; Pan / zoom mode starts off', async () => {
     const m = await boot();
     m.who('Aldenmar');
     m.click('panBtn');                       // Pan on
@@ -64,23 +64,34 @@ describe('Map view settings are per character (FB-129)', () => {
     const zoomed = m.S.view.scale;
     expect(m.S.panMode).toBe(true);
     m.who('Aldenmar');                       // next poll: the change is written under this character
-    expect(JSON.parse(m.store['wp-map-char:aldenmar'])).toMatchObject({ pan: true, scale: zoomed });
+    const saved = JSON.parse(m.store['wp-map-char:aldenmar']);
+    expect(saved).toMatchObject({ scale: zoomed });
+    expect(saved).not.toHaveProperty('pan');  // Pan is never saved (Decision Desk "map-pan-persist" A)
 
-    // a fresh page (a relog restarts the Map's page state): its first poll names Aldenmar, and their view comes back
+    // a fresh page (a relog restarts the Map's page state): its first poll names Aldenmar, and their zoom comes back
     const m2 = await boot(m.store);
-    expect(m2.S.panMode).toBe(true);
+    expect(m2.S.panMode).toBe(false);
     expect(m2.S.view.scale).toBeCloseTo(zoomed, 6);
   });
 
-  it('a second character keeps their own settings, not the first one\'s', async () => {
+  it('a second character keeps their own zoom, and a switch of character turns Pan off', async () => {
     const m = await boot();
-    m.who('Aldenmar'); m.click('panBtn'); m.who('Aldenmar');          // Aldenmar: Pan on
-    m.who('Brackwyn'); m.click('panBtn'); m.who('Brackwyn');          // loads nothing (none saved), toggles Pan OFF, saved
-    expect(JSON.parse(m.store['wp-map-char:brackwyn']).pan).toBe(false);
-    m.who('Aldenmar');
+    m.who('Aldenmar'); m.wheel(-400); const a = m.S.view.scale; m.who('Aldenmar');
+    m.who('Brackwyn'); m.wheel(800); const b = m.S.view.scale; m.click('panBtn'); m.who('Brackwyn');
+    expect(a).not.toBeCloseTo(b, 6);
     expect(m.S.panMode).toBe(true);
+    m.who('Aldenmar');
+    expect(m.S.panMode).toBe(false);          // Pan left on by the other character does not follow
+    expect(m.S.view.scale).toBeCloseTo(a, 6);
     m.who('Brackwyn');
+    expect(m.S.view.scale).toBeCloseTo(b, 6);
+  });
+
+  it('an old save that carries pan:true does not turn Pan on', async () => {
+    const m = await boot({ 'wp-map-char:aldenmar': '{"scale":1.5,"pan":true}' });
+    m.who('Aldenmar');
     expect(m.S.panMode).toBe(false);
+    expect(m.S.view.scale).toBeCloseTo(1.5, 6);
   });
 
   it('a junk save is ignored, not trusted', async () => {

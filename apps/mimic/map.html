@@ -1924,18 +1924,19 @@
   S.cfg = (function () { try { return mergeMapCfg(JSON.parse(lsGet('wp-map-cfg') || 'null')); } catch (e) { return mapCfgDefaults(); } })();
   function saveCfg() { lsSet('wp-map-cfg', JSON.stringify(S.cfg)); }
   // FB-129: the view settings are remembered PER CHARACTER ("wp-map-char:<name>"), and put back when that character is the one the
-  // Map is showing. Zoom, Pan / zoom mode, the Fit mode, both height sliders, Labels and the whole ⚙ settings object (S.cfg). Until a
+  // Map is showing. Zoom, the Fit mode, both height sliders, Labels and the whole ⚙ settings object (S.cfg). NOT Pan / zoom mode
+  // (the guild lead, 2026-11-12, Decision Desk "map-pan-persist" A): with Pan on the whole Map catches every click, so a Pan left
+  // on from last time blocks EverQuest's own menus under the window (FB-131). It starts off at every log-in. Until a
   // character is known the global keys above still apply, so a first login looks as before. S.userScale is the zoom the person set
   // (the wheel); a Fit changes S.view.scale too, and that is not a setting. Called from applyPayload on every poll: a changed
   // snapshot is one small write.
   S.userScale = S.view.scale; S.prefsKey = ''; S.prefsSnap = '';
   function charPrefsKey() { var n = S.p && S.p.self && S.p.self.name; return n ? 'wp-map-char:' + String(n).toLowerCase() : ''; }
   function charPrefsSnap() {
-    return JSON.stringify({ scale: S.userScale, pan: S.panMode, fit: S.fit, levels: S.levels, spawn: S.spawnLevels, labels: S.labels, cfg: S.cfg });
+    return JSON.stringify({ scale: S.userScale, fit: S.fit, levels: S.levels, spawn: S.spawnLevels, labels: S.labels, cfg: S.cfg });
   }
   function applyCharPrefs(sv) {
     if (sv.scale > 0.02 && sv.scale < 20) { S.userScale = S.view.scale = sv.scale; lsSet('wp-map-scale', sv.scale); }
-    if (typeof sv.pan === 'boolean') { S.panMode = sv.pan; syncInteract(); }
     if (FIT_MODES.indexOf(sv.fit) >= 0) { S.fit = sv.fit; syncFitBtn(''); }
     if (sv.levels >= 0 && sv.levels < LEVEL_STEPS.length) { S.levels = sv.levels | 0; syncLevels(); }
     if (sv.spawn >= 0 && sv.spawn < LEVEL_STEPS.length) { S.spawnLevels = sv.spawn | 0; syncSpawns(); }
@@ -1949,6 +1950,7 @@
     if (!key) return;
     if (key !== S.prefsKey) {   // a different character (or the first one seen): load theirs, if they have any
       S.prefsKey = key;
+      if (S.panMode) { S.panMode = false; syncInteract(); }   // a log-in (or a switch of character) always starts with Pan off
       var sv = null; try { sv = JSON.parse(lsGet(key) || 'null'); } catch (e) {}
       if (sv && typeof sv === 'object') applyCharPrefs(sv);
       S.prefsSnap = charPrefsSnap();

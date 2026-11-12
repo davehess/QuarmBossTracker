@@ -24,6 +24,9 @@
 'use strict';
 
 const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog, screen, safeStorage, Notification, desktopCapturer } = require('electron');
+// One sender check for every handler below (readiness audit #22): installed BEFORE the first ipcMain.on/handle, so
+// call sites stay as they are. agentPort is a `let` declared further down; the getter reads it at call time.
+require('./ipcGuard').installIpcGuard(ipcMain, { appDir: __dirname, getAgentPort: () => agentPort, log: (m) => console.log(m) });
 const path  = require('path');
 const fs    = require('fs');
 const net   = require('net');
@@ -11788,18 +11791,24 @@ function _agentVersionNewer(a, b) {
   }
   return false;
 }
-function _httpsGetBuffer(url) {
-  const lib = new URL(url).protocol === 'http:' ? require('http') : require('https');
+const _agentSig = require('./agentSignature');
+// The agent download: https only, allowlisted host + repo path, same-host redirects only (audit #6).
+function _httpsGetBuffer(url, hops = 0) {
+  const chk = _agentSig.checkUrl(url);
+  if (!chk.ok) return Promise.reject(new Error('agent download refused: ' + chk.reason));
   return new Promise((resolve, reject) => {
-    const req = lib.get(url, { timeout: 30000 }, (res) => {
-      // Follow a single redirect (GitHub raw → CDN).
+    const req = require('https').get(url, { timeout: 30000 }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         res.resume();
-        return resolve(_httpsGetBuffer(res.headers.location));
+        if (hops >= 3) return reject(new Error('too many redirects'));
+        const to = new URL(res.headers.location, url).href;
+        const rc = _agentSig.checkRedirect(url, to);
+        if (!rc.ok) return reject(new Error('agent download refused: ' + rc.reason));
+        return resolve(_httpsGetBuffer(to, hops + 1));
       }
       if (res.statusCode !== 200) { res.resume(); return reject(new Error('HTTP ' + res.statusCode)); }
-      const chunks = [];
-      res.on('data', (c) => chunks.push(c));
+      const chunks = []; let n = 0;
+      res.on('data', (c) => { n += c.length; if (n > 20 * 1024 * 1024) return req.destroy(new Error('too large')); chunks.push(c); });
       res.on('end', () => resolve(Buffer.concat(chunks)));
     });
     req.on('error', reject);
@@ -11918,17 +11927,32 @@ async function checkAgentUpdate(opts) {
 
     appendAgentLog(`[mimic] agent update ${current} → ${latest} available; downloading…\n`);
     const buf = await _httpsGetBuffer(url);
+    let hashOk = true;
     if (sha) {
-      const crypto = require('crypto');
-      const got = crypto.createHash('sha256').update(buf).digest('hex');
+      const got = require('crypto').createHash('sha256').update(buf).digest('hex');
       if (got.toLowerCase() !== String(sha).toLowerCase()) {
         // Common + benign during the Railway redeploy window: the bot still
         // serves its OLD image's sha while `url` (GitHub main) already has the
         // new file. Fail safe — keep the working agent, retry next cycle.
         appendAgentLog(`[mimic] agent update held: sha256 mismatch (bot redeploy in progress?) expected ${String(sha).slice(0,12)}… got ${got.slice(0,12)}…\n`);
-        return;
+        hashOk = false;
       }
     }
+    // Audit #6 — Ed25519 signature over the exact bytes, published at <url>.sig. The .sig URL is derived
+    // here from the checked url, never taken from the bot. SIG_MODE is a build constant (agentSignature.js).
+    let sigResult = null;
+    // No trusted key in this build yet: nothing could verify, so the .sig is not fetched (verify answers "no-keys").
+    if (hashOk && _agentSig.normalizeMode(_agentSig.SIG_MODE) !== 'off' && !_agentSig.TRUSTED_PUBLIC_KEYS.length) {
+      sigResult = _agentSig.verifyAgentSignature(buf, '');
+    } else if (hashOk && _agentSig.normalizeMode(_agentSig.SIG_MODE) !== 'off') {
+      try {
+        const sigBuf = await _httpsGetBuffer(url + '.sig');
+        sigResult = _agentSig.verifyAgentSignature(buf, sigBuf.toString('utf8'));
+      } catch (e) { sigResult = null; appendAgentLog(`[mimic] agent signature not fetched: ${e && e.message}\n`); }
+    }
+    const decision = _agentSig.decideUpdate({ mode: _agentSig.SIG_MODE, hashOk, sig: sigResult });
+    if (decision.log && hashOk) appendAgentLog(`[mimic] agent ${latest} ${decision.log}\n`);   // a hash miss already logged its own line above
+    if (!decision.accept) return;
     // #74 Part 3 — snapshot the CURRENT working agent as last-known-good BEFORE
     // we overwrite it, so a crash-loop on the new version can auto-revert.
     _saveAgentLkg();
