@@ -24,6 +24,9 @@
 'use strict';
 
 const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog, screen, safeStorage, Notification, desktopCapturer } = require('electron');
+// One sender check for every handler below (readiness audit #22): installed BEFORE the first ipcMain.on/handle, so
+// call sites stay as they are. agentPort is a `let` declared further down; the getter reads it at call time.
+require('./ipcGuard').installIpcGuard(ipcMain, { appDir: __dirname, getAgentPort: () => agentPort, log: (m) => console.log(m) });
 const path  = require('path');
 const fs    = require('fs');
 const net   = require('net');
