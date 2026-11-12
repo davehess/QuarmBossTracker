@@ -57,8 +57,11 @@ describe('the host list', () => {
     for (const h of [...RAIDMIMIC_HOSTS, 'RaidMimic.COM', 'raidmimic.com:443', 'www.raidmimic.net:3000']) expect(isRaidmimicHost(h), h).toBe(true);
   });
   it('refuses lookalikes, the other front doors and empties', () => {
-    for (const h of ['raidmimic.com.evil.com', 'evil-raidmimic.com', 'sub.raidmimic.com', 'c.raidmimic.com', 'b.raidmimic.com.evil.com', 'b.raidmimic.net', 'raidmimic.org', 'eqmimic.quest',
+    // A guild-shaped subdomain of raidmimic.com (three characters and up, not reserved) is another guild's address since
+    // 2026-11-12 (test/guild-host.test.js); the home guild's own slug, reserved names and deeper names stay refused.
+    for (const h of ['raidmimic.com.evil.com', 'evil-raidmimic.com', 'api.raidmimic.com', 'a.sub.raidmimic.com', 'sub.raidmimic.net', 'wolfpack.raidmimic.com', 'c.raidmimic.com', 'b.raidmimic.com.evil.com', 'b.raidmimic.net', 'raidmimic.org', 'eqmimic.quest',
       'wolfpack.quest', 'b.wolfpack.quest', 'localhost:3000', '', null, undefined]) expect(isRaidmimicHost(h), String(h)).toBe(false);
+    expect(isRaidmimicHost('sub.raidmimic.com')).toBe(true);
   });
   it('is disjoint from the eqmimic hosts', () => {
     for (const h of RAIDMIMIC_HOSTS) expect(isEqmimicHost(h), h).toBe(false);

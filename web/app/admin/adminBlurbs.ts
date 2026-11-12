@@ -36,6 +36,7 @@ export const ADMIN_BLURBS: Record<string, string> = {
   '/admin/adoption': 'How many players run the agent and which version each is on.',
   '/admin/rules': 'The guild rules ingested from Discord, read-only.',
   '/admin/theme': 'The site theme. Not on this branch yet.',
+  '/admin/settings': 'Raid schedule, roles, jobs, DKP and the guest rule.',
   '/admin/access': 'Lock a member out of the guild tools whatever their Discord roles, and unlock them again.',
   '/admin/flag-lab': 'A sandbox for the PoP flag matrix and the hail board. Nothing is saved.',
   '/who': 'Every character ever seen in a /who, sortable and filterable.',

@@ -143,6 +143,12 @@ different failure for a raid night) and current egress against the 250 GB. The
 Management API exposes neither. Do not quote an egress figure until someone does.
 
 ## 3. Decisions already made that the wizard must carry
+- **2026-11-12 — a guild's settings are a database row, and its address is `<guild>.raidmimic.com`** (DECISIONS §569):
+  `guild_settings` holds the raid time zone, days and hours, the role and job map, the DKP provider and numbers, the guest
+  rule and links, edited by officers on the site. OUR values (Sun/Wed/Thu 20:30-23:30 Eastern, OpenDKP pool 5, four ticks)
+  are Wolf Pack's seed row, not defaults: a wizard must ASK each of them, and the neutral defaults have no raid days. The
+  hosted shape is one bot and one website per guild sharing a database; a wildcard DNS record for the hosting domain and a
+  per-guild domain entry at the web host are setup steps. Guests on a raid (§568): the host keeps the raid's record only.
 - **2026-11-05 — a cheap-cloud deployment shape: Cloudflare in front, Supabase behind** (DECISIONS §540): the website on
   Cloudflare Workers through the OpenNext adapter, files on R2, database + sign-in on Supabase, the bot on any always-on
   container host (Cloudflare cannot hold a Discord gateway connection). Being proven as an isolated test clone first. Neon and
