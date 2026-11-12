@@ -579,9 +579,13 @@ function pipeLimited(readable, dest, maxBytes, onProgress) {
       if (done) return;
       done = true;
       try { readable.destroy(); } catch { /* gone */ }
+      // The file is removed only once the stream has CLOSED: its open is asynchronous, so an unlink made now can run
+      // before the file exists, and the open then leaves an empty file behind (seen as a 1-in-3 test failure, 2026-11-12).
+      let settled = false;
+      const finish = () => { if (settled) return; settled = true; try { fs.unlinkSync(dest); } catch { /* never created */ } reject(e); };
+      out.once('close', finish);
       out.destroy();
-      try { fs.unlinkSync(dest); } catch { /* not created */ }
-      reject(e);
+      if (out.closed) finish();
     };
     readable.on('data', (c) => {
       got += c.length;
