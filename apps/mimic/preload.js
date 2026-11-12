@@ -646,7 +646,7 @@ function _wpPlaceNameChip() {
 // overlay's own corner controls), then the window is asked for the row's height. Un-folding shows it all again;
 // main gives the old height back and a page that fits itself fits again.
 const _WP_FOLD_KEEP = '#move-btn,#hide-btn,#clear-btn,#drag-controls,#setupbar,#wpResizeMenu,#mimic-conn-banner,#mimic-update-banner,'
-  + '#wp-cvd-defs,#wp-grip,#wp-grip-top,.wp-name-chip,script,style,link';
+  + '#weavecv,#wp-cvd-defs,#wp-grip,#wp-grip-top,.wp-name-chip,script,style,link';
 let _wpFoldSetRaw = false;       // the last window height this page asked for was the fold's
 function _wpFoldRow() {
   const proxy = document.querySelector('.wp-name-proxy');

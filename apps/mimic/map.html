@@ -1923,6 +1923,40 @@
   })();
   S.cfg = (function () { try { return mergeMapCfg(JSON.parse(lsGet('wp-map-cfg') || 'null')); } catch (e) { return mapCfgDefaults(); } })();
   function saveCfg() { lsSet('wp-map-cfg', JSON.stringify(S.cfg)); }
+  // FB-129: the view settings are remembered PER CHARACTER ("wp-map-char:<name>"), and put back when that character is the one the
+  // Map is showing. Zoom, Pan / zoom mode, the Fit mode, both height sliders, Labels and the whole ⚙ settings object (S.cfg). Until a
+  // character is known the global keys above still apply, so a first login looks as before. S.userScale is the zoom the person set
+  // (the wheel); a Fit changes S.view.scale too, and that is not a setting. Called from applyPayload on every poll: a changed
+  // snapshot is one small write.
+  S.userScale = S.view.scale; S.prefsKey = ''; S.prefsSnap = '';
+  function charPrefsKey() { var n = S.p && S.p.self && S.p.self.name; return n ? 'wp-map-char:' + String(n).toLowerCase() : ''; }
+  function charPrefsSnap() {
+    return JSON.stringify({ scale: S.userScale, pan: S.panMode, fit: S.fit, levels: S.levels, spawn: S.spawnLevels, labels: S.labels, cfg: S.cfg });
+  }
+  function applyCharPrefs(sv) {
+    if (sv.scale > 0.02 && sv.scale < 20) { S.userScale = S.view.scale = sv.scale; lsSet('wp-map-scale', sv.scale); }
+    if (typeof sv.pan === 'boolean') { S.panMode = sv.pan; syncInteract(); }
+    if (FIT_MODES.indexOf(sv.fit) >= 0) { S.fit = sv.fit; syncFitBtn(''); }
+    if (sv.levels >= 0 && sv.levels < LEVEL_STEPS.length) { S.levels = sv.levels | 0; syncLevels(); }
+    if (sv.spawn >= 0 && sv.spawn < LEVEL_STEPS.length) { S.spawnLevels = sv.spawn | 0; syncSpawns(); }
+    S.labels = labelMode(sv.labels);
+    S.cfg = mergeMapCfg(sv.cfg);
+    if (cfgBuilt) buildCfg();
+    cfgCommit(); renderMap();
+  }
+  function noteCharPrefs() {
+    var key = PART_TIMERS ? '' : charPrefsKey();
+    if (!key) return;
+    if (key !== S.prefsKey) {   // a different character (or the first one seen): load theirs, if they have any
+      S.prefsKey = key;
+      var sv = null; try { sv = JSON.parse(lsGet(key) || 'null'); } catch (e) {}
+      if (sv && typeof sv === 'object') applyCharPrefs(sv);
+      S.prefsSnap = charPrefsSnap();
+      return;
+    }
+    var snap = charPrefsSnap();
+    if (snap !== S.prefsSnap) { S.prefsSnap = snap; lsSet(key, snap); }
+  }
   // Window / Full mode (main owns it: cfg.mapMode), and the keep-clear areas: what main last reported, the same in page px.
   S.mode = 'window';
   S.clear = { ui: null, ref: null, win: null, boxes: [], char: '', asked: '', eq: false, edit: false, hot: null, client: null };
@@ -2037,6 +2071,7 @@
     syncWallNote();
     syncRouteNote();
     noteClearKey();   // a new zone or character: read the keep-clear areas again
+    noteCharPrefs();  // FB-129: a new character gets their own zoom / pan mode / settings back
     S.timerBy = {}; S.candBy = {}; S.seenBy = {};
     S.watchBy = p.watched && typeof p.watched === 'object' ? p.watched : {};   // spots marked "watch for <named>": { <point_id>: { named, by } }
     (p.timers || []).forEach(function (t) { S.timerBy[String(t.point_id)] = t; });
@@ -4408,7 +4443,7 @@
       var wx = zu.dx / v.scale + v.cx, wy = zu.dy / v.scale + v.cy;
       v.cx = wx - zu.dx / ns; v.cy = wy - zu.dy / ns;
     }
-    v.scale = ns;
+    v.scale = ns; S.userScale = ns;
     try { localStorage.setItem('wp-map-scale', String(ns)); } catch (err) {}
     renderMap();
   }
