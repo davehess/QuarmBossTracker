@@ -21,6 +21,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { fetchUserGuilds, fetchManagedGuildIds } from '@/lib/discord';
 import { MANAGE_COOKIE, MANAGE_TTL_MS, signManageProof } from '@/lib/hubManage';
 import { isLockedOut } from '@/lib/lockout';
+import { GUILD_TAG } from './guild';   // relative for the same reason
 import { recordTermsAcceptance } from './termsAcceptance';   // relative on purpose: the tests that run this route mock every "@/" import by name
 import { FLOW_GUILDS, FLOW_MANAGE, openNext, profileOf, splitMatchesByOpenJoin, type RegisteredGuild } from '@/lib/hubRegistry';
 
@@ -105,7 +106,9 @@ async function findMyGuilds(admin: SupabaseClient, playerId: string, token: stri
 
   // A guild that is not open_join needs an invite code: its Discord match is SHOWN on /guilds this once (the slugs ride
   // the redirect) and never written. Only the open guilds get a member row.
-  const { open, closed } = splitMatchesByOpenJoin(serverIds, (registry ?? []) as RegisteredGuild[]);
+  // Wolf Pack has a registry row of its own (2026-11-12) but is not joined or invited to here: its members come from the Discord role gate.
+  const rows = ((registry ?? []) as RegisteredGuild[]).filter(g => g.guild_id !== GUILD_TAG);
+  const { open, closed } = splitMatchesByOpenJoin(serverIds, rows);
   if (open.length) {
     const { error: addError } = await admin.from('hub_memberships')
       .upsert(open.map(guild_id => ({ guild_id, player_id: playerId, role: 'member' })), { onConflict: 'guild_id,player_id', ignoreDuplicates: true });
