@@ -151,7 +151,7 @@ describe('mimicLink under a token flood (real module, stubbed store)', () => {
     const tok = freshToken();
     await mimicLink.resolveMimicSession(ui(tok, '6.6.6.1'));
     await mimicLink.resolveMimicSession(ui(tok, '6.6.6.1'));
-    expect(selects.filter(s => s === 'mimic_sessions').length).toBe(1);
+    expect(selects.filter(s => s === 'mimic_sessions').length).toBe(2);   // one lookup = hash read + phase-1 plaintext fallback; the second call is a cache hit
   });
 
   it('a revoked token is evicted from both caches', async () => {
@@ -230,7 +230,7 @@ describe('mimicLink under a token flood (real module, stubbed store)', () => {
     const tok = freshToken();
     for (let i = 0; i < 200; i++) await mimicLink.requireAgentAuth(bearer(tok, ip), mockRes());
     expect(mimicLink._failAuth.isOver(ip, 60)).toBe(false);
-    expect(selects.filter(s => s === 'mimic_sessions').length).toBe(1);
+    expect(selects.filter(s => s === 'mimic_sessions').length).toBe(2);   // hash read + plaintext fallback, once
   });
 });
 

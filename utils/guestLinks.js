@@ -157,7 +157,7 @@ async function handleExtend(req, res) {
   if (!Array.isArray(updated)) return _json(res, 503, { error: 'store unavailable, retry' });
   if (updated.length === 0) return _json(res, 409, { error: 'revoked' });
 
-  mimicLink.forgetGuestSession(id, row.session_token);   // the new expiry applies on the guest's very next request
+  mimicLink.forgetGuestSession(id, row.session_token, row.token_hash);   // the new expiry applies on the guest's very next request
   _forgetListCache();
   await supabase.insert('audit_log', [{
     guild_id: supabase.guildId(),
