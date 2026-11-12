@@ -207,7 +207,9 @@ const RAID_WINDOW_END   = 23 * 60 + 30;        // 23:30 in minutes from midnight
  * @param {string} [tz]   Override timezone (default: America/New_York)
  */
 function isInRaidWindow(tsMs, tz) {
-  tz = tz || 'America/New_York';
+  // The guild's saved schedule (utils/guildSchedule.js); it IS the constants above when no row is saved.
+  const sch = require('./guildSchedule').getSchedule();
+  tz = tz || sch.tz;
   const p = new Intl.DateTimeFormat('en-US', {
     timeZone: tz,
     weekday: 'short',   // "Sun" / "Mon" …
@@ -219,13 +221,15 @@ function isInRaidWindow(tsMs, tz) {
 
   const DOW_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const dow  = DOW_NAMES.indexOf(p.weekday);
-  if (dow === -1 || !RAID_DAYS.has(dow)) return false;
+  if (dow === -1) return false;
 
   // hour12:false gives "24" for midnight in some locales; normalise
   const h    = parseInt(p.hour)   % 24;
   const m    = parseInt(p.minute) || 0;
   const mins = h * 60 + m;
-  return mins >= RAID_WINDOW_START && mins < RAID_WINDOW_END;
+  if (sch.startMin < sch.endMin) return sch.days.has(dow) && mins >= sch.startMin && mins < sch.endMin;
+  // A window that wraps midnight belongs to the day it started on.
+  return (sch.days.has(dow) && mins >= sch.startMin) || (sch.days.has((dow + 6) % 7) && mins < sch.endMin);
 }
 
 // ── PvP quiet hours ─────────────────────────────────────────────────────────

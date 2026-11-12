@@ -14233,7 +14233,7 @@ async function _fetchFreshRosterRows(guildId, sinceIso) {
 async function _captureRaidTickIfDue() {
   const { nowPartsInTz } = require('./utils/timezone');
   const raidTick = require('./utils/raidTick');
-  const slot = raidTick.dueSlotAt(nowPartsInTz('America/New_York'));
+  const slot = raidTick.dueSlotAt(nowPartsInTz(require('./utils/guildSchedule').getSchedule().tz));
   if (!slot) return;
 
   const supabase = require('./utils/supabase');
