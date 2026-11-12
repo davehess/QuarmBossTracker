@@ -55,7 +55,7 @@
 //   RAID_NIGHT_THREAD_MIN_SECONDS / _MIN_PLAYERS / _BOSS_ONLY — volume knobs,
 //                               see parseCardPassesFilter()
 
-const { getDefaultTz, partsInTzAt } = require('./timezone');
+const { partsInTzAt } = require('./timezone');
 
 // Known channel ids for the Wolf Pack guild. Env always wins; these exist so a
 // thread lands in the RIGHT place on a box where the env was never set — which
