@@ -21,8 +21,9 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 // The module itself defines the default. The ONE other place: obfuscate.ts uses the word as the default
 // SALT for the demo-name scrambler (DEMO_OBFUSCATE_SALT), which is a secret-ish seed and not a guild tag;
-// changing it would re-scramble every demo name.
-const ALLOW = new Set(['web/lib/guild.ts', 'web/lib/obfuscate.ts']);
+// changing it would re-scramble every demo name. guildSettings.ts's Wolf Pack seed names its OpenDKP client, which is OpenDKP's
+// account name for the guild, not the database tag.
+const ALLOW = new Set(['web/lib/guild.ts', 'web/lib/obfuscate.ts', 'web/lib/guildSettings.ts']);
 
 // The scanner under test: what, in a source's non-comment text, counts as a hard-coded guild tag.
 const QUOTED = /['"`]wolfpack['"`]/;

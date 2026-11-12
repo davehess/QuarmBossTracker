@@ -109,8 +109,9 @@ function sources() {
   return out;
 }
 // The two places a bare 'wolfpack' is allowed: guild.ts is where the built-in default lives, and
-// obfuscate.ts's demo salt is not a guild tag (a different slice owns it).
-const ALLOWED = new Set(['web/lib/guild.ts', 'web/lib/obfuscate.ts']);
+// obfuscate.ts's demo salt is not a guild tag (a different slice owns it). guildSettings.ts's seed names Wolf Pack's OpenDKP
+// client, which is OpenDKP's account name for the guild and not the database tag.
+const ALLOWED = new Set(['web/lib/guild.ts', 'web/lib/obfuscate.ts', 'web/lib/guildSettings.ts']);
 
 describe('no database guild-tag literal is left in web/lib, web/components or web/middleware.ts', () => {
   const files = sources();

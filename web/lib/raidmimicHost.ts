@@ -5,6 +5,8 @@
 // the query, and the root layout drops the Wolf Pack chrome for them. One list, so the middleware, the layout
 // and the page cannot disagree about what counts as that host.
 
+import { otherGuildHostSlug } from './guildHost';
+
 // The six hosts that are INDEXED (see "Search engines" below): the apex and www of each domain.
 export const RAIDMIMIC_INDEXED_HOSTS = [
   'raidmimic.com', 'www.raidmimic.com',
@@ -30,10 +32,21 @@ export function isRaidmimicBetaHost(host: string | null | undefined): boolean {
 // indexed there; the query is dropped on the raidmimic hosts, exactly like eqmimic's).
 export const RAIDMIMIC_LANDING_PATH = '/raidmimic';
 
-/** `host` is the raw Host header: any case, optional :port. */
+/**
+ * `host` is the raw Host header: any case, optional :port.
+ * ANOTHER guild's address (<slug>.raidmimic.com, web/lib/guildHost.ts; DECISIONS §569) counts: it gets the open sign-in,
+ * the bare shell and the Raid Mimic header, like raidmimic.com itself. The HOME guild's address does not: it is the
+ * whole guild site under another name, with the guild's own member gate.
+ */
 export function isRaidmimicHost(host: string | null | undefined): boolean {
   if (!host) return false;
-  return RAIDMIMIC_HOSTS.includes(host.toLowerCase().replace(/:\d+$/, ''));
+  return RAIDMIMIC_HOSTS.includes(host.toLowerCase().replace(/:\d+$/, '')) || otherGuildHostSlug(host) !== null;
+}
+
+/** One of the six indexed hosts exactly (never the beta mirror, never a guild's address). */
+export function isRaidmimicIndexedHost(host: string | null | undefined): boolean {
+  if (!host) return false;
+  return RAIDMIMIC_INDEXED_HOSTS.includes(host.toLowerCase().replace(/:\d+$/, ''));
 }
 
 /** `origin` is what web/lib/request-origin.ts returns: scheme://host[:port]. The sign-in callback decides its path from it. */
@@ -94,7 +107,7 @@ export interface RaidmimicSeo {
 
 /** The `robots` and canonical metadata for one of the two pages. `path` is the page's address on raidmimic.com. */
 export function raidmimicSeo(host: string | null | undefined, path: '/' | '/setup' | '/register' | '/privacy' | '/terms' | '/refunds'): RaidmimicSeo {
-  if (!isRaidmimicHost(host) || isRaidmimicBetaHost(host) || process.env.NEXT_PUBLIC_IS_BETA === '1') return { robots: { index: false, follow: false } };
+  if (!isRaidmimicIndexedHost(host) || process.env.NEXT_PUBLIC_IS_BETA === '1') return { robots: { index: false, follow: false } };
   return { robots: { index: true, follow: true }, alternates: { canonical: `${RAIDMIMIC_ORIGIN}${path}` } };
 }
 

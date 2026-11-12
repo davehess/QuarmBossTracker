@@ -62,8 +62,12 @@ We would rather tell you than have you find out.
 
 - **Most data has no deletion date.** A few things expire (see *How long we keep
   it*); everything else is kept until someone asks us to remove it.
-- **There is no self-serve download or delete.** You ask an officer, and it is
-  done by hand.
+- **You can download or delete your data yourself** on your page, under Your
+  data (`/me#your-data`). Delete removes your own data and your sign-in; the
+  guild's raid records (parses, attendance, loot and DKP, raid sign-ups) stay
+  with the guild, unlinked from your Discord account. Ask an officer to remove
+  those. The download leaves out per-fight and per-minute streams that name
+  other players (including `/who` sightings); an officer pulls those on request.
 - **Opt-outs stop future uploads, not past ones.** Switching something off does
   not delete what was already collected.
 - **Other raiders' Mimic records you too.** Your own settings control your own
@@ -501,8 +505,13 @@ Anything posted to Discord stays there until someone deletes it in Discord.
   yet show your email, page views, sign-in records, chat history, `/who`
   sightings, positions, hails, crash reports or feedback — ask and we'll pull
   them.
-- **Download:** no export yet. Ask.
-- **Remove:** ask an officer (or `#feedback`). We remove it from the live
+- **Download:** "Download my data" on `/me#your-data` builds one file of your
+  characters, tells, uploads, settings and the guild records that are yours
+  (once every 10 minutes). Code: `web/lib/selfData.ts`, `web/app/me/data/export/*`.
+- **Remove:** "Delete my account" on `/me#your-data` (typed confirm) removes
+  your own data and sign-in and unlinks your Discord id from the guild's raid
+  records (`member_self_delete`, `member_self_unlink_batch`). For anything it
+  does not cover, ask an officer (or `#feedback`). We remove it from the live
   database; the nightly backups age out within 30 days; the archive copy and
   anything already posted in Discord have to be cleaned up by hand, so say if
   you want those gone too.

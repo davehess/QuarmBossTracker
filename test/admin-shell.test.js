@@ -68,7 +68,7 @@ describe('the groups, in order', () => {
   it('Data & site, with the member-facing pages the old grid had listed small at its foot', () => {
     expect(hrefs('data').slice(0, 5)).toEqual([
       ['/admin/audit', '/admin/chat', '/admin/analytics'], ['/admin/anomalies', '/admin/adoption'],
-      ['/admin/rules'], ['/admin/theme'], ['/admin/access'],
+      ['/admin/rules'], ['/admin/theme', '/admin/settings'], ['/admin/access'],
     ]);
     expect(byId.data.elsewhere.map(e => e.href)).toEqual(['/who', '/quartermaster', '/loadouts', '/planner']);
   });

@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-133-2026-11-12',
+    title: 'Web 2.1.133',
+    version: 'Web 2.1.133',
+    date: '2026-11-12',
+    headline: 'Guilds get their own settings page and their own address, the first step toward other guilds using the site.',
+    features: [
+      { name: 'Guild settings (new, beta)', blurb: 'Officers can set the raid time zone, days and hours, name which Discord roles are leaders, officers and raiders, give out jobs such as posting loot or DKP, choose DKP, and say whether guests come along on raids. This first version saves the settings and shows the next raid; attendance, sign-in and DKP switch over to them one at a time.' },
+      { name: 'A guild’s own address', blurb: 'Each guild is reached at its own name on raidmimic.com. Wolf Pack’s is wolfpack.raidmimic.com and shows the same site as wolfpack.quest.' },
+      { name: 'A setup checklist for guild leaders', blurb: 'A new guild’s page lists what is left to set up, each step with a link to where it is done.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-2-1-132-2026-11-11',
     title: 'Web 2.1.132',
     version: 'Web 2.1.132',

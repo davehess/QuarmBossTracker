@@ -55,6 +55,10 @@ continues into decision desk. decision desks decisions get a timeframe for sorti
 guild lead's Decision Desk artifact (find it by title in the artifact list; its picks are read back from the Desk's
 database), with the pictures and one-liners above, and a `when` of now / week / month / later (how soon the work needs the
 answer). The chat reply names the card and links the Desk; it does not hold the only copy of the question.
+**Every card carries its follow-ups, and stays open until they are answered** (the guild lead, 2026-11-12: *"give
+recommendations and followups or related questions. don't hide the decision until the other questions are answered"*;
+DECISIONS §567): related questions go in the card's `extra` list, each with a recommended choice, and the Desk's
+`answered()` keeps the card under Unanswered until every follow-up has a pick ("Not now" and "Neither" close it).
 
 ### Working rule — minimal diff
 Touch only the code the task requires. If a change appears to need edits to
@@ -1475,8 +1479,13 @@ order of magnitude. The honest stat: distinct
 Any adoption gate, graduation argument, or sentinel invariant that counts the
 fleet counts players.
 
-**Raid schedule:** Sun/Wed/Thu 8pm–midnight Eastern — the default window for
-any "should have been there" computation. **Since 2026-08-16 (the guild lead, live):
+**Raid schedule:** Sun/Wed/Thu, starting **8:30 PM Eastern, not 8:00** (the guild lead, 2026-11-11: *"our actual
+raids are [8:]30 p.m. Eastern not at 8:00 on the DOT"*; DECISIONS §565). The code already says so
+(`utils/timezone.js` `RAID_WINDOW_START` 20:30, `utils/raidNight.js` `RAID_START_MIN`); plans and docs that count
+time from 8:00 are wrong by half an hour. **The raid ends at 11:30 PM; plans run to 12:30 AM** (the guild lead,
+2026-11-11: *"1130 is end of raid, 1230 is what we go off of because theres a chance of overtime"*). So a plan's
+cut-off is worked back from 12:30, never from 11:30, and the code's `RAID_WINDOW_END` 23:30 is the scheduled end,
+not the planning one. This is the default window for any "should have been there" computation. **Since 2026-08-16 (the guild lead, live):
 alt raids and Seru+misc nights run 3 ticks / 2 hours (8–10pm ET), until
 Planes of Power**; other nights keep the full window. Tick math needs no
 change — RA is distinct-ticks ÷ total-ticks and never assumes a per-night

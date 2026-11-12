@@ -117,7 +117,7 @@ export default async function GuildsPage({ searchParams }: { searchParams: { fin
             </div>
             {/* Same shape as the other guild cards (the guild lead, 2026-11-02: "This looks like it's hard-tied to wolfpack
                 here"). It opens on its own site, which is configuration (builtinGuildSite), never typed into this page:
-                Wolf Pack is not a hub_guilds row yet, so there is no /guilds/<slug>. */}
+                Wolf Pack has a hub_guilds row since 2026-11-12, but /guilds/<its slug> is its officers' settings page, not a member page. */}
             <p className="mt-1 text-sm text-dim">
               {wolf.characters} character{wolf.characters === 1 ? '' : 's'} on file{wolfSite.url ? ` · its own site, ${siteLabel(wolfSite.url)}` : ''}
             </p>

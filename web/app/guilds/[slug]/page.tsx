@@ -15,6 +15,9 @@ import { isRaidmimicHost } from '@/lib/raidmimicHost';
 import { GUILD_SLUG_RX } from '@/lib/hubRegistry';
 import { EQMIMIC_ORIGIN } from '@/lib/raidmimicLanding';
 import { pageMetadata } from '@/lib/pageMetaData';
+import { isOfficer } from '@/lib/officer';
+import { GUILD_TAG } from '@/lib/guild';
+import { readGuildSettingsRow, nextRaidLine } from '@/lib/guildSettingsLoad';
 import { guildAccess, activeInvites, canManageInvites, ROLE_LABEL, type InviteListRow } from '@/lib/hubGuilds';
 import NewPageTag from '@/components/NewPageTag';
 import { GUILDS_STAY_PATH, cleanSiteUrl, siteLabel } from '@/lib/guildSites';
@@ -62,7 +65,14 @@ export default async function GuildPage({ params }: { params: { slug: string } }
     guild = null;   // the registry is not applied here: there is no such guild to show
   }
 
-  const access = guildAccess(guild, membership);
+  let access = guildAccess(guild, membership);
+  // The built-in guild has no invites and no hub membership to speak of: its site officers (the people /admin lets in) run it
+  // here. They get the setup card and the settings link, not the invite and website forms, whose actions need a registry role.
+  let viaSite = false;
+  if (guild && !guild.suspended_at && slug === GUILD_TAG && !(access.kind === 'member' && canManageInvites(access.role)) && (await isOfficer(user.id))) {
+    access = { kind: 'member', role: 'officer' };
+    viaSite = true;
+  }
   if (access.kind === 'hidden' || !guild) notFound();
 
   const feedbackHref = onHost ? `${EQMIMIC_ORIGIN}/feedback` : '/feedback';
@@ -86,10 +96,15 @@ export default async function GuildPage({ params }: { params: { slug: string } }
 
   // Only an owner or officer reads the invites.
   let invites: InviteListRow[] = [];
-  const manage = canManageInvites(access.role);
+  let anyInvite = false;
+  const configure = canManageInvites(access.role);   // owners and officers; a site officer of the built-in guild counts
+  const manage = configure && !viaSite;              // invites and the website form need a registry role
+  const stored = await readGuildSettingsRow(slug);
+  const raidLine = stored?.saved && stored.settings.schedule.days.length > 0 ? nextRaidLine(stored.settings.schedule, Date.now()) : null;
   const site = cleanSiteUrl(guild.website_url);
   if (manage) {
     const { data } = await admin.from('hub_invites').select('code, uses, max_uses, expires_at').eq('guild_id', slug);
+    anyInvite = (data ?? []).length > 0;
     invites = activeInvites((data ?? []) as InviteListRow[]);
   }
 
@@ -105,13 +120,43 @@ export default async function GuildPage({ params }: { params: { slug: string } }
       <section aria-label="About this guild" className={`${CARD} mt-4`}>
         <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
           <div><dt className="text-xs text-dim">Plan</dt><dd className="text-text">{PLAN_LABEL[guild.plan] ?? guild.plan}</dd></div>
-          <div><dt className="text-xs text-dim">Members</dt><dd className="text-text">{memberCount ?? 0}</dd></div>
+          {slug !== GUILD_TAG && <div><dt className="text-xs text-dim">Members</dt><dd className="text-text">{memberCount ?? 0}</dd></div>}
+          {raidLine && <div><dt className="text-xs text-dim">Next raid</dt><dd className="text-text">{raidLine}</dd></div>}
           <div><dt className="text-xs text-dim">Your role</dt><dd className="text-text">{ROLE_LABEL[access.role] ?? 'Member'}</dd></div>
           {guild.discord_guild_id && (
             <div><dt className="text-xs text-dim">Discord server id</dt><dd className="font-mono text-text">{guild.discord_guild_id}</dd></div>
           )}
         </dl>
       </section>
+
+      {configure && (() => {
+        const rowSaved = !!stored?.saved && !!stored.updatedBy;
+        const r = stored?.settings.roles;
+        const steps: { done: boolean; label: string; href: string; cta: string }[] = [
+          { done: !!guild.discord_guild_id, label: 'Discord server linked', href: feedbackHref, cta: 'Not linked: tell us and we will add it' },
+          { done: rowSaved, label: 'Raid schedule saved', href: `/guilds/${slug}/settings#schedule`, cta: 'Set the schedule' },
+          { done: rowSaved && !!r && (r.leader.length > 0 || r.officer.length > 0), label: 'Roles mapped', href: `/guilds/${slug}/settings#roles`, cta: 'Map your roles' },
+          { done: rowSaved, label: 'DKP chosen', href: `/guilds/${slug}/settings#dkp`, cta: 'Choose DKP' },
+          { done: rowSaved, label: 'Guest rule chosen', href: `/guilds/${slug}/settings#guests`, cta: 'Choose the guest rule' },
+          ...(viaSite ? [] : [{ done: anyInvite, label: 'First invite made', href: '#invites', cta: 'Make an invite code' }]),
+          { done: false, label: 'Mimic installed', href: onHost ? '/setup' : '/mimic', cta: 'Get Mimic' },
+        ];
+        return (
+          <section aria-label="Set up your guild" className={`${CARD} mt-4`}>
+            <h2 className="text-base text-text">Set up your guild</h2>
+            <ol className="m-0 mt-2 list-none space-y-1 p-0">
+              {steps.map(st => (
+                <li key={st.label} className="flex min-h-11 flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                  <span className={`${PILL} ${st.done ? 'text-green' : ''}`}>{st.done ? 'Done' : 'To do'}</span>
+                  <span className="text-text">{st.label}</span>
+                  {!st.done && <a href={st.href} className="inline-flex min-h-11 items-center text-sm">{st.cta} &rarr;</a>}
+                </li>
+              ))}
+            </ol>
+            <p className="mt-2"><a href={`/guilds/${slug}/settings`} className="inline-flex min-h-11 items-center text-sm">Open guild settings &rarr;</a></p>
+          </section>
+        );
+      })()}
 
       {/* The guild's own website (the guild lead, 2026-11-02, "redirect by default"). Anyone in the guild sees the link;
           only an owner or officer sees the form, and the server action checks the role again. */}
@@ -131,33 +176,35 @@ export default async function GuildPage({ params }: { params: { slug: string } }
         )}
       </section>
 
-      <section aria-label="Invites" className={`${CARD} mt-4`}>
-        <h2 className="text-base text-[#f2ede1]">Invites</h2>
-        {manage ? (
-          <>
-            <p className="mt-1 text-xs leading-5 text-dim">
-              Hand a code to a raider; they enter it under &ldquo;Join a guild&rdquo; on Your guilds. A code works for 25 people and for 7 days.
-            </p>
-            {invites.length > 0 ? (
-              <ul className="m-0 mt-3 list-none space-y-2 p-0">
-                {invites.map(inv => (
-                  <li key={inv.code} className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                    <span className="font-mono text-base tracking-widest text-text">{inv.code}</span>
-                    <span className="text-xs text-dim">{inv.uses} of {inv.max_uses} used</span>
-                    <span className="text-xs text-dim">expires {when(inv.expires_at)}</span>
-                    <RevokeButton slug={slug} code={inv.code} />
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="mt-3 text-sm text-dim">No live codes.</p>
-            )}
-            <div className="mt-3"><NewInviteButton slug={slug} /></div>
-          </>
-        ) : (
-          <p className="mt-1 text-sm text-dim">Ask an officer for an invite code.</p>
-        )}
-      </section>
+      {slug !== GUILD_TAG && (
+        <section id="invites" aria-label="Invites" className={`${CARD} mt-4`}>
+          <h2 className="text-base text-[#f2ede1]">Invites</h2>
+          {manage ? (
+            <>
+              <p className="mt-1 text-xs leading-5 text-dim">
+                Hand a code to a raider; they enter it under &ldquo;Join a guild&rdquo; on Your guilds. A code works for 25 people and for 7 days.
+              </p>
+              {invites.length > 0 ? (
+                <ul className="m-0 mt-3 list-none space-y-2 p-0">
+                  {invites.map(inv => (
+                    <li key={inv.code} className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                      <span className="font-mono text-base tracking-widest text-text">{inv.code}</span>
+                      <span className="text-xs text-dim">{inv.uses} of {inv.max_uses} used</span>
+                      <span className="text-xs text-dim">expires {when(inv.expires_at)}</span>
+                      <RevokeButton slug={slug} code={inv.code} />
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-3 text-sm text-dim">No live codes.</p>
+              )}
+              <div className="mt-3"><NewInviteButton slug={slug} /></div>
+            </>
+          ) : (
+            <p className="mt-1 text-sm text-dim">Ask an officer for an invite code.</p>
+          )}
+        </section>
+      )}
 
       <p className="mt-4"><a href={GUILDS_STAY_PATH} className="inline-flex min-h-11 items-center text-sm">&larr; Your guilds</a></p>
     </div>
