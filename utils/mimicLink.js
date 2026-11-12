@@ -55,15 +55,18 @@ const SESSION_TOKEN_RE = /^wpms_[0-9a-f]{64}$/;
 function hashToken(token) { return crypto.createHash('sha256').update(String(token)).digest('hex'); }
 const _plaintextFallback = () => String(process.env.SESSION_PLAINTEXT_FALLBACK || 'on').toLowerCase() !== 'off';
 
-// 90-day idle expiry for member sessions (guests carry their own expires_at). last_used_at is stamped at most hourly
-// per token (SESSION_TOUCH_MS), so a raider who plays weekly is never near the line. A missing stamp is not expired.
+// 90-day idle expiry for GUILD MEMBER sessions only (the guild lead, 2026-11-12, DECISIONS §573): scope null (a home
+// guild member, every row before scopes existed) or 'member' (a hub guild member). A guest carries its own expires_at,
+// and a 'player' session (someone who only syncs flags or characters now and then) is left alone. last_used_at is
+// stamped at most hourly per token (SESSION_TOUCH_MS), so a raider who plays weekly is never near the line. A missing
+// stamp is not expired.
 const SESSION_IDLE_DAYS_DEFAULT = 90;
 function _idleDays() {
   const n = Number(process.env.SESSION_IDLE_DAYS);
   return Number.isFinite(n) && n >= 0 && process.env.SESSION_IDLE_DAYS !== undefined && process.env.SESSION_IDLE_DAYS !== '' ? n : SESSION_IDLE_DAYS_DEFAULT;
 }
 function isIdleExpired(row, nowMs = Date.now(), idleDays = _idleDays()) {
-  if (!row || row.scope === 'guest' || !idleDays) return false;
+  if (!row || (row.scope || 'member') !== 'member' || !idleDays) return false;
   const last = Date.parse(row.last_used_at || row.created_at || '');
   return Number.isFinite(last) && nowMs - last > idleDays * 86_400_000;
 }
@@ -975,7 +978,8 @@ async function sweepIdleSessions(nowMs = Date.now()) {
   const cutoff = new Date(nowMs - days * 86_400_000).toISOString();
   const rows = await supabase.update(
     'mimic_sessions',
-    `revoked_at=is.null&scope=neq.guest&last_used_at=lt.${encodeURIComponent(cutoff)}`,
+    // `scope=neq.guest` would skip every NULL-scope row (SQL: NULL <> 'guest' is not true), which is every home member.
+    `revoked_at=is.null&or=(scope.is.null,scope.eq.member)&last_used_at=lt.${encodeURIComponent(cutoff)}`,
     { revoked_at: new Date(nowMs).toISOString() },
   ).catch(() => null);
   return Array.isArray(rows) ? rows.length : 0;
