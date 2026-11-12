@@ -4438,6 +4438,11 @@ crash card labels it "🐺 Wolf Pack Zeal" (`wpZealBuildTag`). Runbook: `docs/up
   (a `commons` or `managed` guild uses the hosted bot at `HUB_BOT_URL`; a `self_hosted` one its own `self_host_url`), 5-minute cache. Public by
   design: guild names and a bot address, nothing about members. Mimic's picker reads it (Mimic features, "Guild picker"). Test:
   `test/hub-directory.test.js`.
+- **Guild settings: the `guild_settings` row, `/guilds/<slug>/settings`, a guild's own address (web 2.1.133 on `main`, `[beta]`, 2026-11-12; DECISIONS §569).**
+  Table `guild_settings` (`guild_id` pk, `settings` jsonb v1, `updated_by`; migration `20261112130000_guild_settings.sql`; RLS on, no policies; in `scripts/guild-tables.json`).
+  Pure half `web/lib/guildSettings.ts` (shape, defaults, `WOLFPACK_SEED`, `validateSettings`, `nextRaid`, `inRaidWindow`, `hasJob`); reader `web/lib/guildSettingsLoad.ts` (60 s); who may edit `web/lib/guildSettingsAccess.ts`;
+  page + form + action `web/app/guilds/[slug]/settings/`; `/admin/settings` forwards to the home guild's. The setup checklist is on `web/app/guilds/[slug]/page.tsx`.
+  Address rules `web/lib/guildHost.ts` + the first branch of `web/middleware.ts` (`<slug>.raidmimic.com`; home slug = whole site). Tests `test/guild-settings.test.js`, `test/guild-host.test.js`. Nothing but the next-raid line reads the settings yet.
 - **Guild theme: the `guild_theme` row, the variables on `<html>`, `/admin/theme` (web 2.1.80 on `main`, `[beta]`, 2026-10-31; DECISIONS §488; `docs/DESIGN-theming.md` §7 step 5).**
   Table `guild_theme` (`guild_id` pk, `slots` jsonb, `logo_url`, `font`, `embed_color`, `updated_by`; migration
   `20261031170000_guild_theme.sql`, applied, seeded with today's values; RLS on, no policies; listed in `scripts/guild-tables.json`).
