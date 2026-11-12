@@ -558,3 +558,49 @@ role only like the other `hub_*` tables; an officer page "Fun cards" with a tick
 preview; `/fun` reads the guild's rows and draws only those. A new guild starts with the ten ready cards on. Wolf Pack's own
 `/fun` keeps working unchanged until it is moved onto its own rows, at which point its five personal cards become settings
 and their names leave the source.
+
+## 11. The pilot guild: where the upload path stands and the build order (scoped 2026-11-12)
+
+The pilot's shape is DECISIONS §571 (website and Mimic, no bot in their Discord). A read-only pass over the code the same
+day, with the three leak claims and the parses reader checked by hand:
+
+**What already works.** Mimic's picker (beta) sends the chosen guild's slug on the link, and the bot reads it (§500,
+`_cleanHub` in `utils/mimicLink.js`). A session linked to a hosted guild resolves through `hub_memberships` and carries that
+guild. Its fight upload (`POST /api/agent/encounter`, allowed only on the managed plan) is filed under the session's guild
+when the guild walls are switched on; with them off it answers 503 and the agent's queue retries, so nothing is ever filed
+under the wrong guild. A hub upload is treated like a guest's: no Discord cards, timers, lockouts or member-keyed writes.
+
+**What does not.** Of the 59 upload routes, only `/encounter` takes the guild from the session, and a hub session is refused
+on every other one (403). So a hosted guild gets fights and nothing else: no buffs, roster, casting, chat or triggers.
+Everything those routes keep in memory (`state.json` timers, casting maps, the trigger ring, the tuning cache, the guild
+trigger cache) is the home guild's alone; none of them may open to a hub session before it is keyed by guild.
+
+**Leaks on the path that works** (each is filed under or can touch the home guild's rows):
+1. the threat-snapshot claims update `encounter_threat_snapshots` by boss name or uploader and a time window, with no guild;
+2. `charm_sessions` is stamped with the process guild;
+3. `bosses_local` is read and self-registered without a guild;
+4. `raid_nights` uses the home guild's schedule, so another guild's off-schedule fight gets no night.
+
+**The home guild's website would show a second guild's fights.** `web/app/parses/page.tsx` and `[id]/page.tsx` read
+`encounters` with the service key and no guild filter (the row-level policies do not apply to that key).
+
+**Build order** (each step ships on its own, off a raid night):
+1. Filter the site's service-key reads of `encounters` to the home guild (no visible change today).
+2. Close leaks 1–3 on the upload path.
+3. A night per guild: `raid_nights` reads the uploading guild's saved schedule (the process guild's schedule is read from
+   `guild_settings` since the schedule change of 2026-11-12/13).
+4. The hosted guild's own parses page, `/guilds/<slug>/parses`, through the signed-in user's client so the row-level
+   policies are the wall.
+5. The two-guild wall test (the audit's gate), then the guild walls switched on for the pilot guild. Never on a raid night.
+6. Mimic's second slice on beta.
+7. Two-guild filing (§572), below.
+
+**Two-guild filing (§572), smallest design.** One fight upload is filed under the uploader's guild and, when the raid mostly
+belongs to another hosted guild, under that guild too. What exists to decide it: the raid roster upload carries each
+member's rank ("Raid Leader") but no guild; `/who` sightings carry a guild name per character (missing for /anon); a
+60%-overlap rule already tells raids apart (`utils/raidGroups.js`); a "share of our guild" computation exists
+(`utils/killContext.js`). What is missing: nothing ties an in-game guild name to a hosted guild (a registry field is
+needed), and an opt-in for the receiving guild. Shape: a pure `utils/raidGuild.js` (leader's guild plus the share of the
+roster in it, against a threshold); after the primary write and after the upload is acknowledged, a second `recordParse`
+under the other guild with guest semantics; best-effort. The rule, the opt-in and what is sent are the guild lead's picks
+(Desk card `two-guild-filing`).
