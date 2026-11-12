@@ -55,6 +55,10 @@ continues into decision desk. decision desks decisions get a timeframe for sorti
 guild lead's Decision Desk artifact (find it by title in the artifact list; its picks are read back from the Desk's
 database), with the pictures and one-liners above, and a `when` of now / week / month / later (how soon the work needs the
 answer). The chat reply names the card and links the Desk; it does not hold the only copy of the question.
+**Every card carries its follow-ups, and stays open until they are answered** (the guild lead, 2026-11-12: *"give
+recommendations and followups or related questions. don't hide the decision until the other questions are answered"*;
+DECISIONS §567): related questions go in the card's `extra` list, each with a recommended choice, and the Desk's
+`answered()` keeps the card under Unanswered until every follow-up has a pick ("Not now" and "Neither" close it).
 
 ### Working rule — minimal diff
 Touch only the code the task requires. If a change appears to need edits to
