@@ -1475,8 +1475,11 @@ order of magnitude. The honest stat: distinct
 Any adoption gate, graduation argument, or sentinel invariant that counts the
 fleet counts players.
 
-**Raid schedule:** Sun/Wed/Thu 8pm–midnight Eastern — the default window for
-any "should have been there" computation. **Since 2026-08-16 (the guild lead, live):
+**Raid schedule:** Sun/Wed/Thu, starting **8:30 PM Eastern, not 8:00** (the guild lead, 2026-11-11: *"our actual
+raids are [8:]30 p.m. Eastern not at 8:00 on the DOT"*; DECISIONS §565). The code already says so
+(`utils/timezone.js` `RAID_WINDOW_START` 20:30, `utils/raidNight.js` `RAID_START_MIN`); plans and docs that count
+time from 8:00 are wrong by half an hour. The end is not settled in writing (the code's window ends 23:30; this
+line used to say midnight). This is the default window for any "should have been there" computation. **Since 2026-08-16 (the guild lead, live):
 alt raids and Seru+misc nights run 3 ticks / 2 hours (8–10pm ET), until
 Planes of Power**; other nights keep the full window. Tick math needs no
 change — RA is distinct-ticks ÷ total-ticks and never assumes a per-night
