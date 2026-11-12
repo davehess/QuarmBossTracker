@@ -166,6 +166,7 @@ export const ADMIN_TITLES: Record<string, string> = {
   '/admin/soft-reserve':       '[beta] Soft Reserve',
   '/admin/spells':             'Spell exchange',
   '/admin/theme':              '[beta] Guild theme',
+  '/admin/settings':           '[beta] Guild settings',
   '/admin/triggers':           'Guild triggers',
   '/admin/voice':              'Voice triggers',
   '/admin/voice-reports':      '[beta] Voice reports',
@@ -352,6 +353,9 @@ export function metaForPath(rawPath: string): PageMeta {
   }
   // A guild's own page: the card says "Guild" and never the guild's name. The page needs a sign-in, a closed guild
   // answers a non-member with a 404, and the crawler is anonymous, so no name is read here at all.
+  if (/^\/guilds\/[^/]+\/settings$/.test(path)) {
+    return { title: '[beta] Guild settings', description: 'A guild’s raid schedule, roles, jobs, DKP, guest rule and links, edited by its officers. Sign in to open it.' };
+  }
   if (/^\/guilds\/[^/]+$/.test(path)) {
     return { title: '[beta] Guild', description: 'A guild on Raid Mimic: its members, its plan and its invite codes. Sign in to open it.' };
   }

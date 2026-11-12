@@ -90,7 +90,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { links: [{ href: '/admin/anomalies', label: 'Anomalies' }, { href: '/admin/adoption', label: 'Adoption' }] },
       { links: [{ href: '/admin/rules' }] },
       // The guild theme editor (web 2.1.80). test/admin-shell.test.js fails if a link's page file goes missing.
-      { links: [{ href: '/admin/theme', label: 'Theme' }] },
+      // /admin/settings forwards to /guilds/<this guild>/settings, the page every hosted guild's officers get (web 2.1.133, DECISIONS §569).
+      { links: [{ href: '/admin/theme', label: 'Theme' }, { href: '/admin/settings', label: 'Guild settings' }] },
       { links: [{ href: '/admin/access' }] },
       { links: [{ href: '/admin/flag-lab' }] },
     ],

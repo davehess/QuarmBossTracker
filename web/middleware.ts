@@ -20,6 +20,7 @@ import { NextResponse, type NextRequest, type NextFetchEvent } from 'next/server
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { isEqmimicHost, eqmimicLandingTarget } from './lib/eqmimicHost';
 import { isRaidmimicAsset, isRaidmimicHost, isRaidmimicOpenPath, raidmimicLandingTarget } from './lib/raidmimicHost';
+import { otherGuildHostSlug, otherGuildHostRedirect } from './lib/guildHost';
 import { isLockedOut } from './lib/lockout';
 import { ADMIN_SHELL_COOKIE, ADMIN_SHELL_MAX_AGE, adminShellChoice, isAdminPath } from './lib/adminShell';
 
@@ -100,6 +101,24 @@ export async function middleware(request: NextRequest, event: NextFetchEvent) {
     url.pathname = to.pathname;
     url.search = to.search;
     return NextResponse.rewrite(url);
+  }
+
+  // Another guild's address, <slug>.raidmimic.com (the guild lead, 2026-11-12, DECISIONS §569; web/lib/guildHost.ts):
+  // the hub's pages for that guild. Sign-in, /guilds and My characters take the normal flow below; a platform page goes
+  // to raidmimic.com; everything else goes to the guild's page. Decided before the raidmimic branch, because such a host
+  // also counts as a raidmimic host and would otherwise be rewritten to the landing page. The HOME guild's address
+  // (wolfpack.raidmimic.com) is not handled here at all: it is the whole site, so it falls through like wolfpack.quest.
+  const guildSlug = otherGuildHostSlug(request.headers.get('host'));
+  if (guildSlug) {
+    if (isRaidmimicAsset(request.nextUrl.pathname)) return NextResponse.next();
+    const to = otherGuildHostRedirect(guildSlug, request.nextUrl.pathname);
+    if (to) {
+      if (to.startsWith('https://')) return NextResponse.redirect(to, 307);
+      const url = request.nextUrl.clone();
+      url.pathname = to;
+      url.search = '';
+      return NextResponse.redirect(url, 307);
+    }
   }
 
   // raidmimic.com / .net / .quest (the guild lead, 2026-10-18): the same shape as the branch above, for the
