@@ -1653,7 +1653,7 @@
   // colour. The Default scheme is exactly what the map drew before the panel existed.
   var CFG_SHOW = [
     ['walls', 'Walls'], ['rooms', 'Room names'], ['bosses', 'Boss names'], ['upLabel', 'Known mob: name + spawn id'],
-    ['dots', 'Spawn points'], ['abilities', 'Ability icons'], ['pather', 'Walker mark ↻'], ['routes', 'Walker routes'],
+    ['dots', 'Spawn points'], ['events', 'Scripted-mob spawn points (event mobs)'], ['abilities', 'Ability icons'], ['pather', 'Walker mark ↻'], ['routes', 'Walker routes'],
     ['timers', 'Respawn timer rings'], ['candidates', '"?" maybe-died rings'], ['aggro', 'Aggro rings (◯)'],
     ['aeRampage', 'AE rampage ring (target)'], ['rampage', 'Rampage ring (target)'],
     ['you', 'You'], ['target', 'Target ring'], ['targetLine', 'Line to target'], ['distance', 'Distance to target'],
@@ -1891,7 +1891,7 @@
   // ── state ──
   var S = {
     ver: null, zone: null, points: [], byId: {}, map: null, grids: null, traps: null, prep: null, p: null, skew: 0, err: false, trails: {},
-    view: { cx: 0, cy: 0, scale: 0.5 }, follow: true, panMode: false, levels: LEVEL_DEFAULT, fit: 'zone', hoverGrid: null,
+    view: { cx: 0, cy: 0, scale: 0.5 }, follow: true, panMode: false, levels: LEVEL_DEFAULT, fit: 'zone', hoverGrid: null, hoverPid: null, evHidden: {},
     spawnLevels: LEVEL_STEPS.length - 1, sideOpen: true,   // spawns: all by default; the timers list starts slid out
     sideMode: 'grow',   // Timers button: 'grow' widens the window by the list (map keeps its size), 'share' shrinks the map
     timerBy: {}, candBy: {}, seenBy: {}, watchBy: {}, menuPid: null, drag: null, w: 0, h: 0, fitted: false,
@@ -2218,6 +2218,12 @@
   function toggleSpawn(pid, name) {
     var p = S.byId[String(pid)];
     if (!p) return;
+    if (p.event) {   // FB-130: a script-spawned point has no respawn to mark or clear: right-click hides it
+      S.evHidden[(S.p && S.p.zone) + '|' + p.id] = true;
+      toast((name || bestName(p)) + ' — hidden (⚙ → Show → Scripted-mob spawn points hides them all)');
+      renderMap(true);
+      return;
+    }
     var a = spawnToggle(S.timerBy[String(pid)], S.seenBy[String(pid)]);
     var run = a.act === 'clear' ? postMark(p.id, 'clear') : a.act === 'kill' ? postKill(a.name, p.id, a.spawn_id) : postMark(p.id, 'killed');
     run.then(function (r) { toast(spawnToggleWords(name || bestName(p), a.act, r, nowMs())); });
@@ -2726,12 +2732,32 @@
   // One mob's rings at (x, y) px: the aggro radius solid, in the colour of whom it is a danger to (aggroKind), and the
   // social (assist) radius dashed, drawn only when it differs from the aggro one (equal, the solid edge stands for both).
   var AGGRO_COL = { none: 'aggroNone', safe: 'aggroSafe', kos: 'aggro' };
+  // FB-130: your target's rings are purple whatever whom they warn about, and the ring of the spawn dot the cursor is on is
+  // drawn heavier. ringLook(pid, hoverPid, tgtPid) -> { target, hover } for the ring that belongs to point `pid`.
+  // The theme's --wp-purple slot (a hex: hexA() parses it), else the same purple the class colours already carry.
+  var AGGRO_TARGET_COL = (function () {
+    try { var v = getComputedStyle(document.documentElement).getPropertyValue('--wp-purple').trim(); if (/^#[0-9a-f]{6}$/i.test(v)) return v; } catch (e) {}
+    return typeof CLASS_HEX === 'object' ? CLASS_HEX.enchanter : null;
+  })();
+  function ringLook(pid, hoverPid, tgtPid) {
+    pid = pid == null ? null : String(pid);
+    return { target: pid != null && pid === (tgtPid == null ? null : String(tgtPid)), hover: pid != null && pid === (hoverPid == null ? null : String(hoverPid)) };
+  }
+  // FB-130: a script-spawned point (`event: true`, PoP event mobs) has no respawn, so no timer can ever "clear" it. It is
+  // hidden for everything else's reason instead: ⚙ → Show → Scripted-mob spawn points (all of them), or a right-click on one
+  // (that one, this zone, until the overlay reloads; `hidden` is keyed zone|id).
+  function eventHidden(p, show, hidden, zone) {
+    return !!(p && p.event) && (!show || show.events === false || !!(hidden && hidden[zone + '|' + p.id]));
+  }
   // cc = ccFor() of that mob, now = the map's clock: a pacified mob (single target: it will not attack) is a light pink
   // disc with a band round its edge that a red sweep fills clockwise from 12 o'clock as the pacify runs out; a harmony
   // keeps the normal fill and colour but at the shrunken radius (the full one left as a faint dashed line), with the
   // same band; a mez adds "zzz". All three end on their own `until`, back to the normal ring (ringState).
-  function aggroRing(x, y, ar, as, kind, cc, now) {
+  function aggroRing(x, y, ar, as, kind, cc, now, look) {
     var c = S.cfg.col[AGGRO_COL[kind]] || S.cfg.col.aggro, sc = S.view.scale, I = inkStyle(S.cfg.ink);
+    if (look && look.target) c = AGGRO_TARGET_COL;   // FB-130: your target's ring stands out in purple
+    var hot = !!(look && look.hover);                 // FB-130: the ring of the dot under the cursor
+    if (hot) I = { ringFill: Math.min(0.4, I.ringFill * 2), ringLine: 1, ringW: I.ringW * 2 };
     var rs = ringState(cc, now), calm = rs && rs.calm, pacified = !!calm && calm.kind === 'pacify', rr = calmRadius(ar, calm);
     ctx.lineWidth = I.ringW;
     if (calm && !pacified && ar * sc >= 4) {   // harmony: where the ring was
@@ -3071,6 +3097,7 @@
     for (var k = 0; k < S.points.length; k++) {
       var p0 = S.points[k], xy0 = wpt(p0.x, p0.y);
       if (xy0[0] < -30 || xy0[0] > w + 30 || xy0[1] < -30 || xy0[1] > h + 30) continue;
+      if (String(p0.id) !== tgtPid && eventHidden(p0, SH, S.evHidden, S.p && S.p.zone)) continue;   // FB-130: a hidden script-spawned point
       if (!inLevelRange(p0.z, sz, srange) && String(p0.id) !== tgtPid && !(S.pulse && S.pulse.ids[String(p0.id)])) continue;   // outside the Spawns slider: hidden (dot, route and click target), unless it is being pulsed (FB-100)
       vis.push({ p: p0, x: xy0[0], y: xy0[1] });
     }
@@ -3102,7 +3129,7 @@
         var aup = upOn(ap.id, S.p, S.seenBy), aun = upNpc(ap, aup);
         var acc = aup && S.p ? ccFor(S.p.cc, aup.name, aup.spawn_id, !!(S.p.target && (String(S.p.target.point_id) === String(ap.id) || (aup.spawn_id != null && aup.spawn_id === S.p.target.id)))) : null;
         ctx.globalAlpha = inLevelRange(ap.z, sz, range) ? 1 : 0.4;
-        aggroRing(vis[ai].x, vis[ai].y, aggroRadius(ap, aun), assistRadius(ap, aun), aggroKind(ap, aun, S.p && S.p.cons, S.facs, S.p && S.p.me), acc, now);
+        aggroRing(vis[ai].x, vis[ai].y, aggroRadius(ap, aun), assistRadius(ap, aun), aggroKind(ap, aun, S.p && S.p.cons, S.facs, S.p && S.p.me), acc, now, ringLook(ap.id, S.hoverPid, tgtPid));
       }
       for (var mk in movedBy) {
         var mb = movedBy[mk];
@@ -3110,7 +3137,7 @@
         var mun = upNpc(mb.p, mb.up), mq = wpt(mb.mv.x, mb.mv.y);
         if (mq[0] < -200 || mq[0] > w + 200 || mq[1] < -200 || mq[1] > h + 200) continue;
         ctx.globalAlpha = (inLevelRange(mb.p.z, sz, range) ? 1 : 0.4) * movedFade(mb.mv.age);
-        aggroRing(mq[0], mq[1], aggroRadius(mb.p, mun), assistRadius(mb.p, mun), aggroKind(mb.p, mun, S.p && S.p.cons, S.facs, S.p && S.p.me), mb.up ? ccFor(S.p && S.p.cc, mb.up.name, mb.up.spawn_id, false) : null, now);
+        aggroRing(mq[0], mq[1], aggroRadius(mb.p, mun), assistRadius(mb.p, mun), aggroKind(mb.p, mun, S.p && S.p.cons, S.facs, S.p && S.p.me), mb.up ? ccFor(S.p && S.p.cc, mb.up.name, mb.up.spawn_id, false) : null, now, ringLook(mb.p.id, S.hoverPid, null));
       }
       ctx.globalAlpha = 1;
     }
@@ -3380,7 +3407,8 @@
         }
         if (SH.aggro) {
           var tnpc = targetNpc(P.target, S.points, S.byId);
-          if (tnpc) aggroRing(tq[0], tq[1], aggroRadius(null, tnpc), assistRadius(null, tnpc), aggroKind(null, tnpc, P.cons, S.facs, P.me), ccFor(P.cc, P.target.name, P.target.id, true), now);
+          if (tnpc) aggroRing(tq[0], tq[1], aggroRadius(null, tnpc), assistRadius(null, tnpc), aggroKind(null, tnpc, P.cons, S.facs, P.me), ccFor(P.cc, P.target.name, P.target.id, true), now,
+            { target: true, hover: P.target.point_id != null && S.hoverPid != null && String(P.target.point_id) === String(S.hoverPid) });
         }
         // Its Area Rampage reach, on the mob's live position, only while it is your target. S.aeRing remembers the ring
         // for the hover tooltip (mousemove below).
@@ -3655,14 +3683,17 @@
   hitsEl.addEventListener('mouseout', function (e) { if (tidOf(e)) card.style.display = 'none'; });
   function hitFor(e) { var t = e.target; return t && t.getAttribute && t.getAttribute('data-pid'); }
   function setHoverGrid(g) { if (S.hoverGrid !== g) { S.hoverGrid = g; renderMap(true); } }
+  // FB-130: the dot under the cursor gets its aggro ring drawn heavier (only a redraw while aggro rings are on).
+  function setHoverPid(pid) { if (S.hoverPid !== pid) { S.hoverPid = pid; if (S.cfg.show.aggro) renderMap(true); } }
   hitsEl.addEventListener('mouseover', function (e) {
     var pid = hitFor(e);
     if (!pid) return;
+    setHoverPid(pid);
     showCard(pid, e);
     var pt = S.byId[pid];
     setHoverGrid(pt && pt.grid != null && S.grids && S.grids[pt.grid] ? String(pt.grid) : null);
   });
-  hitsEl.addEventListener('mouseout', function (e) { if (hitFor(e)) { card.style.display = 'none'; setHoverGrid(null); } });
+  hitsEl.addEventListener('mouseout', function (e) { if (hitFor(e)) { card.style.display = 'none'; setHoverGrid(null); setHoverPid(null); } });
   // A trap spot has no kill to mark: hover reads it, click and right-click leave it alone.
   function isTrapSpot(pid) { return !!(S.cfg.show.traps && trapDefOf(S.byId[pid], S.traps)); }
   hitsEl.addEventListener('click', function (e) { var pid = hitFor(e); if (pid && !isTrapSpot(pid)) { card.style.display = 'none'; openMenu(pid, e); } });
