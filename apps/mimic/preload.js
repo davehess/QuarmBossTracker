@@ -1777,6 +1777,9 @@ contextBridge.exposeInMainWorld('mimic', {
   uiRestorePlan:          (params)  => ipcRenderer.invoke('ui-restore-plan', params),
   uiRestoreParts:         (params)  => ipcRenderer.invoke('ui-restore-parts', params),
   uiLocalVersions:        (character) => ipcRenderer.invoke('ui-local-versions', character),
+  // UI Studio's Changes panel: the kept versions, and the key-by-key diff of one against the files now.
+  uiStudioVersions:       (character, eqDir) => ipcRenderer.invoke('ui-studio-versions', character, eqDir),
+  uiStudioDiff:           (character, eqDir, id) => ipcRenderer.invoke('ui-studio-diff', character, eqDir, id),
   uiAccountCharacters:    ()        => ipcRenderer.invoke('ui-account-characters'),
   uiSyncGet:              ()        => ipcRenderer.invoke('ui-sync-get'),
   uiSyncSet:              (patch)   => ipcRenderer.invoke('ui-sync-set', patch),

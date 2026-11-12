@@ -42,6 +42,7 @@ const uiRestorePlan = require('./uiRestorePlan');
 const uiSync = require('./uiSync');
 const overlayBackup = require('./overlayBackup');
 const localVersions = require('./localVersions');
+const iniDiff = require('./iniDiff');
 const soundLib = require('./sounds');
 const neuralVoice = require('./neuralVoice');
 const hubs = require('./hubs');
@@ -1744,6 +1745,43 @@ function _backupAndWriteFile(targetPath, contents, backupTag) {
   return bakPath;
 }
 
+// Always keep the previous version (the guild lead, 2026-11-11: "we should always retain previous and show diff to
+// previous"). Every Mimic write over a character's files goes between these two halves: _uiVersionBefore keeps the
+// files as they are (localVersions.js, newest 10, skipped when identical to the newest), _uiVersionAfter records which
+// keys the write changed, so the Changes panel can later tell Mimic's own changes from the game's. `source` says what
+// kind of write it is: 'ui-studio' | 'restore' | 'layout' (the after-camp copy is taken in _uiAutoBackup as 'game').
+// Best effort by design: a copy that cannot be taken never blocks the write. Returns a token for _uiVersionAfter, or
+// null when there was nothing to keep (no character known, or no files yet).
+function _uiVersionBefore(eqDir, character, source) {
+  try {
+    const c = String(character || '').trim();
+    if (!eqDir || !/^[A-Za-z]+$/.test(c)) return null;
+    const before = _readUiBundle(eqDir, c);
+    if (!Object.keys(before).length) return null;
+    const r = localVersions.snapshot(_localVersionsRoot(), c, before, undefined, undefined, { source });
+    return r ? { eqDir, character: c, source, before, id: r.id } : null;
+  } catch { return null; }
+}
+function _uiVersionAfter(tok) {
+  if (!tok) return;
+  try {
+    const keys = iniDiff.changedKeys(tok.before, _readUiBundle(tok.eqDir, tok.character));
+    if (iniDiff.countKeys(keys)) localVersions.noteWrites(_localVersionsRoot(), tok.character, tok.id, { source: tok.source, at: Date.now(), keys });
+  } catch { /* the record is a label, never a reason to fail the write */ }
+}
+function _uiVersioned(eqDir, character, source, fn) {
+  const tok = _uiVersionBefore(eqDir, character, source);
+  try { return fn(); } finally { _uiVersionAfter(tok); }
+}
+// Some write paths are handed file names, not a character: UI_<Name>_pq.proj.ini, Sock_<Name>_..., <Name>_spellsets.ini.
+function _uiCharFromIniNames(names) {
+  for (const n of Array.isArray(names) ? names : []) {
+    const m = /^(?:UI_|Sock_|Socials_)?([A-Za-z]+)_/.exec(path.basename(String(n || '')));
+    if (m) return m[1];
+  }
+  return null;
+}
+
 // UI Studio's key-level save (the guild lead, 2026-10-05: "A for UI Studio").
 // Save no longer writes whole files rebuilt from the copy Studio read at Load —
 // that put back every position EQ had saved since (the bag windows the stage
@@ -1840,7 +1878,7 @@ function _uiLayoutStore() {
 }
 function _applyDeferredLayout(entry) {
   let r;
-  try { r = _uiLayoutStore().apply(entry.character, entry.eqDir, entry.layoutId, { backupTag: 'eq' }); }
+  try { r = _uiVersioned(entry.eqDir, entry.character, 'layout', () => _uiLayoutStore().apply(entry.character, entry.eqDir, entry.layoutId, { backupTag: 'eq' })); }
   catch (err) { r = { ok: false, error: err && err.message }; }
   if (!r.ok) { appendAgentLog(`[ui-studio] queued layout switch for ${entry.character} not applied: ${r.error}\n`); return false; }
   appendAgentLog(`[ui-studio] switched ${entry.character} to layout "${r.name}" (${r.written.length} file(s)) after logout\n`);
@@ -1865,7 +1903,7 @@ function _applyDeferredEntry(entry) {
     return false;
   }
   try {
-    const r = _applyUiKeyEdits(entry.eqDir, entry.edits, 'eq');
+    const r = _uiVersioned(entry.eqDir, entry.character, 'ui-studio', () => _applyUiKeyEdits(entry.eqDir, entry.edits, 'eq'));
     written = r.written.length;
     if (r.missing.length) appendAgentLog(`[ui-studio] deferred save for ${entry.character}: not found, skipped: ${r.missing.join(', ')}\n`);
   } catch (err) { appendAgentLog(`[ui-studio] deferred apply failed for ${entry.character}: ${err && err.message}\n`); return false; }
@@ -6879,7 +6917,8 @@ ipcMain.handle('ui-studio-write-edits', (_e, eqDir, edits, opts) => {
       return { ok: false, error: 'eqDir does not exist: ' + d };
     }
     const backupTag = (opts && /^[\w-]{1,16}$/.test(String(opts.backupTag || ''))) ? String(opts.backupTag) : null;
-    const r = _applyUiKeyEdits(d, edits, backupTag);
+    const who = opts && /^[A-Za-z]+$/.test(String(opts.character || '')) ? String(opts.character) : _uiCharFromIniNames(edits.map(e => e && e.file));
+    const r = _uiVersioned(d, who, 'ui-studio', () => _applyUiKeyEdits(d, edits, backupTag));
     return { ok: true, written: r.written, unchanged: r.unchanged, missing: r.missing, count: r.written.length };
   } catch (err) {
     return { ok: false, error: err && err.message ? err.message : String(err) };
@@ -6905,6 +6944,7 @@ ipcMain.handle('ui-studio-write-bundle', (_e, eqDir, bundle, opts) => {
     // copy was EQ's own last-written layout, not a prior UI Studio save.
     const backupTag = (opts && /^[\w-]{1,16}$/.test(String(opts.backupTag || ''))) ? String(opts.backupTag) : null;
     const written = [];
+    const ver = _uiVersionBefore(d, opts && /^[A-Za-z]+$/.test(String(opts.character || '')) ? String(opts.character) : _uiCharFromIniNames(Object.keys(bundle)), 'ui-studio');
     for (const [name, contents] of Object.entries(bundle)) {
       if (typeof contents !== 'string' || contents.length === 0) continue;
       // Sanity: only allow plain ini filenames in the EQ dir — no path
@@ -6914,6 +6954,7 @@ ipcMain.handle('ui-studio-write-bundle', (_e, eqDir, bundle, opts) => {
       _backupAndWriteFile(target, contents, backupTag);
       written.push(name);
     }
+    _uiVersionAfter(ver);
     return { ok: true, written, count: written.length };
   } catch (err) {
     return { ok: false, error: err && err.message ? err.message : String(err) };
@@ -7247,6 +7288,7 @@ ipcMain.handle('ui-studio-write-pages', (_e, eqDir, edits) => {
       });
     }
     const written = [];
+    const ver = _uiVersionBefore(d, _uiCharFromIniNames([...byFile.keys()]), 'ui-studio');
     for (const [fp, eds] of byFile) {
       const orig = fs.readFileSync(fp, 'utf8');
       // The shared key-level walk (iniKeyEdits.js — also what Studio's Save
@@ -7259,6 +7301,7 @@ ipcMain.handle('ui-studio-write-pages', (_e, eqDir, edits) => {
       fs.writeFileSync(fp, next);
       written.push({ file: path.basename(fp), bak: path.basename(bakPath) });
     }
+    _uiVersionAfter(ver);
     return { ok: true, written };
   } catch (err) {
     return { ok: false, error: err && err.message };
@@ -13979,7 +14022,9 @@ ipcMain.handle('ui-studio-layout-switch', async (_e, params) => {
   const id = String(params && params.id || '');
   let eqRunning = _uiCharActiveInZeal(a.c.toLowerCase());
   if (!eqRunning) { try { eqRunning = await _isEqRunning(); } catch { eqRunning = false; } }
-  return _layoutCall(s => s.switchTo(a.c, a.d, id, { eqRunning, queue: _queueUiLayoutSwitch }));
+  // Queued (EQ up) writes nothing now; written now, the files as they were are kept first.
+  const doSwitch = () => _layoutCall(s => s.switchTo(a.c, a.d, id, { eqRunning, queue: _queueUiLayoutSwitch }));
+  return eqRunning ? doSwitch() : _uiVersioned(a.d, a.c, 'layout', doSwitch);
 });
 ipcMain.handle('ui-studio-layout-cancel-switch', (_e, params) => {
   const c = String(params && params.character || '').trim().toLowerCase(), d = String(params && params.eqDir || '').trim();
@@ -14201,7 +14246,8 @@ function _uiSafetyCopies(eqDir) {
 function _uiWriteRestore(entry, backupTag) {
   const savedCopies = _uiSafetyCopies(entry.eqDir);
   const local = _readUiBundle(entry.eqDir, entry.character);
-  try { localVersions.saveVersion(_localVersionsRoot(), entry.character, local); } catch { /* undo copy is best effort */ }
+  // The undo copy; _uiVersionAfter below records which keys the restore changed.
+  const ver = _uiVersionBefore(entry.eqDir, entry.character, 'restore');
   // eqclient.ini as it is NOW, else what was measured when the restore was asked for (a queued one), else the screen.
   const target = _eqResOf(local) || entry.target || _primarySize();
   const r = uiRestorePlan.buildRestore({
@@ -14214,6 +14260,7 @@ function _uiWriteRestore(entry, backupTag) {
     _backupAndWriteFile(path.join(entry.eqDir, name), text, backupTag || null);
     written.push(name);
   }
+  _uiVersionAfter(ver);
   written.savedCopies = savedCopies;
   written.fileParts = r.fileParts || {};
   written.overlays = _uiPartKeys(entry.parts).includes('overlays') && entry.overlays ? _applyOverlayBackup(entry.overlays) : null;
@@ -14355,7 +14402,8 @@ async function _uiAutoBackup(character) {
   if (!Object.keys(whole).length) return;
   // The last few versions of the character's files stay on THIS computer (newest 5, only when something changed),
   // so a mess-up can be undone offline (the guild lead, 2026-11-11). Kept whole: it never leaves the machine.
-  try { localVersions.saveVersion(_localVersionsRoot(), character, whole); } catch { /* best effort */ }
+  // source 'game': the files as the game left them on camp, so the Changes panel can show what the game changed.
+  try { localVersions.saveVersion(_localVersionsRoot(), character, whole, undefined, undefined, { source: 'game' }); } catch { /* best effort */ }
   if (!_uiSyncCfg().autoBackup) return;
   const files = uiSync.redactForAutoBackup(whole);
   const hash = uiSync.bundleHash(files);
@@ -14568,6 +14616,46 @@ function _uiStudioDiskCharacters() {
 // person with no files here could not reach their own backups (the guild lead, 2026-11-10).
 // The versions of one character's files this PC kept itself, newest first (localVersions.js).
 ipcMain.handle('ui-local-versions', (_e, character) => localVersions.listVersions(_localVersionsRoot(), character));
+
+// UI Studio's "Changes since previous version" panel (the guild lead, 2026-11-11). The versions this PC kept for the
+// character, each marked `same` when it is exactly what is on disk now (so the panel defaults to the newest one that
+// is not), and the key-by-key diff of one of them against the files now.
+const _sameFiles = (a, b) => {
+  const ka = Object.keys(a || {}).sort(), kb = Object.keys(b || {}).sort();
+  return ka.length === kb.length && ka.every((n, i) => n === kb[i] && a[n] === b[n]);
+};
+ipcMain.handle('ui-studio-versions', (_e, character, eqDir) => {
+  try {
+    const c = String(character || '').trim(), d = String(eqDir || '').trim();
+    if (!c || !d) return { ok: false, error: 'character + eqDir required' };
+    const now = _readUiBundle(d, c);
+    const versions = localVersions.listVersions(_localVersionsRoot(), c)
+      .map(v => ({ ...v, same: _sameFiles(localVersions.readVersion(_localVersionsRoot(), c, v.id), now) }));
+    return { ok: true, versions };
+  } catch (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
+});
+ipcMain.handle('ui-studio-diff', (_e, character, eqDir, id) => {
+  try {
+    const c = String(character || '').trim(), d = String(eqDir || '').trim();
+    if (!c || !d || !localVersions.isLocalId(id)) return { ok: false, error: 'character + eqDir + version required' };
+    const root = _localVersionsRoot();
+    const list = localVersions.listVersions(root, c);
+    const at = list.findIndex(v => v.id === id);
+    const prev = at < 0 ? null : localVersions.readVersion(root, c, id);
+    if (!prev) return { ok: false, error: 'that version is no longer kept' };
+    // What Mimic itself wrote since: the write records of this version and every newer one, oldest first. If any of
+    // them has no record (a version from before records existed) a change nobody claims is "unknown", not "game".
+    const records = [];
+    let complete = true;
+    for (let i = at; i >= 0; i--) {
+      const m = localVersions.readMeta(root, c, list[i].id);
+      if (!m) { complete = false; continue; }
+      for (const w of (Array.isArray(m.writes) ? m.writes : [])) records.push(w);
+    }
+    const diff = iniDiff.diffBundles(prev, _readUiBundle(d, c), { origin: iniDiff.makeOrigin(records, complete) });
+    return { ok: true, base: list[at], complete, ...diff };
+  } catch (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
+});
 ipcMain.handle('ui-account-characters', async () => {
   const cfg = loadConfig();
   const token = resolveUploadToken(cfg);
@@ -14775,6 +14863,7 @@ ipcMain.handle('ui-studio-restore', async (_e, params) => {
   const written = [];
   const errors  = [];
   const skipped = [];
+  const ver = _uiVersionBefore(eqDir, character, 'restore');
   for (const [name, contents] of Object.entries(snap.files)) {
     // Restore writes only the settings files UI Studio backs up (uiRestoreGuard.js): a bare .ini name.
     // Anything else is skipped, never written, and reported.
@@ -14788,6 +14877,7 @@ ipcMain.handle('ui-studio-restore', async (_e, params) => {
       errors.push({ name, error: err && err.message ? err.message : String(err) });
     }
   }
+  _uiVersionAfter(ver);
   if (skipped.length) appendAgentLog(`[ui-studio] restore skipped ${skipped.length} file(s) that are not UI settings\n`);
   const skipNote = skipped.length ? ` Skipped ${skipped.length} file(s) that are not UI settings.` : '';
   return {

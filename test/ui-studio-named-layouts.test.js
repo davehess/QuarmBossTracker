@@ -210,11 +210,11 @@ function mainHarness({ zealActive = false, eqUp = false } = {}) {
     "ipcMain.handle('ui-studio-layout-cancel-switch'");
   const handlers = {};
   const saved = [];
-  const env = new Function('ipcMain', '_uiCharActiveInZeal', '_isEqRunning', '_uiLayoutStore', '_saveUiDeferred',
+  const env = new Function('ipcMain', '_uiCharActiveInZeal', '_isEqRunning', '_uiLayoutStore', '_saveUiDeferred', '_uiVersioned',
     'let _uiDeferred = [];\n' + block.replace("ipcMain.handle('ui-studio-layout-cancel-switch'", '') +
     '\nreturn { get deferred() { return _uiDeferred; } };')(
     { handle: (name, fn) => { handlers[name] = fn; } },
-    () => zealActive, async () => eqUp, () => store, () => saved.push(1));
+    () => zealActive, async () => eqUp, () => store, () => saved.push(1), (_d, _c, _s, fn) => fn());
   return { handlers, env, saved };
 }
 
@@ -269,9 +269,9 @@ describe('after logout', () => {
     const raid = store.save(CHAR, eqDir, 'Raid').layout.id;
     setDisk(MINIMAL);                                          // EQ\'s own last save on camp
     const log = [];
-    const { _applyDeferredLayout } = new Function('_uiLayoutStore', 'appendAgentLog', 'Notification',
+    const { _applyDeferredLayout } = new Function('_uiLayoutStore', 'appendAgentLog', 'Notification', '_uiVersioned',
       sliceBlock(main, 'function _applyDeferredLayout(entry) {', '\n}\n') + '\nreturn { _applyDeferredLayout };')(
-      () => store, m => log.push(m), { isSupported: () => false });
+      () => store, m => log.push(m), { isSupported: () => false }, (_d, _c, _s, fn) => fn());   // the version copy has its own tests (ui-ini-diff)
     expect(_applyDeferredLayout({ kind: 'layout', character: CHAR, eqDir, layoutId: raid })).toBe(true);
     expect(disk()).toBe(RAID_FULL);
     const bak = baks('bak-eq');
@@ -282,9 +282,9 @@ describe('after logout', () => {
 
   it('a queued switch whose layout is gone applies nothing', () => {
     const log = [];
-    const { _applyDeferredLayout } = new Function('_uiLayoutStore', 'appendAgentLog', 'Notification',
+    const { _applyDeferredLayout } = new Function('_uiLayoutStore', 'appendAgentLog', 'Notification', '_uiVersioned',
       sliceBlock(main, 'function _applyDeferredLayout(entry) {', '\n}\n') + '\nreturn { _applyDeferredLayout };')(
-      () => store, m => log.push(m), { isSupported: () => false });
+      () => store, m => log.push(m), { isSupported: () => false }, (_d, _c, _s, fn) => fn());   // the version copy has its own tests (ui-ini-diff)
     setDisk(MINIMAL);
     expect(_applyDeferredLayout({ kind: 'layout', character: CHAR, eqDir, layoutId: 'abcdef12' })).toBe(false);
     expect(disk()).toBe(MINIMAL);
