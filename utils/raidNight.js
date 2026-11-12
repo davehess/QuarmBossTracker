@@ -77,11 +77,12 @@ const DEFAULT_ROLLOVER_HOUR = 6;
 const _DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 const { getSchedule } = require('./guildSchedule');
 
-// The guild's saved schedule (utils/guildSchedule.js). With no saved row it is today's constants, and the time zone stays
-// the DEFAULT_TIMEZONE env value, so an existing deploy behaves exactly as before.
+// The guild's saved schedule (utils/guildSchedule.js). A DEFAULT_TIMEZONE set on the deployment still wins for night
+// keys, exactly as RAID_NIGHT_ROLLOVER_HOUR wins below: night keys are what `raid_nights`, `raidSession.date` and the
+// attendance ticks join on, so an existing deploy must not move when its saved row is first read. With the env unset the
+// saved row's zone applies, and with neither it is the built-in default.
 function _tz() {
-  const s = getSchedule();
-  return s.source === 'row' ? s.tz : getDefaultTz();
+  return process.env.DEFAULT_TIMEZONE || getSchedule().tz;
 }
 
 // ── Pure night-key helpers ───────────────────────────────────────────────────

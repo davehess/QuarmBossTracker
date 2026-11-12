@@ -107,6 +107,13 @@ describe('(a) no row: every value is today\'s constant', () => {
     expect(rn.isRaidNightAt(ms)).toBe(true);
     expect(rn.isRaidNightAt(et('2026-11-05T21:29:00', '-05:00'))).toBe(false);
   });
+  it('a DEFAULT_TIMEZONE set on the deployment wins over the saved row for night keys', async () => {
+    await load([{ settings: { schedule: { tz: 'America/New_York', days: [0, 3, 4], start: '20:30', end: '23:30', nightCutoffHour: 6 } } }]);
+    expect(gs.getSchedule().source).toBe('row');
+    process.env.DEFAULT_TIMEZONE = 'America/Chicago';
+    expect(rn.isRaidNightAt(et('2026-11-05T21:30:00', '-05:00'))).toBe(true);    // 20:30 Chicago, 21:30 New York
+    expect(rn.isRaidNightAt(et('2026-11-05T21:29:00', '-05:00'))).toBe(false);   // 20:29 Chicago: the row's zone would say true
+  });
 });
 
 describe('(b) the seeded row is identical to the constant-based functions', () => {
