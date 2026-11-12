@@ -489,7 +489,7 @@ describe('wiring', () => {
   // The guild lead, 2026-11-07: "please curve the line to match the arc for the circle". The ring's canvas is an "arc":
   // the real painter, on a stand-in canvas, strokes arcs at the ring's radius inside the right arc's 56°-124° span.
   it('on the ring the lane is drawn along the right arc, at the ring\'s radius and angles', () => {
-    expect(meScript).toContain("var kind = isHud(style) ? 'arc' : 'lane';");
+    expect(meScript).toContain("var kind = folded ? 'bar' : isHud(style) ? 'arc' : 'lane';");
     expect(meScript).toContain("cv.setAttribute('data-wp-arc', '172 56 124')");
     const calls = [];
     const ctx = new Proxy({ arc: (x, y, r, a, b) => calls.push({ x, y, r, a, b }) }, { get: (t, k) => (k in t ? t[k] : () => {}), set: () => true });

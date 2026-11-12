@@ -131,6 +131,9 @@
   body.wv-on #weavecv{display:block}
   /* height spelled out: a canvas is a replaced element, so top + bottom with height:auto would keep its pixel height */
   body:not(.hud).wv-on #weavecv{right:3px;top:26px;width:16px;height:calc(100% - 32px)}
+  /* FB-128: folded to its title row (preload's body.wp-fold), the lane becomes the Thin bar along the window's bottom edge
+     (layoutWeave picks the kind; !important beats the ring's inline px box). Idle, weaveDraw paints nothing. */
+  body.wp-fold.wv-on #weavecv{left:6px!important;right:6px!important;top:auto!important;bottom:1px;width:auto!important;height:5px!important}
   body:not(.hud).wv-on #body{padding-right:22px}
   body:not(.hud) .card{position:relative}
   body:not(.hud).wv-on .card{min-height:150px}   /* a short Box still gives the lane room to scroll */
@@ -2035,7 +2038,10 @@
       twoHDelay: p.weaveDelay, marginMs: p.weaveSwapMs, offDelay: p.weaveOffDelay === 'fists' ? 0 : p.weaveOffDelay, offDelay1hb: p.weaveOffDelay1hb,
       sndLanded: p.weaveSndLanded, sndBig: p.weaveSndBig, sndClip: p.weaveSndClip, sndVol: Number(p.weaveSndVol), bigHit: p.weaveBigHit, sound: !!p.weaveSnd, showTally: !!p.weaveTally, twoVerbs: p.weave2hVerbs, fistVerbs: p.weaveFistVerbs };
   }
+  var _weaveLastS = null;
+  window.addEventListener('wp-mini-change', function(){ if (_weaveLastS) layoutWeave(_weaveLastS); });   // fold/unfold: re-pick the lane's kind now, not on the next poll
   function layoutWeave(s){
+    _weaveLastS = s;
     var cv = document.getElementById('weavecv');
     if (!cv) return;
     _weaveIdle = cv.getAttribute('data-wp-idle') === '1';   // the ring's next paint (100 ms) gives the arc back or takes it
@@ -2049,13 +2055,14 @@
     // The ring curves the lane along its right arc (the guild lead, 2026-11-07: "please curve the line to match the arc
     // for the circle"): the canvas covers the ring's square and weaveDraw.js paints the arc at the ring's own radius and
     // angles (renderHud: R 172, 56° to 124°). The Box keeps the straight column.
-    var kind = isHud(style) ? 'arc' : 'lane';
+    var folded = document.body.classList.contains('wp-fold');   // ▭ folded: the Thin bar, never the ring's arc or the column
+    var kind = folded ? 'bar' : isHud(style) ? 'arc' : 'lane';
     var dir = hudParts.weaveDir === 'up' ? 'up' : 'down';   // which way the windows travel to the hit line
     if (cv.getAttribute('data-wp-dir') !== dir) { cv.setAttribute('data-wp-dir', dir); if (window.WpWeaveDraw) WpWeaveDraw.redraw(); }
     // A switch between the two drops the ring's square placement, so the Box's CSS column applies again.
     if (cv.getAttribute('data-wp-weave') !== kind) { cv.setAttribute('data-wp-weave', kind); cv.removeAttribute('style'); _weaveBox = ''; }
     if (kind === 'arc' && cv.getAttribute('data-wp-arc') !== '172 56 124') cv.setAttribute('data-wp-arc', '172 56 124');
-    if (!isHud(style)) { if (_weaveBox) { cv.removeAttribute('style'); _weaveBox = ''; } return; }   // the Box places it in CSS
+    if (!isHud(style) || folded) { if (_weaveBox) { cv.removeAttribute('style'); _weaveBox = ''; } return; }   // the Box places it in CSS
     var sv = document.getElementById('hudsvg'), card = cv.parentNode;
     if (!sv) return;
     var r = sv.getBoundingClientRect(), c = card.getBoundingClientRect(), side = Math.min(r.width, r.height);

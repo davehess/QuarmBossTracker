@@ -198,7 +198,11 @@
   .panel.collapsed:not(.plock) > .grip{cursor:ew-resize!important}
   :is(body.edit .panel, .panel.one).collapsed::after,.panel.rc.collapsed:not(.plock):not(.sect)::after{right:22px}
   .panel.collapsed.mvin:not(.mvtail)::after{left:20px}   /* at the screen's left edge the ✥ tucks inside the strip: the name starts after it */
-  .panel.collapsed.mvtail{visibility:hidden}
+  .panel.collapsed.mvtail:not(.wvmin){visibility:hidden}
+  /* FB-128 ("Minimizing should still show slim bars for attacking"): a minimized Weaving timer piece keeps its page up and draws
+     its Thin bar in the strip (minMode), name hidden while the bar shows. Idle (nothing to time) it is the plain strip again. */
+  .panel.collapsed.wvmin > .pbody{visibility:visible}
+  .panel.collapsed.wvmin:not(.wvidle)::after{display:none}
 
   /* The drag shield: while a panel moves, one screen-sized interactive layer
      keeps the window taking the mouse, so a fast drag that outruns the panel
@@ -1054,6 +1058,9 @@
   function sizeStart(p, collapsed, mode, axis, shownH) {
     return collapsed && mode === 'size' ? { axis: 'x', h0: p.h } : { axis: axis || '', h0: shownH };
   }
+  // The Weaving timer piece stays on screen when minimized: its strip draws the existing Thin bar (wbar), whatever mode it has
+  // when open. Any other piece, and the piece when open, keeps its own mode.
+  function minMode(partId, mode, collapsed) { return collapsed && partId === 'me.weave' ? 'wbar' : mode; }
   // ── end ▭ Minimize placement ─────────────────────────────────────────────────
 
   // ── Routing: which panel shows a countdown ──────────────────────────────────
@@ -1603,6 +1610,7 @@
       e.root.classList.toggle('sel', !!_sel[p.id]);
       e.root.classList.toggle('one', _one === p.id);
       e.root.classList.toggle('collapsed', isMin(p));
+      e.root.classList.toggle('wvmin', isMin(p) && p.kind === 'part' && p.part === 'me.weave');
       e.root.setAttribute('data-nm', p.name || (partDef(p) ? partDef(p).label : p.part || ''));
       e.root.style.setProperty('--acc', accentOf(p));
       place(e, p);
@@ -2824,7 +2832,7 @@
       var v = viewFor(d), sample = false;
       if (!v && isEd(p.id)) { v = sampleFor(d, now); sample = !!v; }
       e.root.classList.toggle('sample', sample);
-      setBody(e, WpParts.render(d, p.mode, v, now, { nolabel: p.nolabel, thick: p.thick, color: p.color, align: p.align, rot: p.rot, arc: p.arc, uid: p.id }));
+      setBody(e, WpParts.render(d, minMode(p.part, p.mode, isMin(p)), v, now, { nolabel: p.nolabel, thick: p.thick, color: p.color, align: p.align, rot: p.rot, arc: p.arc, uid: p.id }));
     });
   }
   // A piece's height to what it shows right now (chips wrap onto however many lines they need),

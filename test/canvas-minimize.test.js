@@ -28,7 +28,7 @@ const canvas = readSource(mimic('canvas.html'));
 const c = stripJs(canvas);
 
 const PURE = sliceBlock(canvas, '  var MIN_GAP = 8', '  // ── end ▭ Minimize placement');
-const { placeMin, collapsedBox, topFromBox, sizeStart, minHot, minVisible, MIN_GRACE, MIN_H, MIN_GAP, MIN_LINE } = evalBlock(PURE + '\n', ['placeMin', 'collapsedBox', 'topFromBox', 'sizeStart', 'minHot', 'minVisible', 'MIN_GRACE', 'MIN_H', 'MIN_GAP', 'MIN_LINE']);
+const { placeMin, collapsedBox, topFromBox, sizeStart, minHot, minVisible, minMode, MIN_GRACE, MIN_H, MIN_GAP, MIN_LINE } = evalBlock(PURE + '\n', ['placeMin', 'collapsedBox', 'topFromBox', 'sizeStart', 'minHot', 'minVisible', 'minMode', 'MIN_GRACE', 'MIN_H', 'MIN_GAP', 'MIN_LINE']);
 
 const CV = { w: 1920, h: 1080 };
 const LB = { w: 92, h: 18 };   // "▭ Minimize" at 11px, measured by the page; the rule only ever sees the number
@@ -390,5 +390,31 @@ describe('a minimized strip can be moved and sized', () => {
     expect(c).toMatch(/p\.y = topFromBox\(p, d\.y, growsUp\(p\), isMin\(p\)\) \/ window\.innerHeight/);
     // a group SIZE leaves a strip as it is (its box is the page's); a group MOVE carries it
     expect(c).toMatch(/lock: isLocked\(q\) \|\| kStrip/);
+  });
+});
+
+describe('FB-128: a minimized Weaving timer still draws its slim bar', () => {
+  it('minMode: the weave piece draws wbar (the existing Thin bar) while minimized, any other piece keeps its mode', () => {
+    expect(minMode('me.weave', 'highway', true)).toBe('wbar');
+    expect(minMode('me.weave', 'lane', true)).toBe('wbar');
+    expect(minMode('me.weave', 'highway', false)).toBe('highway');
+    expect(minMode('tick.swing', 'bar', true)).toBe('bar');
+  });
+  it('paintParts renders through minMode and render marks the strip wvmin', () => {
+    expect(c).toMatch(/WpParts\.render\(d, minMode\(p\.part, p\.mode, isMin\(p\)\), v,/);
+    expect(c).toMatch(/classList\.toggle\('wvmin', isMin\(p\) && p\.kind === 'part' && p\.part === 'me\.weave'\)/);
+  });
+  it('CSS: the weave strip keeps its body visible (also as a group tail) and hides its name only while the bar shows', () => {
+    const css = canvas.slice(canvas.indexOf('.panel.collapsed.mvtail'));
+    expect(css).toMatch(/\.panel\.collapsed\.mvtail:not\(\.wvmin\)\{visibility:hidden\}/);
+    expect(css).toMatch(/\.panel\.collapsed\.wvmin > \.pbody\{visibility:visible\}/);
+    expect(css).toMatch(/\.panel\.collapsed\.wvmin:not\(\.wvidle\)::after\{display:none\}/);
+  });
+  it('the HUD (me.html) keeps the lane as a bar when folded, and the fold does not hide the canvas', () => {
+    const me = stripJs(readSource(mimic('me.html')));
+    expect(me).toMatch(/var kind = folded \? 'bar' : isHud\(style\) \? 'arc' : 'lane'/);
+    expect(me).toMatch(/if \(!isHud\(style\) \|\| folded\)/);
+    expect(me).toMatch(/body\.wp-fold\.wv-on #weavecv\{/);
+    expect(readSource(mimic('preload.js'))).toMatch(/_WP_FOLD_KEEP = [^;]*#weavecv/);
   });
 });
