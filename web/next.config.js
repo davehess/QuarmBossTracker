@@ -150,6 +150,10 @@ module.exports = {
       { source: '/(.*)', headers: security },
       { source: '/share/:path*', headers: noindex },
       { source: '/api/share/:path*', headers: noindex },
+      // A guild's own address, <slug>.raidmimic.com (web/lib/guildHost.ts, DECISIONS §569), is never indexed: the home
+      // guild's is the same site as its own domain (duplicate content), and another guild's is signed-in pages only.
+      // Any subdomain matches (www only redirects, b is the beta mirror, already noindex); the apex has no dot before it.
+      { source: '/(.*)', has: [{ type: 'host', value: '[a-z0-9-]+\\.raidmimic\\.com' }], headers: noindex },
     ];
   },
   // /mimic/dirge: the Dirge Tactical Nuke demo, a static page built by scripts/build-dirge-demo.js
