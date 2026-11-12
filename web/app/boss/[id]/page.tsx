@@ -8,6 +8,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { requireMember } from '@/lib/member';
 import { fmtDmg, fmtDuration, fmtTime, dayKey, dayLabel } from '@/lib/format';
 import { userTz } from '@/lib/timezone';
+import { GUILD_TAG } from '@/lib/guild';
 
 import { pageMetadata } from '@/lib/pageMetaData';
 
@@ -49,6 +50,7 @@ async function load(npcIdRaw: string) {
         id, started_at, duration_sec, total_damage, total_dps,
         encounter_players ( character_name, total_damage, dps, rank )
       `)
+      .eq('guild_id', GUILD_TAG)
       .eq('npc_id', npcId)
       .gt('total_damage', 0)
       .order('started_at', { ascending: false })

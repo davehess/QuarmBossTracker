@@ -58,8 +58,8 @@ async function loadFacts() {
       .order('last_uploaded_at', { ascending: false }).limit(1),
     sb.from('agent_upload_stats').select('character, last_agent_state').gte('last_uploaded_at', q15).limit(1000),
     sb.from('chat_messages').select('ts').order('ts', { ascending: false }).limit(1),
-    sb.from('encounters').select('started_at').order('started_at', { ascending: false }).limit(1),
-    sb.from('encounters').select('id', { count: 'exact', head: true }).gte('started_at', midnight.toISOString()),
+    sb.from('encounters').select('started_at').eq('guild_id', GUILD_TAG).order('started_at', { ascending: false }).limit(1),
+    sb.from('encounters').select('id', { count: 'exact', head: true }).eq('guild_id', GUILD_TAG).gte('started_at', midnight.toISOString()),
     sb.from('character_live_state').select('updated_at').order('updated_at', { ascending: false }).limit(1),
     sb.from('agent_upload_stats').select('character, last_status_code, last_error, last_uploaded_at')
       .eq('last_ok', false).gte('last_uploaded_at', dayAgo)

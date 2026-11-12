@@ -116,6 +116,7 @@ async function load(date: string) {
           eqemu_npc_types ( id, name, zone_short ),
           encounter_players ( character_name, total_damage, rank )
         `)
+        .eq('guild_id', GUILD_TAG)
         .in('npc_id', curated)
         .gte('started_at', startIso)
         .lt('started_at', endIso)
