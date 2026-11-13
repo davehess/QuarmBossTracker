@@ -37,6 +37,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-138-2026-11-13',
+    title: 'Web 2.1.138',
+    version: 'Web 2.1.138',
+    date: '2026-11-13',
+    headline: 'Corrections to the Binden Concerrentia and Secrets of the Planes notes: what can be traded, and the reagent the talismans use.',
+    features: [
+      { name: 'The talismans use a reagent', blurb: 'The Binden Concerrentia and the two lesser talismans take you to the Plane of Knowledge and use up one Quintessence of Knowledge a click. A shaman makes those from two herbs sold in the Plane of Knowledge and can hand them to anyone.' },
+    ],
+    fixes: [
+      'The PoP guide said the Binden’s elemental fragments could be traded. They are lore and no-drop, like every part of that quest: each raider loots their own.',
+      'The quests page had no-drop marked on the wrong pieces of Secrets of the Planes. Blue Diamonds, the Drunder pieces and the three crafted hand-ins can be traded; the Bastion of Thunder gems, the named drops, the manuals and the Hope Stone cannot.',
+    ],
+  },
+  {
     key: 'mimic-3-0-10-beta-map-targeted-2026-11-13',
     title: 'Mimic 3.0.10 beta',
     version: 'Mimic 3.0.10 beta',
