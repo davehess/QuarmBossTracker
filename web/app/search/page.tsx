@@ -58,6 +58,7 @@ async function loadEncountersForNpc(sb: ReturnType<typeof supabaseAdmin>, q: str
   const { data: encs } = await sb
     .from('encounters')
     .select('id, npc_id, started_at, duration_sec, total_damage')
+    .eq('guild_id', GUILD_TAG)
     .in('npc_id', npcIds)
     .order('started_at', { ascending: false })
     .limit(25);

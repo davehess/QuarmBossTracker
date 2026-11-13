@@ -410,6 +410,7 @@ vi.mock('@/lib/spectator', async () => await import('../web/lib/spectator.ts'));
 vi.mock('@/lib/bossFilter', async () => await import('../web/lib/bossFilter.ts'));
 vi.mock('@/lib/selectAll', async () => await import('../web/lib/selectAll.ts'));
 vi.mock('@/lib/format', async () => await import('../web/lib/format.ts'));
+vi.mock('@/lib/guild', async () => await import('../web/lib/guild.ts'));
 // CI installs the root packages only, so `next/server` (web/node_modules) does not resolve there; the routes
 // only need NextResponse.json, which is a plain Response.
 vi.mock('next/server', () => ({
@@ -766,6 +767,9 @@ describe('GET /api/screen/feed', () => {
       { id: 'e6', npc_id: 101, started_at: ago(900), ended_at: ago(840), duration_sec: 60, classification: null, total_damage: 0, eqemu_npc_types: { name: 'Empty' } },   // no damage
       { id: 'e7', npc_id: 101, started_at: ago(1200), ended_at: ago(1100), duration_sec: 100, classification: null, total_damage: 8000, eqemu_npc_types: { name: 'Valbrand' } },
     ];
+    for (const e of st.tables.encounters) e.guild_id = 'wolfpack';
+    // Another guild's kill tonight never reaches this guild's screen (DECISIONS §576).
+    st.tables.encounters.push({ id: 'e8', guild_id: 'other-guild', npc_id: 100, started_at: ago(400), ended_at: ago(350), duration_sec: 50, classification: null, total_damage: 7000, eqemu_npc_types: { name: 'Foreign_Kill' } });
     st.tables.opendkp_auctions = [
       { auction_id: 1, item_name: 'Valor-Sworn Cloak', winner: 'acct_1', bid_amount: 40, end_at: ago(900) },
       { auction_id: 2, item_name: 'Old Helm', winner: 'acct_2', bid_amount: 10, end_at: ago(8 * 3600) },

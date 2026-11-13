@@ -533,7 +533,12 @@ function npcDisplayName(name) {
 // boundary samples — and each fight's claim runs at ITS close, so the earlier
 // pull has already taken its rows by the time the next one closes.
 const SNAP_CLAIM_BOSS_MARGIN_MS = 120_000;
-async function claimThreatSnapshotsByBoss({ encounterId, npcId, startedAtMs, durationSec }) {
+// A claim for ANOTHER hosted guild must not bind this process guild's rows in the same window. The term is added only
+// for a guild that is not the process guild, so a home-guild claim sends exactly the request it always did.
+function _snapGuildTerm(guildId) {
+  return guildId && guildId !== _guildId() ? `&guild_id=eq.${encodeURIComponent(guildId)}` : '';
+}
+async function claimThreatSnapshotsByBoss({ encounterId, npcId, startedAtMs, durationSec, guildId = null }) {
   if (!isEnabled() || !encounterId || !npcId) return 0;
   const startMs = Number(startedAtMs);
   if (!Number.isFinite(startMs)) return 0;
@@ -547,7 +552,8 @@ async function claimThreatSnapshotsByBoss({ encounterId, npcId, startedAtMs, dur
     const q = `boss_name=ilike.${encodeURIComponent(bossName)}`
             + `&encounter_id=is.null`
             + `&snapshot_at=gte.${encodeURIComponent(from)}`
-            + `&snapshot_at=lte.${encodeURIComponent(to)}`;
+            + `&snapshot_at=lte.${encodeURIComponent(to)}`
+            + _snapGuildTerm(guildId);
     await update('encounter_threat_snapshots', q, { encounter_id: encounterId });
     return 1;
   } catch (err) {
@@ -557,7 +563,7 @@ async function claimThreatSnapshotsByBoss({ encounterId, npcId, startedAtMs, dur
   }
 }
 
-async function claimThreatSnapshots({ encounterId, uploader, startedAtMs, durationSec }) {
+async function claimThreatSnapshots({ encounterId, uploader, startedAtMs, durationSec, guildId = null }) {
   if (!isEnabled() || !encounterId || !uploader) return 0;
   const startMs = Number(startedAtMs);
   if (!Number.isFinite(startMs)) return 0;
@@ -566,7 +572,8 @@ async function claimThreatSnapshots({ encounterId, uploader, startedAtMs, durati
   const q = `uploader=eq.${encodeURIComponent(uploader)}`
           + `&encounter_id=is.null`
           + `&snapshot_at=gte.${encodeURIComponent(from)}`
-          + `&snapshot_at=lte.${encodeURIComponent(to)}`;
+          + `&snapshot_at=lte.${encodeURIComponent(to)}`
+          + _snapGuildTerm(guildId);
   try {
     await update('encounter_threat_snapshots', q, { encounter_id: encounterId });
     return 1;
@@ -787,6 +794,7 @@ async function recordParse({
     npcId,
     startedAtMs: timestampMs,
     durationSec: parsed.duration,
+    guildId:     scoped ? scoped.guildId : null,
   });
   if (contributorCharacter) {
     await claimThreatSnapshots({
@@ -794,6 +802,7 @@ async function recordParse({
       uploader:    contributorCharacter,
       startedAtMs: timestampMs,
       durationSec: parsed.duration,
+      guildId:     scoped ? scoped.guildId : null,
     });
   }
 

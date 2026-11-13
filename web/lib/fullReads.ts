@@ -99,6 +99,7 @@ export async function loadReviewEncounters<T>(sb: SupabaseClient, curated: numbe
         eqemu_npc_types ( name, zone_short ),
         encounter_players ( character_name, total_damage )
       `)
+      .eq('guild_id', GUILD_TAG)
       .gt('total_damage', 0)
       .in('npc_id', curated);
     if (sinceIso) q = q.gte('started_at', sinceIso);
