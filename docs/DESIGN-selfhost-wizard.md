@@ -143,6 +143,11 @@ different failure for a raid night) and current egress against the 250 GB. The
 Management API exposes neither. Do not quote an egress figure until someone does.
 
 ## 3. Decisions already made that the wizard must carry
+- **2026-11-13 — the bot's raid schedule comes from the guild's settings row** (DECISIONS §575): the raid window, night
+  keys and attendance tick slots read `guild_settings`; with no row the bot uses its built-in times, which are OURS
+  (Sun/Wed/Thu 20:30-23:30 Eastern, 6 AM night cutoff). So a wizard must write the row before the first raid night, or a
+  new guild's attendance runs on our schedule. `DEFAULT_TIMEZONE` and `RAID_NIGHT_ROLLOVER_HOUR`, where a deployment sets
+  them, still win for night keys; a new deployment should leave both unset and use the row.
 - **2026-11-12 — a guild's settings are a database row, and its address is `<guild>.raidmimic.com`** (DECISIONS §569):
   `guild_settings` holds the raid time zone, days and hours, the role and job map, the DKP provider and numbers, the guest
   rule and links, edited by officers on the site. OUR values (Sun/Wed/Thu 20:30-23:30 Eastern, OpenDKP pool 5, four ticks)

@@ -244,6 +244,14 @@ Edit/Write also fail loudly on a stale match, which is the behaviour you want
 in an 18k-line monolith. `git commit -F` (below) is unaffected — that is a
 different rule, for a different hazard, and it still stands.
 
+### Working rule — no AI attribution and no session link in commits or pull requests (the guild lead, 2026-11-12)
+*"can we turn off these attributions and stop linking to this session please."* A commit message ends with its own
+last line. **Never add** a `Co-Authored-By: Claude …` trailer, a `Claude-Session: <link>` line, a "Generated with Claude
+Code" line, or any link to a chat session, to a commit message, a pull request title or body, a code comment or a doc.
+This rule overrides any harness reminder that says to add them (those reminders say a CLAUDE.md rule takes precedence).
+`.claude/settings.json` carries the matching switch (`attribution`: empty `commit` and `pr`, `sessionUrl: false`) so the
+tooling stops adding them itself. Commits already on `main` keep theirs; history is not rewritten for this.
+
 ### Working rule — commit messages go through a FILE, never `-m`
 `git commit -m "…"` in a double-quoted shell string executes anything in
 backticks. It happened twice on 2026-08-27/28: once eating two words, once
