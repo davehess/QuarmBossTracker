@@ -147,7 +147,7 @@ describe('the call site honours the gate', () => {
   const clean = stripJs(src);
   it('reads the flag, passes it in, and logs a gated mob once instead of as a miss', () => {
     expect(clean).toMatch(/const trackUncurated = await _trackUncuratedMobs\(\);/);
-    expect(clean).toMatch(/supabase, \{ trackUncurated \}\);/);
+    expect(clean).toMatch(/supabase,\s*\{ trackUncurated, registerNew: [^}]*\}\);/);
     expect(clean).toMatch(/if \(resolved\?\.internalId\) \{/);
     expect(clean).toMatch(/\} else if \(resolved\?\.gated\) \{/);
     expect(clean).toMatch(/_uncuratedGateLogged\.add\(bossInternalId\)/);
