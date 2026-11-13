@@ -37,6 +37,21 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-3-0-10-beta-map-targeted-2026-11-13',
+    title: 'Mimic 3.0.10 beta',
+    version: 'Mimic 3.0.10 beta',
+    date: '2026-11-13',
+    channel: 'beta',
+    headline: 'The Map remembers the named mobs you have targeted and can highlight them, or the places they spawn.',
+    features: [
+      { name: 'Your targeted named mobs, remembered', blurb: 'For each character and each zone, the Map keeps a list of the named mobs you have targeted. It is saved on your computer and survives restarts and Mimic updates.' },
+      { name: 'Highlight their spawn points', blurb: 'A new setting in the Map’s gear menu puts a purple ring and the mob’s name on every spot it can spawn at, and dims the other spawn dots.' },
+      { name: 'Or highlight the mobs themselves', blurb: 'Marks the mob where it stands when its position is known (your target, or one seen in the last minute), and shows a dashed ring on its spawn points otherwise.' },
+      { name: 'A list you can edit', blurb: 'The Map’s side panel lists them: switch one off, remove it, clear the zone, click a row to pulse its spawn points, or add your current target by hand.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-2-1-136-2026-11-13',
     title: 'Web 2.1.136',
     version: 'Web 2.1.136',
