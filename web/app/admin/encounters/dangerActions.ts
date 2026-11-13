@@ -11,6 +11,7 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
+import { GUILD_TAG } from '@/lib/guild';
 import { MERGE_PHRASE, encounterPhrase, typedConfirmOk } from '@/lib/adminTyped';
 
 async function officerOrBounce() {
@@ -57,7 +58,7 @@ export async function deleteEncounter(formData: FormData): Promise<void> {
   const id = String(formData.get('id') || '');
   if (!id) return;
   const admin = supabaseAdmin();
-  const { data: enc } = await admin.from('encounters').select('npc_id').eq('id', id).maybeSingle();
+  const { data: enc } = await admin.from('encounters').select('npc_id').eq('id', id).eq('guild_id', GUILD_TAG).maybeSingle();
   if (!enc) return;   // already gone: the delete is idempotent, and there is nothing to confirm
   const npcId = (enc as { npc_id: number | null }).npc_id;
   let name: string | null = null;
@@ -72,6 +73,6 @@ export async function deleteEncounter(formData: FormData): Promise<void> {
   // deployments; the catch swallows the error so the encounter still goes.
   try { await admin.from('encounter_combat_rollup').delete().eq('encounter_id', id); } catch {}
   try { await admin.from('combat_events').delete().eq('encounter_id', id); } catch {}
-  await admin.from('encounters').delete().eq('id', id);
+  await admin.from('encounters').delete().eq('id', id).eq('guild_id', GUILD_TAG);
   revalidatePath('/admin/encounters');
 }

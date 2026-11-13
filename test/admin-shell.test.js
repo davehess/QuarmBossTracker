@@ -428,7 +428,9 @@ vi.mock('@/lib/supabase', () => ({
       const op = { table, kind: 'select' };
       const b = {
         select: () => b,
-        eq: (c, v) => { op.eq = [c, v]; return b; },
+        // `eq` is the FIRST filter of the call (the row it targets); `eqs` is every filter, so a guild filter added
+        // after the id can be asserted without hiding the id.
+        eq: (c, v) => { (op.eqs ||= []).push([c, v]); if (!op.eq) op.eq = [c, v]; return b; },
         in: (c, vs) => { op.in = [c, vs]; return b; },
         delete: () => { op.kind = 'delete'; return b; },
         update: (patch) => { op.kind = 'update'; op.patch = patch; return b; },
@@ -605,6 +607,8 @@ describe('Delete encounter and Merge all on /admin/encounters', () => {
       'delete encounter_players', 'delete contributions', 'delete encounter_combat_rollup', 'delete combat_events', 'delete encounters',
     ]);
     expect(writes().every(w => w.eq[1] === 'e1')).toBe(true);
+    // The fight itself is deleted by id AND guild (DECISIONS §576): another guild's id deletes nothing.
+    expect(writes().at(-1).eqs.map(e => e[0])).toEqual(['id', 'guild_id']);
     expect(h.revalidated).toEqual(['/admin/encounters']);
   });
 

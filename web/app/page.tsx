@@ -18,6 +18,7 @@ import { isGuildMember } from '@/lib/member';
 import { curatedNpcIds } from '@/lib/bossFilter';
 import { fmtDmg, fmtTime, dayKey, dayLabel, cleanBossName } from '@/lib/format';
 import { userTz } from '@/lib/timezone';
+import { GUILD_TAG } from '@/lib/guild';
 
 // The home page IS the site, so its title is the bare site name (no "Home · WolfPack.quest").
 export const metadata = {
@@ -43,6 +44,7 @@ async function loadRecent() {
     const { data } = await sb
       .from('encounters')
       .select('id, started_at, total_damage, eqemu_npc_types ( name )')
+      .eq('guild_id', GUILD_TAG)
       .gt('total_damage', 0)
       .in('npc_id', curated)
       .order('started_at', { ascending: false })

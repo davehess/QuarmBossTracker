@@ -183,8 +183,10 @@ describe('loadReviewEncounters', () => {
   const encs = Array.from({ length: 2100 }, (_, i) => ({
     id: `e${String(i).padStart(5, '0')}`, npc_id: i % 5 === 0 ? 9 : 1 + (i % 3), started_at: iso(T0 + Math.floor(i / 6) * 60000),
     total_damage: i % 17 === 0 ? 0 : 100,
+    // Every 50th belongs to another guild and must never be read (DECISIONS §576).
+    guild_id: i % 50 === 7 ? 'other-guild' : GUILD_TAG,
   }));
-  const wanted = encs.filter(e => e.npc_id !== 9 && e.total_damage > 0);
+  const wanted = encs.filter(e => e.npc_id !== 9 && e.total_damage > 0 && e.guild_id === GUILD_TAG);
   const sb = () => fakeSupabase({ tables: { encounters: encs } });
 
   it('returns every curated, non-empty encounter once, newest first — past 1,000 and past the old 400', async () => {

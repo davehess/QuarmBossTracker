@@ -35,7 +35,7 @@ export async function classifyEncounter(formData: FormData) {
     classification_reason: reason,
     classification_at: new Date().toISOString(),
     classification_by: actorName(u),
-  }).eq('id', id);
+  }).eq('id', id).eq('guild_id', GUILD_TAG);
   // Both surfaces show classification chips + adjusted counts; revalidate
   // both so the admin sees the result without a hard refresh.
   revalidatePath('/parses');
@@ -50,7 +50,7 @@ export async function toggleWipe(formData: FormData) {
   const id = String(formData.get('id') || '');
   if (!id) return;
   const admin = supabaseAdmin();
-  const { data: cur } = await admin.from('encounters').select('classification, is_wipe').eq('id', id).maybeSingle();
+  const { data: cur } = await admin.from('encounters').select('classification, is_wipe').eq('id', id).eq('guild_id', GUILD_TAG).maybeSingle();
   if (!cur) return;
   const { patch, reset, stamp } = wipeTogglePatch(cur);
   await admin.from('encounters').update({
@@ -61,7 +61,7 @@ export async function toggleWipe(formData: FormData) {
       classification_at: new Date().toISOString(),
       classification_by: actorName(u),
     } : {}),
-  }).eq('id', id);
+  }).eq('id', id).eq('guild_id', GUILD_TAG);
   revalidatePath('/parses');
   revalidatePath(`/parses/${id}`);
   revalidatePath('/admin/anomalies');
@@ -79,7 +79,7 @@ export async function clearClassification(formData: FormData) {
     classification_reason: null,
     classification_at: null,
     classification_by: null,
-  }).eq('id', id);
+  }).eq('id', id).eq('guild_id', GUILD_TAG);
   revalidatePath('/parses');
   revalidatePath(`/parses/${id}`);
   revalidatePath('/admin/anomalies');

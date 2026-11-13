@@ -20,6 +20,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { selectAll } from './selectAll';
 import { selectInChunks } from './selectInChunks';
+import { GUILD_TAG } from './guild';
 
 // A PostgREST filter builder, chained dynamically. Typing it would mean typing the schema, and
 // the pages that call these already treat rows as `any`.
@@ -108,6 +109,7 @@ export async function loadAnomalyWindow<T>(sb: SupabaseClient, sinceIso: string,
       .select(`id, started_at, classification, total_damage,
                eqemu_npc_types ( name ),
                encounter_players ( character_name, total_damage )`)
+      .eq('guild_id', GUILD_TAG)
       .gt('total_damage', 0)
       .gte('started_at', sinceIso)
       .in('npc_id', curated as number[])
@@ -120,6 +122,7 @@ export async function loadOffHoursEncounters<T>(sb: SupabaseClient, sinceIso: st
   return selectAll<T>((from, to) =>
     db(sb).from('encounters')
       .select('id, started_at, classification, npc_id, eqemu_npc_types ( name )')
+      .eq('guild_id', GUILD_TAG)
       .gt('total_damage', 0)
       .gte('started_at', sinceIso)
       .in('npc_id', curated as number[])
