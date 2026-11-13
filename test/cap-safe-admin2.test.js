@@ -345,7 +345,7 @@ describe('anomalies loaders', () => {
   for (let i = 0; i < 25_000; i++) {
     const curated = i % 25 === 0 ? 1 : 0;   // 1,000 of them: every 25th
     encounters.push({
-      id: `e${pad(i, 6)}`, started_at: iso(T0 - i * 600_000),
+      id: `e${pad(i, 6)}`, started_at: iso(T0 - i * 600_000), guild_id: 'wolfpack',   // the loaders read the home guild only
       npc_id: curated ? CURATED[i % 132] : 5000 + (i % 700), total_damage: 1000 + i, classification: null,
       encounter_players: [{ character_name: 'X', total_damage: 1 }], eqemu_npc_types: { name: 'n' },
     });
@@ -382,7 +382,7 @@ describe('anomalies loaders', () => {
     expect(new Set(got.map(e => e.id)).size).toBe(curatedCount);
     // 1,000 curated rows would fit the cap exactly; push past it to prove the paging.
     const more = [...encounters, ...Array.from({ length: 700 }, (_, i) => ({
-      id: `x${pad(i, 6)}`, started_at: iso(T0 - (25_000 + i) * 600_000 + 7), npc_id: CURATED[i % 132], total_damage: 5,
+      id: `x${pad(i, 6)}`, started_at: iso(T0 - (25_000 + i) * 600_000 + 7), npc_id: CURATED[i % 132], total_damage: 5, guild_id: 'wolfpack',
     }))];
     const got2 = await loadOffHoursEncounters(fakeDb({ encounters: more }), '2026-04-01T00:00:00Z', CURATED);
     expect(got2.length).toBe(curatedCount + 700);
@@ -391,8 +391,10 @@ describe('anomalies loaders', () => {
 
   it('zero-damage encounters are left out, as before', async () => {
     const db = fakeDb({ encounters: [
-      { id: 'a', started_at: iso(T0), npc_id: 1000, total_damage: 0 },
-      { id: 'b', started_at: iso(T0 - 1000), npc_id: 1000, total_damage: 9 },
+      { id: 'a', started_at: iso(T0), npc_id: 1000, total_damage: 0, guild_id: 'wolfpack' },
+      { id: 'b', started_at: iso(T0 - 1000), npc_id: 1000, total_damage: 9, guild_id: 'wolfpack' },
+      // Another guild's fight is never read (DECISIONS §576).
+      { id: 'c', started_at: iso(T0 - 2000), npc_id: 1000, total_damage: 9, guild_id: 'other-guild' },
     ] });
     expect((await loadOffHoursEncounters(db, since21, [1000])).map(e => e.id)).toEqual(['b']);
   });

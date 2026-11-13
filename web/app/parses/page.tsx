@@ -126,6 +126,7 @@ async function loadAll(w: ResolvedWindow): Promise<{
         eqemu_npc_types ( id, name, zone_short ),
         encounter_players ( character_name, total_damage, dps, rank )
       `)
+      .eq('guild_id', GUILD_TAG)
       .gt('total_damage', 0)
       .in('npc_id', curated)
       .order('started_at', { ascending: false })

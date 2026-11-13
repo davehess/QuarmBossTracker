@@ -285,7 +285,8 @@ async function markIncomplete(formData: FormData) {
       data_incomplete_at: new Date().toISOString(),
       data_incomplete_by: actorName(u),
     })
-    .eq('id', id);
+    .eq('id', id)
+    .eq('guild_id', GUILD_TAG);
   revalidatePath('/admin/encounters');
 }
 
@@ -304,7 +305,8 @@ async function clearIncomplete(formData: FormData) {
       data_incomplete_at: null,
       data_incomplete_by: null,
     })
-    .eq('id', id);
+    .eq('id', id)
+    .eq('guild_id', GUILD_TAG);
   revalidatePath('/admin/encounters');
 }
 

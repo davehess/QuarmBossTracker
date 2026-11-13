@@ -193,7 +193,8 @@ async function load(id: string) {
         encounter_players ( character_name, total_damage, dps, duration_sec, rank, has_pets )
       `)
       .eq('id', id)
-      .single();
+      .eq('guild_id', GUILD_TAG)
+      .maybeSingle();
 
     // Fight damage curve (docs/DESIGN-fight-timeline.md). encounter_timeline()
     // is a FUNCTION, not a view, so the encounter filter lands before the jsonb
@@ -429,6 +430,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
       .from('encounters')
       .select('started_at, duration_sec, total_dps, eqemu_npc_types ( name )')
       .eq('id', id)
+      .eq('guild_id', GUILD_TAG)
       .maybeSingle();
     if (!data) return PARSE_FALLBACK_META;
     const boss = cleanBossName((data as { eqemu_npc_types?: { name?: string } }).eqemu_npc_types?.name);

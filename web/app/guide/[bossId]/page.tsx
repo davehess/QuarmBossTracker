@@ -31,6 +31,7 @@ import {
   type CatalogRow, type GuideEncounter, type DropRow, type AwardRow,
 } from '@/lib/raidGuide';
 import { loadAwardsForItems, loadDropperCounts } from '@/lib/fullReads';
+import { GUILD_TAG } from '@/lib/guild';
 
 import { pageMetadata } from '@/lib/pageMetaData';
 
@@ -103,6 +104,7 @@ async function load(bossId: string) {
   const [encRes, dropRes, spawnRes] = await Promise.all([
     sb.from('encounters')
       .select('id, started_at, ended_at, duration_sec, total_damage, total_dps, classification, encounter_players ( character_name, total_damage )')
+      .eq('guild_id', GUILD_TAG)
       .eq('npc_id', npcId)
       .order('started_at', { ascending: false })
       .limit(300),

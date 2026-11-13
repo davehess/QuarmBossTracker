@@ -10,6 +10,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isRaidmimicHost } from '@/lib/raidmimicHost';
 import { GUILD_SLUG_RX } from '@/lib/hubRegistry';
+import { GUILD_TAG } from '@/lib/guild';
 import { EQMIMIC_ORIGIN } from '@/lib/raidmimicLanding';
 import { pageMetadata } from '@/lib/pageMetaData';
 import { settingsActor } from '@/lib/guildSettingsAccess';
@@ -46,8 +47,18 @@ export default async function GuildSettingsPage({ params }: { params: { slug: st
       <h1 className="text-2xl text-gold">Guild settings</h1>
       <p className="mt-1 text-sm text-dim">{g?.display_name ?? slug}</p>
       <p className="mt-3 rounded-lg border border-border bg-panel p-4 text-sm leading-6 text-dim">
-        This first version <b className="text-text">saves</b> these settings and shows the next raid. Attendance ticks, sign-in gates and DKP
-        still use the built-in values until each one is switched over to read from here.
+        {slug === GUILD_TAG ? (
+          <>
+            The <b className="text-text">raid schedule</b> here is live: the bot uses it for raid nights and attendance ticks, and a change takes
+            up to 10 minutes to apply. The reminders posted before a raid still use the built-in times. Ranks, jobs, DKP and the guest rule
+            are <b className="text-text">saved</b> but not used yet.
+          </>
+        ) : (
+          <>
+            This first version <b className="text-text">saves</b> these settings and shows the next raid. Nothing else reads them yet for a
+            guild hosted here; each part is switched on as it is built.
+          </>
+        )}
       </p>
       {stored === null && (
         <p role="alert" className="mt-4 rounded border border-red/50 bg-red/10 p-3 text-sm text-red">
