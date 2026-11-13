@@ -584,9 +584,20 @@ trigger cache) is the home guild's alone; none of them may open to a hub session
 **The home guild's website would show a second guild's fights.** `web/app/parses/page.tsx` and `[id]/page.tsx` read
 `encounters` with the service key and no guild filter (the row-level policies do not apply to that key).
 
+**Closed 2026-11-13** (web 2.1.135, bot 4.0.80; DECISIONS §576, §577): the site's reads; leak 1 (a hosted guild's claim
+carries its guild; the home guild's request is byte-identical); leak 2 (charm rows carry the upload's guild). **Leak 3 was
+misnamed.** `bosses_local` is ONE shared list of game mobs: `npc_id` is its primary key and `internal_id` is unique across
+the table, with no guild in either. A hosted guild reading it is not a leak of guild data, and it matches the "standard
+list of bosses" call (§566). The real fault was that a hosted guild's upload could ADD a row, which the column default
+stamps as the home guild's; that is now refused. **Open after this:** (a) a hosted guild's first fight on a mob nobody has
+registered is not saved (one stdout line an hour per name); either let any guild's exact-matched mob join the shared list,
+or key the table by guild (a key migration, and each guild then needs its own rows); (b) the threat-snapshot upload route
+still stamps the home guild on every row, so a hosted guild's claim matches nothing; hosted sessions cannot reach that
+route today.
+
 **Build order** (each step ships on its own, off a raid night):
-1. Filter the site's service-key reads of `encounters` to the home guild (no visible change today).
-2. Close leaks 1–3 on the upload path.
+1. Filter the site's service-key reads of `encounters` to the home guild (no visible change today). *Done.*
+2. Close leaks 1–3 on the upload path. *Done.*
 3. A night per guild: `raid_nights` reads the uploading guild's saved schedule (the process guild's schedule is read from
    `guild_settings` since the schedule change of 2026-11-12/13).
 4. The hosted guild's own parses page, `/guilds/<slug>/parses`, through the signed-in user's client so the row-level
