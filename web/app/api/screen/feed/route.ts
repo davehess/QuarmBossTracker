@@ -26,6 +26,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { curatedNpcIds } from '@/lib/bossFilter';
 import { cleanBossName } from '@/lib/format';
 import { selectAll } from '@/lib/selectAll';
+import { GUILD_TAG } from '@/lib/guild';
 import {
   FEED_CACHE_MS, LOOTED_READ_MAX, SCREEN_GUILD, buildAwards, groupLooted, sinceIso,
   type AwardRow, type FeedKill, type FeedSpawn, type LootedGroup, type LootedRow, type NameRow, type ScreenFeed,
@@ -85,6 +86,7 @@ async function loadKills(db: Db, since: string): Promise<FeedKill[]> {
   if (!curated.length) return [];
   const { data, error } = await db.from('encounters')
     .select('id, ended_at, duration_sec, eqemu_npc_types ( name )')
+    .eq('guild_id', GUILD_TAG)
     .in('npc_id', curated)
     .gte('started_at', since)
     .not('ended_at', 'is', null)
