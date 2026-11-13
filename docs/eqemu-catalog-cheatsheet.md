@@ -58,6 +58,22 @@ it, so nobody re-derives them from EXPLAIN plans again. If you're about to query
 
 ## Items & spells catalog shape
 
+- ⚠ **`eqemu_items.nodrop` and `norent` read BACKWARDS from their names (2026-11-13).** They are the server's raw flags
+  made boolean (`scripts/sync-from-eqmac.js`: `!!toBool(r.nodrop)`), and the server stores 1 for "can be traded" and 0
+  for NO DROP. So **`nodrop = true` means TRADEABLE and `nodrop = false` means NO DROP**; `norent = false` means NO RENT
+  (a summoned item). Checked against known items: Cloak of Flames, Flowing Black Silk Sash and Blue Diamond are `true`;
+  the epics and The Scepter of Shadows are `false`; Summoned: Black Bread is `norent = false`. The quest-tracker seed
+  of that day read it the obvious way and marked seven tradeable items NO DROP (corrected in migration
+  `20261113190000`). Write `not nodrop as is_nodrop` in a query and say which you mean.
+- **Spell reagents are NOT in the mirror.** `eqemu_spells` carries no component columns. The server's dump has them in
+  `spells_new`: `components1..4` (item ids, -1 = none), `component_counts1..4`, `NoexpendReagent1..4` (an item you must
+  hold that is not used up), and `teleport_zone`. **Which item clicks need a reagent:** only those whose click spell
+  lists one, and the server's item-click code (`zone/client_packet.cpp`, `zone/spells.cpp` in `SecretsOTheP/EQMacEmu`)
+  exempts a click with a cast time of 0 or less and any expendable, potion or poison item. On the dump of 2026-10-25,
+  1,612 items have a click; 64 cast a spell that lists a reagent; 25 of those are not exempt (the necromancer robes'
+  Conjure Corpse, the enchanter robes' Rune IV, Elder Spiritist's Boots' Levitate, and the three Binden talismans' and
+  Summoned: Talisman of Return's Talisman Gate, which uses a Quintessence of Knowledge).
+
 - **What an item LOOKS like (migration 20261006010000, bot 3.1.208):** `eqemu_items.idfile` is the model
   ('IT63'; weapons → `prim_it`/`sec_it` = the number), `material` the armor texture (0–23), `color` the
   base dye as **unsigned 32-bit ARGB in a bigint** (it does not fit integer: the dump holds 0xFFFFFF80),

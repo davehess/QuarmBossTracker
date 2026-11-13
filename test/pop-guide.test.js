@@ -289,17 +289,23 @@ describe('The Binden Concerrentia reads the way the server works', () => {
     expect(s.section).toBe('t4');
     expect(s.where.map(l => [l.npc, l.zone, l.y, l.x])).toEqual([['Elder Clinka', 'potranquility', -384, -1271]]);
     expect(ids(s.title)).toEqual([28296]);
-    // Case, then Air, Water, Fire, Earth, the sealed case.
-    expect(ids(s.detail)).toEqual([17279, 28292, 28293, 28294, 28295, 28297]);
+    // Case, then Air, Water, Fire, Earth, the sealed case, then the reagent its click uses up.
+    expect(ids(s.detail)).toEqual([17279, 28292, 28293, 28294, 28295, 28297, 29356]);
     expect(trade('binden_final')).toEqual([
       ['give', 'Elder Clinka', [28291]], ['get', '', [17279]],
       ['get', '', [28297]],
       ['give', 'Elder Clinka', [28297]], ['get', '', [28296]],
     ]);
     expect(s.detail).toMatch(/not from mephits/);
-    expect(s.detail).toMatch(/no loot call/);
+    // The fragments are lore and no drop in the item table (`nodrop = false` IS no drop). This step said the opposite
+    // ("anyone can hold, trade or hand on a fragment") until 2026-11-13.
+    expect(s.detail).toMatch(/Every fragment is lore and no drop/);
+    expect(s.detail).not.toMatch(/no loot call|trade or hand on a fragment/);
+    // Talisman Gate: to the Plane of Knowledge, one Quintessence of Knowledge a click (the server's spells_new row 3046).
+    expect(s.detail).toMatch(/takes you to the Plane of Knowledge and uses up one \[\[Quintessence of Knowledge#29356\]\] each time/);
     expect(s.detail).toMatch(/Temple Guardians in Air, 9%.*triloun in the Reef of Coirnav, 9%.*jopal in Fire, 8%/);
-    expect(s.detail).toMatch(/our data cannot confirm/);
+    // Where the gate lands is no longer a guide's claim we could not confirm: the spell row names the zone.
+    expect(s.detail).not.toMatch(/our data cannot confirm|EQProgression says/);
   });
   it('the three parts keep their order on the page: tier one, tier three, the elemental planes', () => {
     const at = (k) => GUIDE_ITEMS.findIndex(i => i.key === k);
