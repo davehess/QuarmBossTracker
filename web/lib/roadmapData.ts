@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-136-2026-11-13',
+    title: 'Web 2.1.136',
+    version: 'Web 2.1.136',
+    date: '2026-11-13',
+    headline: 'Two Planes of Power quests join your quests page: The Binden Concerrentia and Secrets of the Planes.',
+    features: [
+      { name: 'The Binden Concerrentia', blurb: 'All three stages are tracked on your character’s quests page: each part, which plane it drops in and how often, and who to hand it to. The three combines cannot fail.' },
+      { name: 'Secrets of the Planes', blurb: 'The combat, stealth and magic manual lines and the final hand-in, each with what to bring and to whom. It also tells you which pieces are no-drop, so you have to make or loot them yourself.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-2-1-133-2026-11-12',
     title: 'Web 2.1.133',
     version: 'Web 2.1.133',
