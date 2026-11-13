@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.79': [
+    'Behind the scenes: raid nights, the raid window and attendance ticks now follow the schedule saved on the guild settings page. Nothing changes for our raid times.',
+  ],
   '4.0.78': [
     'The PoP guide explains joining a Plane of Time raid after missing the first nights, and how the Quintessence combine works.',
   ],
