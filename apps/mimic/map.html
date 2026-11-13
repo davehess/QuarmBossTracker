@@ -142,6 +142,15 @@
   .sec.resp .more{background:rgba(var(--wp-panel-rgb),.9);color:#8b949e;border:1px solid rgba(110,118,129,0.5);border-radius:4px;font:inherit;
     font-size:9px;padding:0 5px;cursor:pointer;text-transform:none;letter-spacing:0}
   .sec.resp .more:hover{color:#e6edf3;border-color:var(--wp-blue)}
+  /* Targeted named: the header carries "+ target" and "clear"; each row an on/off and a remove, small like the ☠ killed button. */
+  .sec.hunt{display:flex;align-items:center;justify-content:space-between;gap:6px}
+  .hbtns{display:flex;align-items:center;gap:4px;text-transform:none;letter-spacing:0}
+  .hb{background:rgba(var(--wp-panel-rgb),.9);color:var(--wp-text);border:1px solid rgba(110,118,129,0.5);border-radius:4px;font:inherit;
+    font-size:9px;padding:0 5px;cursor:pointer;white-space:nowrap}
+  .hb:hover{border-color:var(--wp-blue)}
+  .hb.dis{color:var(--wp-dim);opacity:.6}
+  .trow.hunt.off .nm{color:var(--wp-dim);text-decoration:line-through}
+  .hnote{font-size:8px;color:var(--wp-dim);padding:0 2px 3px}
   .trow.sub{margin-left:10px;border-left-width:2px;padding-top:1px;padding-bottom:1px}
   .kite{font-size:11px;color:#8b949e;padding:0 2px 4px}
   .trow.engaged{border-left-color:#f0883e;cursor:default} .trow.engaged .tm{color:#f0883e}
@@ -370,6 +379,7 @@
         <div class="row"><span class="bl">Scheme</span><select id="cfgScheme"><option value="default">Default</option><option value="contrast">High contrast</option><option value="cb">Colour-blind safe</option><option value="custom">Custom</option></select></div>
         <label class="row" title="Brewall layers: your floor in the wall colour, the floors above and below you in Brewall's layer colours (orange, green, cyan up; pink, purple down), as eqmaps.info's mapping standard draws them. A Brewall map file keeps its own colours. Map's own: each line keeps the colour its map file gives it. One colour: every wall line in the colour below."><span class="bl">Wall colours</span><select id="cfgWallMode"><option value="layers">Brewall layers</option><option value="map">Map's own</option><option value="one">One colour</option></select></label>
         <label class="row" title="Which planned route the Planned route layer draws in the Planes of Power elemental planes. Full boss clear: every boss in order. Minimal path: the shortest way through."><span class="bl">Planned route path</span><select id="cfgPlanMode"><option value="full">Full boss clear</option><option value="min">Minimal path</option></select></label>
+        <label class="row" title="Highlights the named mobs you have targeted in this zone (the list is under Targeted named in the side panel). Their spawn points: a ring and the mob's name at every spot that can hold one, even with Spawn points off. The mobs: the mob itself where a position is known (your target, or one seen in the last minute), else a hollow ring at its spawn points. Every other spawn dot dims."><span class="bl">Targeted named mobs</span><select id="cfgHunt"><option value="off">Off</option><option value="spawns">Highlight their spawn points</option><option value="mobs">Highlight the mobs</option></select></label>
         <div id="cfgCols"></div>
         <div class="grp">Background</div>
         <div class="row"><span class="bl">Colour</span><input type="color" id="cfgBg"><button class="rs" type="button" id="cfgBgRs" title="Back to the scheme's colour">↺</button></div>
@@ -1703,7 +1713,7 @@
     // wallMode 'layers' (Brewall's floor colours) is the default since 2026-10-13; wallV marks a save made after that,
     // so an older save's 'map' (never chosen, it was the old default) moves to 'layers' and a newer one is kept.
     return { show: show, facing: FACING_DEFAULT, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'layers', wallV: 2, bgA: null, text: 1, ink: INK_DEFAULT, avoidEq: null, showClear: false, tail: TAIL_DEFAULT,
-      kiteOthers: 'live', kiteFilter: 'all', kiteDrift: false, planMode: null, orient: ORIENT_DEFAULT, compass: COMPASS_DEFAULT };
+      kiteOthers: 'live', kiteFilter: 'all', kiteDrift: false, planMode: null, orient: ORIENT_DEFAULT, compass: COMPASS_DEFAULT, huntMode: 'off' };
   }
   // ⚙ → Line strength (the guild lead, 2026-10-13, over the game with Opacity full and no background: "make the maps
   // and spawns more intense for how defined the lines and whatnot are ... its difficult to see"). One number, 1 to 3:
@@ -1742,6 +1752,7 @@
     if (saved.kiteFilter === 'all' || saved.kiteFilter === 'speed' || saved.kiteFilter === 'near') c.kiteFilter = saved.kiteFilter;
     if (saved.planMode === 'full' || saved.planMode === 'min') c.planMode = saved.planMode;   // null (unset) follows the JSON's default
     if (saved.kiteDrift === true) c.kiteDrift = true;   // false (unset) = no forecast
+    c.huntMode = huntMode(saved.huntMode);   // Targeted named mobs: off | spawns | mobs (anything else is off)
     c.orient = orientFrom(saved); c.compass = compassFrom(saved);   // north up and the rose, unless a save says otherwise
     if (saved.showClear === true) c.showClear = true;   // outlines always on; off shows them only while ⚙ is open or editing
     return c;
@@ -1886,6 +1897,117 @@
     var d = p && p.trap != null && traps && traps.defs ? traps.defs[String(p.trap)] : null;
     return d && typeof d === 'object' ? d : null;
   }
+  // ── Targeted named mobs (the guild lead, 2026-11-13: "a filter mode on the maps to highlight specific named mobs that you've
+  // targetted OR their spawn points"). A per-character, per-zone list of the named mobs you have targeted, kept in localStorage
+  // ("wp-map-hunt:<name>") as { "<zone short name>": [ { k: npcKey, n: display name, at: ms, on: true } ] }, newest first.
+  var HUNT_MOB_CAP = 60, HUNT_ZONE_CAP = 60, HUNT_LIVE_MS = 60000, HUNT_CONFIRM_MS = 4000, HUNT_MODES = ['off', 'spawns', 'mobs'];
+  function huntMode(v) { return HUNT_MODES.indexOf(v) >= 0 ? v : 'off'; }
+  // A target the list may take: Zeal's EntityTypes are 0 player, 1 NPC, 2/3 corpses; a missing type reads as an NPC, as everywhere
+  // else in this file. Never a corpse (type, or the "'s corpse" name), never a player, never your own pet (the poll's `pet`).
+  function huntTargetNpc(T, pet) {
+    if (!T || !T.name) return false;
+    if (!(T.type == null || T.type === 1)) return false;
+    if (/'s corpse\d*$/i.test(String(T.name))) return false;
+    if (pet && ((pet.id != null && T.id != null && pet.id === T.id) || (pet.name && npcKey(pet.name) === npcKey(T.name)))) return false;
+    return true;
+  }
+  // The named or raid-target spawn row a target name belongs to in this zone's points: { k, n } (key, display name), or null.
+  function huntNamedMatch(name, points) {
+    var k = npcKey(name);
+    if (!k) return null;
+    for (var i = 0; i < (points || []).length; i++) {
+      var npcs = (points[i] && points[i].npcs) || [];
+      for (var j = 0; j < npcs.length; j++) {
+        var n = npcs[j];
+        if (n && n.name && (n.named || n.raid_target) && npcKey(n.name) === k) return { k: k, n: prettyNpc(n) };
+      }
+    }
+    return null;
+  }
+  // The list with `entry` ({ k, n, at }) at the front: a mob already on it moves up with a fresh `at` and keeps its own on/off.
+  function huntListAdd(list, entry, cap) {
+    var old = null, out = [];
+    (list || []).forEach(function (e) { if (e.k === entry.k) old = e; else out.push(e); });
+    out.unshift({ k: entry.k, n: entry.n, at: entry.at, on: old ? old.on !== false : entry.on !== false });
+    if (out.length > (cap || HUNT_MOB_CAP)) out.length = cap || HUNT_MOB_CAP;
+    return out;
+  }
+  function huntListRemove(list, k) { return (list || []).filter(function (e) { return e.k !== k; }); }
+  function huntListToggle(list, k) { return (list || []).map(function (e) { return e.k === k ? { k: e.k, n: e.n, at: e.at, on: !e.on } : e; }); }
+  function huntNewest(list) { var t = 0; (list || []).forEach(function (e) { if (e.at > t) t = e.at; }); return t; }
+  // A zone's list replaced (an empty one removes the zone), then at most `cap` zones kept: the one whose newest entry is oldest goes.
+  function huntStoreSet(store, zone, list, cap) {
+    var out = {}, k;
+    for (k in store) if (Object.prototype.hasOwnProperty.call(store, k) && k !== zone) out[k] = store[k];
+    if (list && list.length) out[zone] = list;
+    var zs = Object.keys(out);
+    while (zs.length > (cap || HUNT_ZONE_CAP)) {
+      var oldest = zs[0];
+      zs.forEach(function (z) { if (z !== zone && (oldest === zone || huntNewest(out[z]) < huntNewest(out[oldest]))) oldest = z; });
+      delete out[oldest]; zs = Object.keys(out);
+    }
+    return out;
+  }
+  // Whatever was parsed from storage -> a valid store. A corrupt or foreign shape is empty, never a throw.
+  function huntStoreClean(raw) {
+    var out = {};
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+    Object.keys(raw).forEach(function (zone) {
+      if (zone === '__proto__' || !Array.isArray(raw[zone])) return;
+      var seen = {}, list = [];
+      raw[zone].forEach(function (e) {
+        if (!e || typeof e !== 'object' || typeof e.k !== 'string' || !e.k || seen[e.k] || list.length >= HUNT_MOB_CAP) return;
+        var at = Number(e.at);
+        seen[e.k] = true;
+        list.push({ k: e.k, n: typeof e.n === 'string' && e.n ? e.n : e.k, at: isFinite(at) ? at : 0, on: e.on !== false });
+      });
+      if (list.length) out[zone] = list;
+    });
+    return huntStoreSet(out, '', null, HUNT_ZONE_CAP);
+  }
+  // The set of spawn points whose spawn list holds an ENABLED listed mob: { <point id>: true }.
+  function huntPointIds(points, list) {
+    var want = {}, ids = {}, any = false;
+    (list || []).forEach(function (e) { if (e.on !== false) { want[e.k] = true; any = true; } });
+    if (!any) return ids;
+    (points || []).forEach(function (p) {
+      var npcs = (p && p.npcs) || [];
+      for (var j = 0; j < npcs.length; j++) if (npcs[j] && want[npcKey(npcs[j].name)]) { ids[String(p.id)] = true; return; }
+    });
+    return ids;
+  }
+  // The enabled listed mobs' own spawn points: { <key>: [point id, ...] } (a mob with no point in the data has an empty list).
+  function huntKeyPoints(points, list) {
+    var by = {};
+    (list || []).forEach(function (e) { if (e.on !== false) by[e.k] = []; });
+    (points || []).forEach(function (p) {
+      var npcs = (p && p.npcs) || [], done = {};
+      for (var j = 0; j < npcs.length; j++) {
+        var k = npcs[j] ? npcKey(npcs[j].name) : '';
+        if (by[k] && !done[k]) { done[k] = true; by[k].push(String(p.id)); }
+      }
+    });
+    return by;
+  }
+  // Where an enabled listed mob is KNOWN to be right now: { <key>: { x, y, z, age (ms), target } }. Only positions someone really
+  // reported: your own target (live); a seen row's `pos` (the agent's, with `at` on the map clock `now`); the last crumb of its
+  // trail (stamped on the local clock `rt`). Older than HUNT_LIVE_MS, or dead, is not known. Nothing is ever invented.
+  function huntLivePos(list, P, seenBy, trails, now, rt) {
+    var want = {}, out = {}, T = P && P.target;
+    (list || []).forEach(function (e) { if (e.on !== false) want[e.k] = true; });
+    if (T && T.x != null && T.hp_pct !== 0 && huntTargetNpc(T, P && P.pet) && want[npcKey(T.name)]) out[npcKey(T.name)] = { x: T.x, y: T.y, z: T.z, age: 0, target: true };
+    Object.keys(seenBy || {}).forEach(function (pid) {
+      var sn = seenBy[pid], k = sn && sn.name ? npcKey(sn.name) : '';
+      if (!k || !want[k] || sn.hp_pct === 0 || (out[k] && out[k].target)) return;
+      var best = null;
+      if (sn.pos && sn.pos.x != null && isFinite(Number(sn.pos.at))) best = { x: sn.pos.x, y: sn.pos.y, z: sn.pos.z, age: Math.max(0, now - Number(sn.pos.at)), target: false };
+      var tr = trails && sn.spawn_id != null ? trails['t:' + sn.spawn_id] : null;
+      var lc = tr && tr.dead == null && tr.pts && tr.pts.length ? tr.pts[tr.pts.length - 1] : null;
+      if (lc && lc.x != null && (!best || rt - lc.t < best.age)) best = { x: lc.x, y: lc.y, z: lc.z, age: Math.max(0, rt - lc.t), target: false };
+      if (best && best.age <= HUNT_LIVE_MS && (!out[k] || best.age < out[k].age)) out[k] = best;
+    });
+    return out;
+  }
   // ── end pure helpers ──
 
   // ── state ──
@@ -1902,6 +2024,7 @@
     followOff: { x: 0, y: 0 }, followLock: false, followWho: 'me', pointTrails: {}, kills: 0, killSeen: {},   // Follow me's screen spot + lock; killed mobs' paths (see noteKills)
     src: 'direct', smooth: 'light', direct: null, sampleAt: 0, sampleSrc: '',   // beta tuning knobs + the latest pushed positions
     pulse: null, respOpen: false,   // FB-100: the spots being pulsed ({ ids, t0 }), and Respawns listing its spots (saved: wp-map-resp-open)
+    hunt: { key: '', store: {}, ids: {}, by: {}, last: '', clearAt: 0 },   // Targeted named mobs: see noteHunt
   };
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, String(v)); } catch (e) {} }
@@ -1958,6 +2081,54 @@
     }
     var snap = charPrefsSnap();
     if (snap !== S.prefsSnap) { S.prefsSnap = snap; lsSet(key, snap); }
+  }
+  // Targeted named mobs (the guild lead, 2026-11-13). The list lives under its own key per character ("wp-map-hunt:<name>"), NOT in
+  // S.cfg or "wp-map-char:<name>": Reset and the per-character snapshot rewrite those wholesale, and this list is a record, not a
+  // setting. S.hunt = { key, store (the parsed list, all zones), ids (the point ids to highlight now), by (every listed key -> its
+  // point ids), last (the target already handled, so holding a target is not a new sighting), clearAt (the "clear" confirm) }.
+  // The Timers pop-out neither records nor shows it: two windows writing one key would overwrite each other.
+  function huntZone() { return S.zone || (S.p && S.p.zone) || ''; }
+  function huntList() { return S.hunt.store[huntZone()] || []; }
+  function huntRecompute() {
+    var list = huntList();
+    S.hunt.ids = S.cfg.huntMode === 'off' ? {} : huntPointIds(S.points, list);
+    // Every listed mob's own points, on or off and whatever the mode: the side list's counts and its row pulse read this, so the
+    // list (rebuilt every second, up to 60 rows) never walks the zone's spawn points per row.
+    S.hunt.by = list.length ? huntKeyPoints(S.points, list.map(function (e) { return { k: e.k, on: true }; })) : {};
+    S.hunt.n = Object.keys(S.hunt.ids).length;   // hunted spawn points
+    S.hunt.en = S.cfg.huntMode === 'off' ? 0 : list.filter(function (e) { return e.on !== false; }).length;   // enabled mobs (a mob can have a live mark and no spawn point here)
+  }
+  function huntSave() { if (S.hunt.key) lsSet(S.hunt.key, JSON.stringify(S.hunt.store)); }
+  function huntPut(list) {   // replace this zone's list, write it, and redraw what shows it
+    S.hunt.store = huntStoreSet(S.hunt.store, huntZone(), list, HUNT_ZONE_CAP);
+    huntSave(); huntRecompute(); renderSide(); renderMap();
+  }
+  // Called from applyPayload on every poll: load the character's list when they change, record a named target, refresh the ids.
+  function noteHunt(p) {
+    var name = p && p.self && p.self.name;
+    if (PART_TIMERS || !name) return;
+    var key = 'wp-map-hunt:' + String(name).toLowerCase();
+    if (key !== S.hunt.key) {
+      var raw = null; try { raw = JSON.parse(lsGet(key) || 'null'); } catch (e) {}
+      S.hunt.key = key; S.hunt.store = huntStoreClean(raw); S.hunt.last = ''; S.hunt.clearAt = 0;
+    }
+    var T = p.target, m = T && p.zone && p.zone === S.zone && huntTargetNpc(T, p.pet) ? huntNamedMatch(T.name, S.points) : null;
+    var seen = m ? p.zone + '|' + m.k + '|' + (T.id != null ? T.id : '') : '';
+    if (m && seen !== S.hunt.last) {
+      S.hunt.store = huntStoreSet(S.hunt.store, p.zone, huntListAdd(S.hunt.store[p.zone], { k: m.k, n: m.n, at: Date.now(), on: true }, HUNT_MOB_CAP), HUNT_ZONE_CAP);
+      huntSave();
+    }
+    S.hunt.last = seen;
+    huntRecompute();
+  }
+  // "+ target": the current NPC target, flagged named or not (the server's "named" flag is a guess and misses some).
+  function huntAddTarget() {
+    var T = S.p && S.p.target;
+    if (!huntZone() || !T || !huntTargetNpc(T, S.p.pet)) { toast('Target an NPC first'); return; }
+    var m = huntNamedMatch(T.name, S.points), k = npcKey(T.name);
+    if (!k) { toast('Target an NPC first'); return; }
+    huntPut(huntListAdd(huntList(), { k: m ? m.k : k, n: m ? m.n : prettyNpc({ name: T.name }).replace(/\d+$/, '').trim(), at: Date.now(), on: true }, HUNT_MOB_CAP));
+    toast('Added ' + (m ? m.n : T.name) + ' to Targeted named');
   }
   // Window / Full mode (main owns it: cfg.mapMode), and the keep-clear areas: what main last reported, the same in page px.
   S.mode = 'window';
@@ -2074,6 +2245,7 @@
     syncRouteNote();
     noteClearKey();   // a new zone or character: read the keep-clear areas again
     noteCharPrefs();  // FB-129: a new character gets their own zoom / pan mode / settings back
+    noteHunt(p);      // Targeted named mobs: load this character's list, record a named target, refresh the highlighted ids
     S.timerBy = {}; S.candBy = {}; S.seenBy = {};
     S.watchBy = p.watched && typeof p.watched === 'object' ? p.watched : {};   // spots marked "watch for <named>": { <point_id>: { named, by } }
     (p.timers || []).forEach(function (t) { S.timerBy[String(t.point_id)] = t; });
@@ -3096,10 +3268,13 @@
     // Your target's own spawn point shows at any height (the guild lead, 2026-10-13: "Going above a spawn point should
     // still show you the spawn point of the creature that's targetted").
     var tgtPid = S.p && S.p.target && S.p.target.point_id != null ? String(S.p.target.point_id) : null;
+    // Targeted named mobs: the point ids to highlight (computed once per poll, see huntRecompute); null = no hunt on (mode off or an empty list).
+    var hmode = S.cfg.huntMode, hids = hmode !== 'off' && S.hunt.n ? S.hunt.ids : null;
     for (var k = 0; k < S.points.length; k++) {
       var p0 = S.points[k], xy0 = wpt(p0.x, p0.y);
       if (xy0[0] < -30 || xy0[0] > w + 30 || xy0[1] < -30 || xy0[1] > h + 30) continue;
       if (String(p0.id) !== tgtPid && eventHidden(p0, SH, S.evHidden, S.p && S.p.zone)) continue;   // FB-130: a hidden script-spawned point
+      if (hids && hids[String(p0.id)]) { vis.push({ p: p0, x: xy0[0], y: xy0[1] }); continue; }   // Targeted named: a hunted spot shows at any height
       if (!inLevelRange(p0.z, sz, srange) && String(p0.id) !== tgtPid && !(S.pulse && S.pulse.ids[String(p0.id)])) continue;   // outside the Spawns slider: hidden (dot, route and click target), unless it is being pulsed (FB-100)
       vis.push({ p: p0, x: xy0[0], y: xy0[1] });
     }
@@ -3148,6 +3323,7 @@
       if (SH.traps && trapDefOf(p, S.traps)) continue;   // a trap spot is drawn by the traps pass below (a △, not a dot)
       var kind = pointKind(p);
       ctx.globalAlpha = inLevelRange(p.z, sz, range) ? 1 : 0.4;
+      if (hids && !hids[String(p.id)]) ctx.globalAlpha *= HUNT_DIM;   // a hunt dims every spawn dot that is not a hunted one
       var r = (kind.raid ? 6.5 : kind.named ? 5.5 : 4.2) * I.dot;
       var t = S.timerBy[String(p.id)], cand = S.candBy[String(p.id)], sn = S.seenBy[String(p.id)];
       var up = upOn(p.id, S.p, S.seenBy), un = upNpc(p, up);
@@ -3179,6 +3355,7 @@
       else if (kind.named && SH.bosses) bossC.push({ text: bestName(p), x: px + r + 3, y: py + r + 3, z: p.z, wx: p.x, wy: p.y, col: conCol(namedNpc(p)) || (kind.raid ? CO.raidLabel : CO.bossLabel), tier: kind.raid ? 0 : 1, align: 'left', font: fontBoss });
     }
     ctx.globalAlpha = 1;
+    if (hmode !== 'off' && S.hunt.en) drawHunt(vis, hmode, hids || {}, now, rt, I, bossC, fontBoss);
     drawPulse(vis, rt, ringOf, I);
     // Traps (the guild lead, 2026-10-23: "maps should show traps as well"; see trapHex): the trigger circle faint underneath,
     // then a △ in the type's colour with the first letter of the named it can bring up ("!" when there is none). Spots follow
@@ -3572,6 +3749,51 @@
     miniTip('miniTgt', tgtA ? tgtA.a : 0, !!tgtA, tgtA ? 'Target ' + tgtA.name + ': ' + tgtA.label : '');
     miniTip('miniPet', petA ? petA.a : 0, !!petA, petA ? 'Pet ' + petA.name + ': ' + petA.label : '');
   }
+  // ── Targeted named mobs (the guild lead, 2026-11-13) ──
+  // 'spawns': a clear ring and the mob's name at every spot whose spawn list holds an enabled listed mob, even with Spawn points
+  //   off or past the Spawn height range. 'mobs': the mob ITSELF where a position is really known (your target, or a seen row's
+  //   position or trail inside HUNT_LIVE_MS): a filled disc and ring; where none is known its spawn points get a HOLLOW dashed
+  //   ring instead, so the mode is never empty and a position is never invented. Every other spawn dot is dimmed in the dot loop
+  //   (HUNT_DIM); nothing else on the map is. The purple of your target's aggro ring marks them (theme slot, no new colour).
+  var HUNT_DIM = 0.35;
+  function drawHunt(vis, mode, hids, now, rt, I, bossC, fontBoss) {
+    var C = S.cfg, SH = C.show, list = huntList(), want = {}, i, j;
+    var col = AGGRO_TARGET_COL || C.col.target;
+    list.forEach(function (e) { if (e.on !== false) want[e.k] = e.n; });
+    var live = mode === 'mobs' ? huntLivePos(list, S.p, S.seenBy, S.trails, now, rt) : {};
+    for (i = 0; i < vis.length; i++) {
+      var p = vis[i].p;
+      if (!hids[String(p.id)]) continue;
+      var names = [], npcs = p.npcs || [], seen = {};
+      for (j = 0; j < npcs.length; j++) {
+        var k = npcs[j] ? npcKey(npcs[j].name) : '';
+        if (want[k] && !seen[k] && !live[k]) { seen[k] = true; names.push(want[k]); }
+      }
+      if (!names.length) continue;   // 'mobs': every mob of this spot is marked where it stands, so the spot needs nothing
+      var kind = pointKind(p), x = vis[i].x, y = vis[i].y, r = (kind.raid ? 6.5 : kind.named ? 5.5 : 4.2) * I.dot;
+      ctx.globalAlpha = 1;
+      if (!SH.dots) {   // Spawn points switched off: the hunted spot still needs its dot
+        ctx.beginPath(); ctx.arc(x, y, r, 0, 6.2832); ctx.fillStyle = kind.raid ? C.col.raidTarget : kind.named ? C.col.named : C.col.dot; ctx.fill();
+        ctx.lineWidth = 1.2; ctx.strokeStyle = hexA(C.col.bg, 1); ctx.stroke();
+      }
+      ctx.beginPath(); ctx.arc(x, y, r + 6, 0, 6.2832); ctx.lineWidth = 2.6; ctx.strokeStyle = col;
+      if (mode === 'mobs') { ctx.setLineDash([4, 3]); ctx.stroke(); ctx.setLineDash([]); }   // hollow and dashed: no live position, this is only where it spawns
+      else { ctx.fillStyle = hexA(col, 0.18); ctx.fill(); ctx.stroke(); }
+      bossC.push({ text: names.slice(0, 2).join(', ') + (names.length > 2 ? '…' : '') + (mode === 'mobs' ? ' · spawn point' : ''), x: x + r + 8, y: y - r - 4, z: p.z, wx: p.x, wy: p.y,
+        col: col, tier: -1, align: 'left', font: fontBoss, tgt: true });
+    }
+    Object.keys(live).forEach(function (k) {
+      var m = live[k], q = wpt(m.x, m.y);
+      if (q[0] < -30 || q[0] > S.w + 30 || q[1] < -30 || q[1] > S.h + 30) return;
+      ctx.globalAlpha = 1;
+      ctx.beginPath(); ctx.arc(q[0], q[1], 5 * I.dot, 0, 6.2832); ctx.fillStyle = hexA(col, 0.9); ctx.fill();
+      ctx.lineWidth = 1.5; ctx.strokeStyle = hexA(C.col.bg, 1); ctx.stroke();
+      ctx.beginPath(); ctx.arc(q[0], q[1], 5 * I.dot + 4, 0, 6.2832); ctx.lineWidth = 2.4; ctx.strokeStyle = col; ctx.stroke();
+      bossC.push({ text: want[k] + (m.age > MOVE_FRESH_MS ? ' · ' + fmtDur(m.age) + ' ago' : ''), x: q[0] + 5 * I.dot + 8, y: q[1] + 5 * I.dot + 3, z: m.z != null ? m.z : null, wx: m.x, wy: m.y,
+        col: col, tier: -1, align: 'left', font: fontBoss, tgt: true });
+    });
+    ctx.globalAlpha = 1;
+  }
   // ── The pulse (FB-100): a steady ring and a ring that rings out from each pulsed spot, in the spot's timer colour ──
   // `vis` is the frame's visible points ({ p, x, y }); a spot off screen simply is not in it (the toast said so). Once the pulse is
   // over the state is dropped, and anyMoving() has stopped asking for frames.
@@ -3921,6 +4143,47 @@
         rowToggle(r, function () { toggleSpawn(w.pid, w.named); });
         box.appendChild(r);
       });
+    }
+    // Targeted named (n): the named mobs you have targeted in THIS zone, saved per character. Shown when there are some or the
+    // filter is on. Row click pulses the mob's spawn points; the toggle switches its highlight off without deleting it.
+    var hlist = !PART_TIMERS && S.hunt.key ? huntList() : null;
+    if (hlist && (hlist.length || S.cfg.huntMode !== 'off')) {
+      var hh = el('div', 'sec hunt'); hh.appendChild(el('span', null, 'Targeted named (' + hlist.length + ')'));
+      var hbtns = el('span', 'hbtns');
+      var hT = S.p && S.p.target, hCan = !!hT && huntTargetNpc(hT, S.p.pet);
+      var hadd = el('button', 'hb' + (hCan ? '' : ' dis'), '+ target'); hadd.type = 'button'; hadd.setAttribute('data-wp-interact', '');
+      hadd.title = hCan ? 'Add your current target to this list, named or not' : 'Target an NPC first';
+      hadd.addEventListener('click', huntAddTarget);
+      hbtns.appendChild(hadd);
+      var hconf = S.hunt.clearAt && Date.now() - S.hunt.clearAt < HUNT_CONFIRM_MS;
+      var hclr = el('button', 'hb', hconf ? 'sure?' : 'clear'); hclr.type = 'button'; hclr.setAttribute('data-wp-interact', '');
+      hclr.title = hconf ? 'Click again to empty this zone\'s list' : 'Empty this zone\'s list (click twice)';
+      hclr.addEventListener('click', function () {
+        if (!huntList().length) return;
+        if (S.hunt.clearAt && Date.now() - S.hunt.clearAt < HUNT_CONFIRM_MS) { S.hunt.clearAt = 0; huntPut([]); }
+        else { S.hunt.clearAt = Date.now(); renderSide(); }
+      });
+      hbtns.appendChild(hclr); hh.appendChild(hbtns); box.appendChild(hh);
+      hlist.forEach(function (e) {
+        var hr = el('div', 'trow hunt' + (e.on === false ? ' off' : '')); hr.setAttribute('data-wp-interact', '');
+        var hn = S.hunt.by[e.k] || [];
+        hr.title = 'Click: pulse its spawn points on the map';
+        hr.appendChild(el('span', 'nm', e.n));
+        var hb2 = el('span', 'tm hbtns');
+        var hon = el('button', 'hb', e.on === false ? 'off' : 'on'); hon.type = 'button'; hon.setAttribute('data-wp-interact', '');
+        hon.title = e.on === false ? 'Highlight this mob again' : 'Stop highlighting this mob (it stays on the list)';
+        hon.addEventListener('click', function (ev) { ev.stopPropagation(); huntPut(huntListToggle(huntList(), e.k)); });
+        var hx = el('button', 'hb', '✕'); hx.type = 'button'; hx.setAttribute('data-wp-interact', ''); hx.title = 'Remove from the list';
+        hx.addEventListener('click', function (ev) { ev.stopPropagation(); huntPut(huntListRemove(huntList(), e.k)); });
+        hb2.appendChild(hon); hb2.appendChild(hx); hr.appendChild(hb2);
+        hr.appendChild(el('span', 'src', hn.length ? hn.length + (hn.length === 1 ? ' spawn point' : ' spawn points') : 'no spawn point in this zone\'s data'));
+        hr.addEventListener('click', function () {
+          var ids = S.hunt.by[e.k] || [];
+          if (ids.length) sendAct('pulse', ids); else toast(e.n + ' has no spawn point in this zone\'s data');
+        });
+        box.appendChild(hr);
+      });
+      box.appendChild(el('div', 'hnote', 'Saved on this computer for ' + (S.p && S.p.self && S.p.self.name ? S.p.self.name : 'this character') + '.'));
     }
     var timers = ((P && P.timers) || []).filter(function (t) { return !S.watchBy[String(t.point_id)]; });
     var groups = mergeTimers(timers, now), folded = groups.some(function (g) { return g.n > 1; });
@@ -4299,6 +4562,7 @@
     document.getElementById('cfgOrient').value = C.orient; document.getElementById('cfgCompass').value = C.compass;
     var wm = document.getElementById('cfgWallMode'); wm.value = C.wallMode;
     document.getElementById('cfgPlanMode').value = planModeOf(PLAN_DATA, C);
+    document.getElementById('cfgHunt').value = huntMode(C.huntMode);
     var bg = document.getElementById('cfgBg'); bg.value = C.col.bg;
     var bgOwn = document.getElementById('cfgBgOwn'), bgA = document.getElementById('cfgBgA');
     bgOwn.checked = C.bgA != null; bgA.value = String(C.bgA != null ? C.bgA : 0.55); bgA.disabled = C.bgA == null;
@@ -4324,6 +4588,9 @@
   });
   document.getElementById('cfgPlanMode').addEventListener('change', function (e) {
     S.cfg.planMode = e.target.value === 'min' ? 'min' : 'full'; cfgCommit();
+  });
+  document.getElementById('cfgHunt').addEventListener('change', function (e) {
+    S.cfg.huntMode = huntMode(e.target.value); huntRecompute(); cfgCommit(); renderSide(); renderMap();
   });
   document.getElementById('cfgWallMode').addEventListener('change', function (e) {
     var v = e.target.value; S.cfg.wallMode = v === 'one' || v === 'layers' ? v : 'map'; cfgCommit();
