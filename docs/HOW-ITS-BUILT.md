@@ -6183,6 +6183,15 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   sets `S.view.rot` every frame (`updateRot` → `rotStep` → `headingRot`); `wpt` / `projectPx` / `unprojectPx` / `screenToServer` / `unturnPx`
   carry it, `headingVec(h, rot)` turns the arrows and slices, `drawCompass` draws the rose and/or edge letters (`cfg.compass`, `cardinalSpots`,
   `roseSpot`). Test: `test/map-heading-up.test.js`.
+- **Map: targeted named mobs** (2026-11-13, Mimic beta `31fe4062`, `map.html`; DECISIONS §578): a per-character, per-zone list of the named mobs the player has targeted,
+  in `localStorage` under `wp-map-hunt:<character>` as `{ "<zone short>": [{ k, n, at, on }] }` (60 mobs a zone, 60 zones; NOT in `S.cfg` or `wp-map-char:*`, which Reset and
+  the per-character snapshot rewrite). Recorded in `applyPayload` → `noteHunt` when the poll's target is an NPC (type 1 or unknown; never a player, corpse or your pet) whose
+  name matches a spawn row flagged `named` or `raid_target`; "+ target" adds any NPC by hand. Filter: `cfg.huntMode` `off | spawns | mobs` (⚙ → "Targeted named mobs",
+  `mapCfgDefaults` + `mergeMapCfg`). `spawns`: ring + name on every spot whose spawn list holds an enabled listed mob (`huntPointIds`, shown past the Spawn height range and
+  with Spawn points off), other spawn dots dimmed (`HUNT_DIM`). `mobs`: a mark where a position is really known (`huntLivePos`: your target, a seen row's `pos`, a trail's
+  last crumb, 60 s), else a dashed ring on its spawn points. Side panel section "Targeted named (n)" in `renderSide` (on/off, remove, clear with a second click, row click
+  pulses its points). The Timers pop-out neither records nor shows it. The agent's own `logsync.targets.json` (last 50 targets, 24 h) is a different store and is not read
+  here. Test: `test/map-hunt.test.js`. Not seen in a real Mimic window yet.
 - **Map: mini mode** (2026-11-09, Mimic beta draft, `map.html` `body.mini` + the "Mini map" script block, `main.js` `_mapMiniSize`): the map in a circle (`border-radius` clip on
   `#mapPane`) with twelve button dots on the rim (`#mini`, `.rd`, placed by CSS from `--mini-d` and each dot's `--a`), the zone name above, and a red N on the rim that rides to
   north (`syncMiniNorth`, written only when the angle moves; the canvas rose is skipped in mini). Each dot clicks its toolbar twin or flips the same `cfg` switch
