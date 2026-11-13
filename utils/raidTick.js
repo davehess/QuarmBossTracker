@@ -31,6 +31,19 @@ const TICK_SLOTS = [
 
 const RAID_DAYS = new Set(['sunday', 'wednesday', 'thursday']);
 
+// The slots for the guild's saved schedule (utils/guildSchedule.js): one an hour from the start, the last at or before the
+// end, none past midnight. With no saved row that is TICK_SLOTS above, slot for slot.
+const { getSchedule } = require('./guildSchedule');
+const _DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+function slotsFor(sch) {
+  const mins = [];
+  for (let m = sch.startMin; m <= sch.endMin && m < 24 * 60; m += 60) mins.push(m);
+  return mins.map((m, i) => ({
+    slot: i + 1, hour: Math.floor(m / 60), minute: m % 60,
+    description: `Tick ${i + 1} (${i === 0 ? 'Raid Start' : i === mins.length - 1 ? 'Raid End' : `${i} Hour`})`,
+  }));
+}
+
 // How long after the target minute a capture may still fire. The checker runs on
 // a 60s interval, so a window is needed at all; 5 minutes means a bot restarting
 // across the top of the hour still records the tick.
@@ -59,11 +72,13 @@ const MIN_NAMES = Math.max(1, Number(process.env.RAID_TICK_MIN_NAMES) || 5);
  * @returns the slot object, or null.
  */
 function dueSlotAt(parts) {
-  if (!parts || !RAID_DAYS.has(String(parts.dayOfWeek || '').toLowerCase())) return null;
+  const sch = getSchedule();
+  const dow = _DAY_NAMES.indexOf(String((parts && parts.dayOfWeek) || '').toLowerCase());
+  if (dow === -1 || !sch.days.has(dow)) return null;
   const hour = Number(parts.hour);
   const minute = Number(parts.minute);
   if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
-  return TICK_SLOTS.find(s =>
+  return slotsFor(sch).find(s =>
     s.hour === hour && minute >= s.minute && minute < s.minute + FIRE_WINDOW_MIN) || null;
 }
 
@@ -102,6 +117,6 @@ function rosterUnion(rows) {
 function worthRecording(nameCount) { return Number(nameCount) >= MIN_NAMES; }
 
 module.exports = {
-  TICK_SLOTS, RAID_DAYS, FIRE_WINDOW_MIN, MIN_NAMES,
+  TICK_SLOTS, RAID_DAYS, FIRE_WINDOW_MIN, MIN_NAMES, slotsFor,
   dueSlotAt, rosterUnion, worthRecording,
 };
