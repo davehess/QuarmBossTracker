@@ -304,7 +304,7 @@ describe('the motivating scenario — EQ moved a bag window after Studio loaded'
   it('with the changed-only gate removed, the same Save puts the bag back (the test can fail)', () => {
     // Mutation: write every window, as the old Save did. If this ever stops
     // reverting the bag, the assertion above has gone vacuous.
-    const gate = 'if (!all && !_windowChanged(w)) continue;';
+    const gate = 'if (!all && !_windowChanged(w) && !(w.noBlock && !w.zealBar)) continue;';
     expect(saveSrc).toContain(gate);
     const mutated = studioApi(saveSrc.replace(gate, ''));
     mutated.STATE.windows = loadWindows(mutated, UI, LOADED, '2560x1440');
@@ -312,6 +312,29 @@ describe('the motivating scenario — EQ moved a bag window after Studio loaded'
     fs.writeFileSync(path.join(eqDir, UI), EQ_SAVED);
     mainApi(userData)._applyUiKeyEdits(eqDir, mutated._buildSaveEdits().edits, null);
     expect(read(UI)).toContain('[Bag1]\r\nXPos2560x1440=500');     // reverted — what the bug did
+  });
+
+  // The guild lead, 2026-11-14: files copied over from a PC with another screen size "end up looking like this even
+  // after resaving in UI studio". The file had no place for most windows at this screen size, the game put those
+  // wherever it liked, and Save wrote only windows that had been moved, so re-saving wrote nothing.
+  it('Save gives a place to every window the file has none for at this screen size, moved or not', () => {
+    const api = studioApi(saveSrc);
+    api.STATE.tgtW = 1920; api.STATE.tgtH = 1080; api.STATE.srcW = 1920; api.STATE.srcH = 1080; api.STATE.srcSuffix = '1920x1080';
+    const win = (section, noBlock, extra) => ({ file: UI, section, hasWH: false, x: 10, y: 20, w: 200, h: 100, origX: 10, origY: 20, origW: 200, origH: 100, noBlock, ...extra });
+    api.STATE.windows = [win('HasPlace', false), win('NoPlace', true), win('RaidBars', true, { zealBar: 'raidbars' })];
+    const built = api._buildSaveEdits();
+    expect(built.all).toBe('');                                       // not a rescale: only what needs writing
+    expect(sectionsOf(built.edits)).toEqual(['NoPlace']);             // the untouched window WITH a place stays out; so do Zeal's bars (no per-size place)
+    expect(byKey(built.edits, 'NoPlace')).toEqual({ XPos1920x1080: 10, YPos1920x1080: 20 });   // and no invented size
+  });
+
+  it('a window with no place at the wanted size is read from the file\'s fullest other layout, the same one for every window', () => {
+    const api = studioApi(saveSrc);
+    const props = { XPos1360x768: '5', YPos1360x768: '6', XPos2559x1440: '70', YPos2559x1440: '80', XPos2560x1440: '90', YPos2560x1440: '100' };
+    expect(api._readPos(props, '1920x1080')).toMatchObject({ x: '5', used: '1360x768' });                            // no preference: first in the section
+    expect(api._readPos(props, '1920x1080', ['2559x1440', '2560x1440', '1360x768'])).toMatchObject({ x: '70', y: '80', used: '2559x1440' });
+    expect(api._readPos(props, '1920x1080', ['3440x1440', '2560x1440'])).toMatchObject({ x: '90', used: '2560x1440' });   // skips a size this window lacks
+    expect(api._readPos(props, '2560x1440', ['2559x1440'])).toMatchObject({ x: '90', used: '2560x1440' });               // the wanted size still wins
   });
 
   it('a Save with nothing changed writes no file and makes no backup', () => {

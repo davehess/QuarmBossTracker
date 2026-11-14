@@ -13985,8 +13985,10 @@ ipcMain.handle('ui-studio-defer-save', (_e, params) => {
     const edits     = _cleanUiKeyEdits(params?.edits);
     if (!character || !eqDir || !edits.length) return { ok: false, error: 'character + eqDir + edits required' };
     const charLower = character.toLowerCase();
-    // A queued layout switch stays: edits queued after it apply on top once it has run.
-    _uiDeferred = _uiDeferred.filter(e => !(String(e.character).toLowerCase() === charLower && e.eqDir === eqDir && e.kind !== 'layout'));
+    // A queued layout switch stays: edits queued after it apply on top once it has run. So does a queued bring-in
+    // (kind 'restore'): a Save made while one waits used to drop it without a word, and the setup never arrived.
+    _uiDeferred = _uiDeferred.filter(e => !(String(e.character).toLowerCase() === charLower && e.eqDir === eqDir
+      && e.kind !== 'layout' && e.kind !== 'restore'));
     _uiDeferred.push({
       character, eqDir, edits,
       tgtSuffix: params?.tgtSuffix || null,
@@ -14090,8 +14092,32 @@ function _eqResOf(files) {
   }
   return w > 0 && h > 0 ? { w, h } : null;
 }
+// A display's size in REAL pixels. Electron reports a display in Windows' scaled units: a 2560x1440 screen set to 150%
+// reads 1707x960, and UI Studio then offered that as the game's screen size. EverQuest counts real pixels. Windows can
+// convert exactly; elsewhere multiply by the scale and round to an even number (1707 x 1.5 is 2560.5).
+function _displayPixels(d) {
+  try {
+    if (process.platform === 'win32' && typeof screen.dipToScreenRect === 'function') {
+      const r = screen.dipToScreenRect(null, d.bounds);
+      if (r && r.width > 0 && r.height > 0) return { w: r.width, h: r.height };
+    }
+  } catch { /* fall through to the arithmetic */ }
+  const sf = d.scaleFactor > 0 ? d.scaleFactor : 1;
+  const even = (n) => Math.round(n * sf / 2) * 2;
+  return sf === 1 ? { w: d.size.width, h: d.size.height } : { w: even(d.size.width), h: even(d.size.height) };
+}
 function _primarySize() {
-  try { const d = screen.getPrimaryDisplay(); return { w: d.size.width, h: d.size.height }; } catch { return null; }
+  try { return _displayPixels(screen.getPrimaryDisplay()); } catch { return null; }
+}
+// The active skin's window sizes on this PC as { name: { w, h } }, for fitting a layout whose ini gives a window no
+// size (uiRestorePlan.fitLayout). Empty when the EQ folder or the skin cannot be read.
+function _uiSkinSizes(eqDir) {
+  const out = {};
+  try {
+    const scan = _scanSkinWindowSizes(eqDir, { withDefault: true });
+    for (const k of Object.keys((scan && scan.ok && scan.sizes) || {})) out[k] = { w: scan.sizes[k].cx, h: scan.sizes[k].cy };
+  } catch { /* no skin: sizes fall back to the stand-in */ }
+  return out;
 }
 function _thisMachine() { try { return require('os').hostname(); } catch { return null; } }
 function _uiEqDirs() {
@@ -14277,6 +14303,7 @@ function _uiWriteRestore(entry, backupTag) {
   const r = uiRestorePlan.buildRestore({
     backupFiles: entry.files, localFiles: local, character: entry.character,
     parts: _uiPartKeys(entry.parts), knownChars: _knownCharsIn(entry.eqDir, entry.character), target,
+    skinSizes: _uiSkinSizes(entry.eqDir),
   });
   const written = [];
   for (const [name, text] of Object.entries(r.writes || {})) {
@@ -14327,8 +14354,9 @@ ipcMain.handle('ui-restore-plan', async (_e, params) => {
     const local = _readUiBundle(eqDir, character);
     const knownChars = _knownCharsIn(eqDir, character);
     const target = await _uiTargetRes(local);
+    const skinSizes = _uiSkinSizes(eqDir);
     const parts = uiRestorePlan.PARTS.map(p => ({ key: p.key, label: p.label, scope: p.scope,
-      ...uiRestorePlan.compare(p.key, snap.files, local, character, { knownChars, target }) }));
+      ...uiRestorePlan.compare(p.key, snap.files, local, character, { knownChars, target, skinSizes }) }));
     // Mimic's own overlay layout: a part of its own when the backup holds one (no per-item compare; it is a layout).
     if (snap.overlays) {
       const n = Object.keys(snap.overlays.rects).length;
@@ -14336,7 +14364,8 @@ ipcMain.handle('ui-restore-plan', async (_e, params) => {
         summary: n + ' overlay' + (n === 1 ? '' : 's') + ', fitted to this PC\'s screens' });
     }
     const bl = _uiMainLayoutText(snap.files, character), ml = _uiMainLayoutText(local, character);
-    const fitted = bl && target ? uiRestorePlan.fitLayout(bl, target.w, target.h).text : null;
+    const fitted = bl && target
+      ? uiRestorePlan.fitLayout(bl, target.w, target.h, { source: uiRestorePlan.videoModeOf(snap.files), skinSizes }).text : null;
     return {
       ok: true,
       source: { machine: params?.machine ? String(params.machine).slice(0, 64) : null,
@@ -14564,10 +14593,8 @@ ipcMain.handle('ui-studio-list-displays', () => {
     const all = screen.getAllDisplays();
     const displays = all.map((d, i) => {
       const isPrimary = d.id === primary.id;
-      // size = full pixel resolution; workAreaSize subtracts taskbar etc.
-      // EQ renders fullscreen → use `size`, not `workAreaSize`.
-      const w = (d.size && d.size.width)  || d.workAreaSize.width;
-      const h = (d.size && d.size.height) || d.workAreaSize.height;
+      // The whole display (EQ renders fullscreen, so not workAreaSize), in REAL pixels: _displayPixels.
+      const { w, h } = _displayPixels(d);
       return {
         id: d.id,
         label: `Display ${i + 1}${isPrimary ? ' (primary)' : ''} — ${w}×${h}`,
@@ -14577,7 +14604,7 @@ ipcMain.handle('ui-studio-list-displays', () => {
       };
     });
     return {
-      primary: { w: primary.size.width, h: primary.size.height },
+      primary: _displayPixels(primary),
       displays,
     };
   } catch (err) {
