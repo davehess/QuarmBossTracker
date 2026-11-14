@@ -3,7 +3,7 @@
 import type { HeroCopy, HeroLinks, HeroMedia } from '@/lib/lab/fixtures/rm-first-screen';
 import { Btn, H1, LEAD, Lockup } from './parts';
 
-const FRAME = 'block h-44 w-full rounded-md border border-border bg-panel object-cover sm:h-52';
+const FRAME = 'block w-full rounded-md border border-border bg-panel object-contain';
 const LINK = 'inline-flex min-h-11 items-center text-sm text-blue underline';
 
 export default function HeroC({ copy, links, media }: { copy: HeroCopy; links: HeroLinks; media: HeroMedia }) {
@@ -15,7 +15,7 @@ export default function HeroC({ copy, links, media }: { copy: HeroCopy; links: H
       <div className="mt-6 grid gap-4 md:grid-cols-2">
         <section aria-labelledby="rm-door-raid" className="flex flex-col rounded-md border border-border bg-panel p-4">
           <h2 id="rm-door-raid" className="m-0 text-xl text-text">{copy.raidTitle}</h2>
-          <img src={media.dps.src} alt={media.dps.alt} width={media.dps.w} height={media.dps.h} loading="eager" className={`${FRAME} mt-3 object-left-top`} />
+          <img src={media.dps.src} alt={media.dps.alt} width={media.dps.w} height={media.dps.h} loading="eager" className={`${FRAME} mt-3 h-auto`} />
           <p className="m-0 mt-3 text-sm leading-6 text-text">{copy.raidLine}</p>
           <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-1 pt-4">
             <Btn gold href={links.download}>{copy.download}</Btn>
@@ -24,10 +24,10 @@ export default function HeroC({ copy, links, media }: { copy: HeroCopy; links: H
         </section>
         <section aria-labelledby="rm-door-guild" className="flex flex-col rounded-md border border-border bg-panel p-4">
           <h2 id="rm-door-guild" className="m-0 text-xl text-text">{copy.guildTitle}</h2>
-          <img src={media.cc.src} alt={media.cc.alt} width={media.cc.w} height={media.cc.h} loading="eager" className={`${FRAME} mt-3 object-top`} />
+          <img src={media.cc.src} alt={media.cc.alt} width={media.cc.w} height={media.cc.h} loading="eager" className={`${FRAME} mt-3 h-64`} />
           <p className="m-0 mt-3 text-sm leading-6 text-text">{copy.guildLine}</p>
           <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-1 pt-4">
-            <Btn gold href={links.demo}>{copy.demoShort}</Btn>
+            <Btn href={links.demo}>{copy.demoShort}</Btn>
             <a href={links.register} className={LINK}>{copy.register}</a>
           </div>
         </section>

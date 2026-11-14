@@ -155,6 +155,7 @@ function cmpVer(a: string | null | undefined, b: string | null | undefined): num
 type EncounterDetail = {
   id: string;
   started_at: string;
+  ended_at: string | null;
   duration_sec: number | null;
   total_damage: number;
   total_dps: number;
@@ -189,7 +190,7 @@ async function load(id: string) {
     const { data: enc, error: encErr } = await sb
       .from('encounters')
       .select(`
-        id, started_at, duration_sec, total_damage, total_dps, zone_short, npc_id,
+        id, started_at, ended_at, duration_sec, total_damage, total_dps, zone_short, npc_id,
         classification, is_wipe, classification_reason, classification_by, discord_msg_link,
         eqemu_npc_types ( id, name, zone_short, hp ),
         encounter_players ( character_name, total_damage, dps, duration_sec, rank, has_pets )
@@ -453,7 +454,7 @@ export default async function EncounterDetailPage({ params, searchParams }: { pa
   const { id } = await params;
   const view = (await searchParams)?.v;
   const { data: { user } } = await supabaseServer().auth.getUser();
-  if (!user) redirect(`/auth/signin?next=/parses/${encodeURIComponent(id)}`);
+  if (!user) redirect(`/auth/signin?next=${view === 'a' ? encodeURIComponent(`/parses/${id}?v=a`) : `/parses/${encodeURIComponent(id)}`}`);
   await requireMember(user.id);
 
   const data = await load(id);
@@ -654,7 +655,7 @@ export default async function EncounterDetailPage({ params, searchParams }: { pa
   if (view === 'a') {
     const v = toResultView({
       boss: bossName, zone: zoneLong, whenLabel: `${dayLabel(dispDate, tz)} ${fmtTime(enc.started_at, tz)}`,
-      isWipe: enc.is_wipe, classification: enc.classification, startedAt: enc.started_at, durationSec: enc.duration_sec,
+      isWipe: enc.is_wipe, classification: enc.classification, endedAt: enc.ended_at, startedAt: enc.started_at, durationSec: enc.duration_sec,
       totalDamage: enc.total_damage, totalDps: enc.total_dps, players: players, classOf: (n) => whoMap.get(n.toLowerCase())?.class ?? null,
       deaths, contribs, events: raidEvents, loot,
     });

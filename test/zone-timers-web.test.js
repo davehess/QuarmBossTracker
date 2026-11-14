@@ -103,6 +103,8 @@ describe('the page', () => {
     expect(src.match(/searchParams\)\?\./g)).toHaveLength(1);     // the query is read once, for ?v=a
     expect(src).toMatch(/const nextUp = \(await searchParams\)\?\.v === 'a';/);
     expect(src).not.toMatch(/v === 'b'/);
+    // nextUp is declared once, used for the sign-in redirect and for the one extra render: a third use is a new branch
+    expect(src.match(/\bnextUp\b/g)).toHaveLength(3);
     // read in parallel with the boards, so the page is no slower for it
     expect(src).toMatch(/Promise\.all\(\[loadZoneTimers\(\), loadBoards\(\)\]\)/);
   });

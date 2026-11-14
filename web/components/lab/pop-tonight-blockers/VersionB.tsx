@@ -21,7 +21,7 @@ export default function VersionB({ view, mine }: { view: BlockersView; mine: Min
       <header className="rounded-lg border border-border bg-panel p-3">
         <h2 className="text-sm font-semibold text-text">Tonight: {view.zones.map((z) => z.zone).join(' · ')}</h2>
         <p className={`mt-1 text-xl font-semibold ${n ? 'text-red' : 'text-green'}`}>
-          {n ? `${n} of ${view.raiders} cannot enter every target` : 'Everyone can enter all targets'}
+          {n ? `${n} of ${view.raiders} are missing a preflag for tonight` : 'Everyone has every preflag for tonight'}
         </p>
       </header>
       <div role="tablist" className="flex gap-2">
@@ -57,7 +57,7 @@ export default function VersionB({ view, mine }: { view: BlockersView; mine: Min
               )}
             </div>
           ))}
-          <p className="text-sm"><Link href="/pop/raid/me" className="text-blue hover:underline">Open the full list of steps</Link></p>
+          <p className="text-sm"><Link href="/pop/raid/me" className="inline-flex min-h-[40px] items-center text-blue hover:underline">Open the full list of steps</Link></p>
         </div>
       )}
     </div>

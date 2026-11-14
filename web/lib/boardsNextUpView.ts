@@ -51,14 +51,19 @@ export function toNextUpBosses(rows: readonly BoardRowIn[] | null | undefined): 
 export const isUp = (b: NextUpBoss, now: number): boolean => b.opensAtMs === null || b.opensAtMs <= now;
 export const isSoon = (b: NextUpBoss, now: number): boolean => !isUp(b, now) && (b.opensAtMs as number) - now < SOON_MS;
 
-/** Up now first (by name), then soonest first. Returns a new array. */
+const byName = (a: NextUpBoss, b: NextUpBoss): number => a.name.localeCompare(b.name, 'en');
+
+/** Split into bosses with a running timer (soonest first) and available ones (by name). Two new arrays. */
+export function splitNextUp(bosses: readonly NextUpBoss[], now: number): { timers: NextUpBoss[]; available: NextUpBoss[] } {
+  const timers = bosses.filter((b) => !isUp(b, now)).sort((a, b) => (a.opensAtMs as number) - (b.opensAtMs as number) || byName(a, b));
+  const available = bosses.filter((b) => isUp(b, now)).sort(byName);
+  return { timers, available };
+}
+
+/** Running timers first, soonest first; available bosses after, by name. Returns a new array. */
 export function sortNextUp(bosses: readonly NextUpBoss[], now: number): NextUpBoss[] {
-  return [...bosses].sort((a, b) => {
-    const ua = isUp(a, now), ub = isUp(b, now);
-    if (ua !== ub) return ua ? -1 : 1;
-    if (!ua && a.opensAtMs !== b.opensAtMs) return (a.opensAtMs as number) - (b.opensAtMs as number);
-    return a.name.localeCompare(b.name);
-  });
+  const { timers, available } = splitNextUp(bosses, now);
+  return [...timers, ...available];
 }
 
 export function summarize(bosses: readonly NextUpBoss[], now: number): { total: number; up: number; soon: number } {

@@ -282,6 +282,7 @@ export default function SiteHeader(props: {
   showMe: boolean; showAdmin: boolean; authBadge: ReactNode; tour: ReactNode; search: ReactNode;
 }) {
   const [hdr, setHdr] = useState<string | null>(null);
+  const hdrPath = usePathname(); // re-read ?hdr= after each in-site navigation (the query hook would break static pages)
   useEffect(() => {
     try {
       const q = new URLSearchParams(window.location.search).get('hdr');
@@ -289,7 +290,7 @@ export default function SiteHeader(props: {
       else if (q === '1' || q === 'a' || q === 'b' || q === 'c') sessionStorage.setItem(HDR_KEY, q);
       setHdr(sessionStorage.getItem(HDR_KEY));
     } catch { /* storage blocked: stay on the current bar */ }
-  }, []);
+  }, [hdrPath]);
   if (hdr === '1' || hdr === 'a' || hdr === 'b' || hdr === 'c') {
     return (
       <HeaderDraft variant={hdr === 'b' ? 'b' : hdr === 'c' ? 'c' : 'a'} groups={GROUPS} showMe={props.showMe}

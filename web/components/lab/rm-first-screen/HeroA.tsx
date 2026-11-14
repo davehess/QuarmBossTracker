@@ -20,7 +20,7 @@ export default function HeroA({ copy, links, media }: { copy: HeroCopy; links: H
   return (
     <section id="top" aria-label="Raid Mimic" data-hero="a" className="mx-auto max-w-5xl px-1 pb-10 pt-4 sm:pt-6">
       <Lockup />
-      <div className="mt-6 grid items-center gap-7 lg:grid-cols-[minmax(0,1fr)_minmax(0,25rem)] lg:gap-12">
+      <div className="mt-6 grid gap-7 lg:items-start lg:grid-cols-[minmax(0,1fr)_minmax(0,25rem)] lg:gap-12">
         <div>
           <h1 className={H1}>{copy.headline}</h1>
           <p className={LEAD}>{copy.sentence}</p>

@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { type CalmRaider, type CalmView, hpTone } from '@/lib/raidRosterCalmView';
-import { AlertStrip, HeaderLine, HP_TEXT, classAbbr, detailFor, hpLabel, type RenderDetail } from './shared';
+import { AlertStrip, HeaderLine, HP_TEXT, classAbbr, detailFor, hpLabel, hpSize, type RenderDetail } from './shared';
 
 // Version A, "Alert first". Header line, a red strip only when something is wrong, then groups with four
 // columns per raider: name, class, HP, and at most one chip (a curse beats a missing buff).
@@ -28,7 +28,7 @@ export default function AlertFirst({
             <section key={g.label} className="overflow-hidden rounded-lg border border-border bg-panel">
               <h2 className="border-b border-border px-3 py-1.5 text-sm text-gold">{g.label}</h2>
               <ul className="divide-y divide-border/50">
-                {g.raiders.map((r) => <Row key={r.name} r={r} open={open === r.name} onToggle={() => toggle(r.name)} renderDetail={renderDetail} />)}
+                {g.raiders.map((r) => <Row key={r.name} r={r} open={open === r.name} onToggle={() => toggle(r.name)} onClose={() => setOpen(null)} renderDetail={renderDetail} />)}
               </ul>
             </section>
           ))}
@@ -38,7 +38,7 @@ export default function AlertFirst({
   );
 }
 
-function Row({ r, open, onToggle, renderDetail }: { r: CalmRaider; open: boolean; onToggle: () => void; renderDetail?: RenderDetail }) {
+function Row({ r, open, onToggle, onClose, renderDetail }: { r: CalmRaider; open: boolean; onToggle: () => void; onClose: () => void; renderDetail?: RenderDetail }) {
   const tone = hpTone(r.hp);
   const bad = !!r.curse || r.dead;
   const chip = r.curse
@@ -52,12 +52,12 @@ function Row({ r, open, onToggle, renderDetail }: { r: CalmRaider; open: boolean
       >
         <span className={'truncate ' + (r.dead ? 'text-red' : 'text-text') + (r.me ? ' font-bold' : '')}>{r.name}</span>
         <span className="text-text">{classAbbr(r.cls)}</span>
-        <b className={'text-right text-lg tabular-nums ' + HP_TEXT[tone]}>{hpLabel(r)}</b>
+        <b className={'text-right tabular-nums ' + hpSize(r) + ' ' + HP_TEXT[tone]}>{hpLabel(r)}</b>
         <span className="col-span-3 row-start-2 min-h-0 empty:hidden sm:col-span-1 sm:row-start-auto">
           {chip ? <span className={'inline-block rounded border px-1.5 text-xs ' + chip.cls}>{chip.text}</span> : null}
         </span>
       </button>
-      {open ? detailFor(renderDetail, r) : null}
+      {open ? detailFor(renderDetail, r, onClose) : null}
     </li>
   );
 }

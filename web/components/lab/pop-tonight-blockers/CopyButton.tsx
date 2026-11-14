@@ -11,7 +11,7 @@ export default function CopyButton({ text, label = 'Copy names' }: { text: strin
   return (
     <button
       type="button" onClick={go}
-      className="min-h-[32px] rounded border border-blue px-3 py-1 text-xs text-blue hover:bg-blue/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue"
+      className="min-h-[40px] rounded border border-blue px-3 py-1 text-xs text-blue hover:bg-blue/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue"
     >
       {state === 'ok' ? 'Copied' : state === 'fail' ? 'Copy failed' : label}
     </button>

@@ -98,7 +98,7 @@ describe('the page', () => {
     expect(preflags).toMatch(/!NOT_GOING\.test\(String\(s\.status \|\| ''\)\) && !NOT_GOING\.test\(String\(s\.class_name \|\| ''\)\)/);
   });
   it('is members only and carries the beta tag', () => {
-    expect(page).toMatch(/redirect\('\/auth\/signin\?next=\/pop\/raid'\)/);
+    expect(page).toMatch(/redirect\('\/auth\/signin\?next=' \+ encodeURIComponent\(alt === 'a' \? '\/pop\/raid\?v=a' : '\/pop\/raid'\)\)/);
     expect(page).toMatch(/<NewPageTag/);
     expect(page).toMatch(/dynamic = 'force-dynamic'/);
   });

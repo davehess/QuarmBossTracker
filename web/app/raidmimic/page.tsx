@@ -71,7 +71,7 @@ export default async function RaidmimicPage() {
   }
   // Signed out: ?hero=a|b|c shows a first-screen draft instead (HeroSwitch; no ?hero= leaves `top` exactly as it is).
   if (!signedIn) {
-    top = <HeroSwitch links={{ download: DOWNLOAD_URL, demo: onHost ? '/demo' : RAIDMIMIC_DEMO_PATH, setup: ctx.setup, register: ctx.interest }}>{top}</HeroSwitch>;
+    top = <HeroSwitch enabled={!onHost} links={{ download: DOWNLOAD_URL, demo: onHost ? '/demo' : RAIDMIMIC_DEMO_PATH, setup: ctx.setup, register: ctx.interest }}>{top}</HeroSwitch>;
   }
   // The stage is outside the width cap so it can span the viewport; the page under it is a reading column. No query is read:
   // a raidmimic host drops every one in the middleware, and the Wolf Pack hosts show the same page.

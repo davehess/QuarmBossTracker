@@ -32,7 +32,7 @@ export default function HeroB({ copy, links, media }: { copy: HeroCopy; links: H
         ) : (
           <div className="grid gap-3">
             <figure className="m-0"><Shot shot={media.dps} eager /><figcaption className="mt-1 text-xs text-dim">{media.dps.label}</figcaption></figure>
-            <figure className="m-0"><Shot shot={media.stats} eager /><figcaption className="mt-1 text-xs text-dim">{media.stats.label}</figcaption></figure>
+            <figure className="m-0 hidden sm:block"><Shot shot={media.stats} eager /><figcaption className="mt-1 text-xs text-dim">{media.stats.label}</figcaption></figure>
           </div>
         )}
       </div>

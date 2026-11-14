@@ -2,7 +2,7 @@
 // (components/lab/parse-result-first). No database, no request: the page hands its own data in.
 // The design-lab draft (/lab/parse-result-first) uses the same view type with made-up data.
 
-export type ResultState = 'killed' | 'wipe' | 'unknown';
+export type ResultState = 'killed' | 'wipe' | 'unknown' | 'open';
 export type ViewRole = 'tank' | 'heal' | 'damage';
 
 export type ResultPlayer = { rank: number; name: string; cls: string | null; damage: number; dps: number; pct: number };
@@ -27,6 +27,8 @@ export type ResultView = {
   mine: string[];
   /** Which panel opens first in the role-first version. */
   role: ViewRole;
+  /** False when the detailed log is gone (the bot deletes it after 7 days): deaths, tank and heal are then unknown, not empty. */
+  detailKept: boolean;
 };
 
 export type ViewInput = {
@@ -35,6 +37,8 @@ export type ViewInput = {
   whenLabel: string;
   isWipe: boolean | null;
   classification: string | null;
+  /** encounters.ended_at: set only when a kill was confirmed. */
+  endedAt: string | null;
   startedAt: string;
   durationSec: number | null;
   totalDamage: number | null;
@@ -97,9 +101,11 @@ export function toResultView(i: ViewInput): ResultView {
   };
   const tanks = new Map<string, { name: string; hits: number; taken: number; avoided: number }>();
   const healers = new Map<string, { name: string; healed: number; ticks: number }>();
+  // defenders holds every defender, the boss and its adds included: keep only this fight's player rows.
+  const playerNames = new Set(sorted.map((p) => p.character_name.toLowerCase()));
   for (const c of i.contribs) {
     for (const d of c.raw_parse?.defenders ?? []) {
-      if (!d.name || !(d.damageTaken && d.damageTaken > 0)) continue;
+      if (!d.name || !playerNames.has(d.name.toLowerCase()) || !(d.damageTaken && d.damageTaken > 0)) continue;
       const avoided = (d.misses ?? 0) + (d.dodges ?? 0) + (d.parries ?? 0) + (d.ripostes ?? 0) + (d.blocks ?? 0) + (d.invulns ?? 0);
       const prev = tanks.get(d.name);
       if (!prev || d.damageTaken > prev.taken) tanks.set(d.name, { name: d.name, hits: d.hits ?? 0, taken: d.damageTaken, avoided });
@@ -111,7 +117,7 @@ export function toResultView(i: ViewInput): ResultView {
     }
   }
   const mine = (i.mine ?? []).filter(Boolean);
-  const state: ResultState = i.isWipe ? 'wipe' : i.classification ? 'unknown' : 'killed';
+  const state: ResultState = i.isWipe ? 'wipe' : i.classification ? 'unknown' : i.endedAt ? 'killed' : 'open';
   return {
     boss: i.boss, zone: i.zone, whenLabel: i.whenLabel, state, bossHpLeftPct: null,
     durationSec: dur, totalDamage: total, raidDps: i.totalDps && i.totalDps > 0 ? i.totalDps : dur ? total / dur : 0,
@@ -124,6 +130,7 @@ export function toResultView(i: ViewInput): ResultView {
     contributors: i.contribs.map((c) => ({ name: c.contributor_character ?? '(anonymous)', damage: c.total_damage })),
     mine,
     role: viewerRole(mine, players),
+    detailKept: i.contribs.some((c) => c.raw_parse != null),
   };
 }
 

@@ -14,7 +14,7 @@ export default function FoldedSections({ bosses, order, labels, nowMs }: { bosse
           <section key={e} className="bg-panel border border-border rounded-lg p-4">
             <div className="flex items-center justify-between gap-3 text-base font-semibold text-text">
               <span><span aria-hidden className="mr-2 text-xs text-dim">▶</span>{labels[e] ?? e}</span>
-              <span className="text-xs font-normal text-text"><span className="text-green">{up}</span> of {list.length} available</span>
+              <span className="text-xs font-normal text-text"><span className={up > 0 ? 'text-green' : 'text-text'}>{up}</span> of {list.length} available</span>
             </div>
           </section>
         );

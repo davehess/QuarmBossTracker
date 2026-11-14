@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { hpTone, type CalmAlert, type CalmRaider, type CalmView, type HpTone } from '@/lib/raidRosterCalmView';
 
 // Pieces the three Raid HQ versions share: the one-line header, the red alert strip, a raider's detail.
-export type RenderDetail = (r: CalmRaider) => React.ReactNode;
+export type RenderDetail = (r: CalmRaider, close: () => void) => React.ReactNode;
 
 const ABBR: Record<string, string> = {
   warrior: 'WAR', cleric: 'CLR', paladin: 'PAL', ranger: 'RNG', 'shadow knight': 'SHD', druid: 'DRU', monk: 'MNK',
@@ -15,7 +15,9 @@ export const classAbbr = (c: string | null) => (c ? ABBR[c.toLowerCase()] ?? c.s
 export const HP_TEXT: Record<HpTone, string> = {
   dead: 'text-red', crit: 'text-red', hurt: 'text-orange', ok: 'text-text', none: 'text-dim',
 };
-export const hpLabel = (r: CalmRaider) => (r.dead ? 'dead' : r.hp == null ? '--' : r.hp + '%');
+/** HP number size: text-lg only when the raider is hurt or worse, so the alert strip stays the loudest thing. */
+export const hpSize = (r: CalmRaider) => (hpTone(r.hp) === 'ok' || hpTone(r.hp) === 'none' ? 'text-base' : 'text-lg');
+export const hpLabel =(r: CalmRaider) => (r.dead ? 'dead' : r.hp == null ? '--' : r.hp + '%');
 
 const INVITE_TEXT = { green: 'text-green', blue: 'text-blue', orange: 'text-orange' } as const;
 
@@ -30,12 +32,17 @@ export function HeaderLine({ view, fullViewHref }: { view: CalmView; fullViewHre
           <span className="text-dim">Leader </span>
           <b className="text-gold">{view.leader ?? 'none yet'}</b>
         </span>
-        <button
-          type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)}
-          className="text-blue hover:underline"
-        >
-          Mimic {view.mimic.on} of {view.mimic.total}{off > 0 ? (open ? ' (hide)' : ' (who is not)') : ''}
-        </button>
+        <span className="inline-flex min-h-[40px] items-center gap-1">
+          <span className="text-text">Mimic {view.mimic.on} of {view.mimic.total}</span>
+          {off > 0 ? (
+            <button
+              type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)}
+              className="inline-flex min-h-[40px] items-center text-blue hover:underline"
+            >
+              {open ? '· hide' : '· ' + off + ' are not'}
+            </button>
+          ) : null}
+        </span>
         <span className={INVITE_TEXT[view.invite.tone]}>{view.invite.text}</span>
         {fullViewHref ? <a href={fullViewHref} className="ml-auto text-blue hover:underline">Full view</a> : null}
       </div>
@@ -56,12 +63,13 @@ export function AlertStrip({ alerts, onPick }: { alerts: CalmAlert[]; onPick?: (
   if (alerts.length === 0) return null;
   return (
     <div role="alert" className="rounded-lg border-2 border-red bg-red/15 px-3 py-2">
-      <ul className="flex flex-wrap gap-x-5 gap-y-1 text-base font-bold text-red">
+      <ul className="flex flex-wrap gap-x-5 gap-y-0 text-lg font-bold text-red">
         {alerts.map((a) => (
-          <li key={a.kind + a.who}>
-            {ALERT_LABEL[a.kind]}{' '}
-            <button type="button" onClick={() => onPick?.(a.who)} className="underline decoration-red/60 underline-offset-2">{a.who}</button>
+          <li key={a.kind + a.who} className="flex min-h-[40px] items-center">
+            <span>{ALERT_LABEL[a.kind]}{' '}
+            <button type="button" onClick={() => onPick?.(a.who)} className="inline-flex min-h-[40px] items-center px-1 underline decoration-red/60 underline-offset-2">{a.who}</button>
             {a.kind === 'dead' ? '' : <span className="font-normal"> {a.what}</span>}
+            </span>
           </li>
         ))}
       </ul>
@@ -88,4 +96,4 @@ export function DefaultDetail({ r }: { r: CalmRaider }) {
   );
 }
 
-export const detailFor = (render: RenderDetail | undefined, r: CalmRaider) => (render ? render(r) : <DefaultDetail r={r} />);
+export const detailFor = (render: RenderDetail | undefined, r: CalmRaider, close: () => void) => (render ? render(r, close) : <DefaultDetail r={r} />);

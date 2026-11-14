@@ -20,13 +20,13 @@ export default function VersionB({ v, linkNames }: { v: ResultView; linkNames?: 
       <ResultStrip v={v} />
       <YouLine v={v} />
       <div className="sticky top-0 z-10 -mx-1 bg-bg px-1 pb-1 pt-1">
-        <div role="tablist" aria-label="Fight detail" className="flex overflow-x-auto rounded-lg border border-border bg-panel">
+        <div role="tablist" aria-label="Fight detail" className="grid grid-cols-3 overflow-hidden rounded-lg sm:flex border border-border bg-panel">
           {TABS.map((t) => {
             const on = t.key === cur.key;
             const n = count(t.key);
             return (
               <button key={t.key} type="button" role="tab" aria-selected={on} onClick={() => pick(t.key)}
-                className={`min-h-[44px] shrink-0 border-b-2 px-4 text-sm ${on ? 'border-blue font-bold text-text' : 'border-transparent text-text hover:bg-bg'}`}>
+                className={`min-h-[44px] border-b-2 px-2 text-sm sm:flex-1 sm:px-4 ${on ? 'border-blue font-bold text-text' : 'border-transparent text-text hover:bg-bg'}`}>
                 {t.label}
                 {n != null ? <span className={`ml-1.5 text-xs ${t.key === 'deaths' && n > 0 ? 'text-red' : 'text-dim'}`}>{n}</span> : null}
               </button>

@@ -142,7 +142,7 @@ export default function HeaderDraft(p: HeaderDraftProps) {
 
   // ── pieces ──
   const brand = (
-    <Link href="/" onClick={stay} aria-label="WolfPack.quest, home" className="flex shrink-0 items-center gap-2 no-underline">
+    <Link href="/" onClick={stay} aria-label="WolfPack.quest, home" className={`flex shrink-0 items-center gap-2 no-underline ${phone ? 'min-h-10 min-w-10 justify-center' : ''}`}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src="/mimic-logo.png" alt="" width={30} height={30} className="h-7 w-7 rounded-md sm:h-[30px] sm:w-[30px]" />
       {size === 'wide' && !folded && (
@@ -164,7 +164,7 @@ export default function HeaderDraft(p: HeaderDraftProps) {
   })();
 
   const doors = (
-    <nav aria-label="Sections" className="flex shrink-0 items-center gap-1 sm:gap-1.5">
+    <nav aria-label="Sections" className="flex min-w-0 items-center gap-1 sm:shrink-0 sm:gap-1.5">
       {p.groups.map((g) => {
         const on = open?.kind === 'group' && open.id === g.id;
         return (
@@ -176,7 +176,7 @@ export default function HeaderDraft(p: HeaderDraftProps) {
         );
       })}
       <Link href="/me" onClick={stay} className={doorCls(isOn('/me'))}>/me</Link>
-      {p.showAdmin && <Link href="/admin" onClick={stay} className={doorCls(isOn('/admin'))}>Admin</Link>}
+      {p.showAdmin && !phone && <Link href="/admin" onClick={stay} className={doorCls(isOn('/admin'))}>Admin</Link>}
     </nav>
   );
 
@@ -197,14 +197,14 @@ export default function HeaderDraft(p: HeaderDraftProps) {
   const jumpField = (
     <input ref={input} value={q} role="combobox" aria-expanded={open?.kind === 'jump'} aria-controls="hdr-jump"
            aria-label="Jump to a page" autoComplete="off" spellCheck={false}
-           placeholder={phone ? 'Jump to a page' : 'Jump to a page (press /)'}
+           placeholder="Jump to a page"
            onChange={(e) => { setQ(e.target.value); setActive(0); setOpen({ kind: 'jump' }); }}
            onFocus={() => setOpen({ kind: 'jump' })}
            onKeyDown={(e) => {
              const n = hits.length;
              if (e.key === 'ArrowDown' && n) { e.preventDefault(); setActive((a) => (a + 1) % n); }
              else if (e.key === 'ArrowUp' && n) { e.preventDefault(); setActive((a) => (a + n - 1) % n); }
-             else if (e.key === 'Enter' && hits[active] && !lab) { router.push(hits[active].href); setOpen(null); setQ(''); input.current?.blur(); }
+             else if (e.key === 'Enter' && q.trim() && hits[active] && !lab) { router.push(hits[active].href); setOpen(null); setQ(''); input.current?.blur(); }
            }}
            className={`min-w-0 flex-1 rounded border border-border bg-panel px-3 ${h} text-sm text-text placeholder:text-text focus:border-blue focus:outline-none sm:max-w-xl`} />
   );
@@ -236,6 +236,7 @@ export default function HeaderDraft(p: HeaderDraftProps) {
     <div id="hdr-account" className={`${panelCls} ${panelPos('right', 'w-[20rem]')}`}>
       <div className="p-2">
         {p.showMe && p.accountName && <div className="px-3 py-1 text-xs text-dim">Signed in as {p.accountName}</div>}
+        {phone && p.showAdmin && <Link href="/admin" onClick={stay} className={rowCls(isOn('/admin'))}><span className="text-sm">Admin</span></Link>}
         <Link href="/feedback" onClick={stay} className={rowCls(isOn('/feedback'))}><span className="text-sm">Feedback</span></Link>
         <a href="https://wolfpack.opendkp.com" target="_blank" rel="noreferrer" className={rowCls(false)}><span className="text-sm">OpenDKP (opens in a new tab)</span></a>
         {p.showMe && <Link href="/test-server" onClick={stay} className={rowCls(isOn('/test-server'))}><span className="text-sm">Test server</span></Link>}
@@ -277,7 +278,7 @@ export default function HeaderDraft(p: HeaderDraftProps) {
                 <div className="mb-2">
                   <div className="px-3 py-1 text-xs text-dim">Recent</div>
                   {rec.map((pg) => (
-                    <Link key={pg.href} href={pg.href} onClick={stay} className={`${rowCls(false)} !flex-row !items-center justify-between gap-3`}>
+                    <Link key={pg.href} href={pg.href} onClick={stay} className={`${rowCls(false)} !flex-row !items-center justify-between gap-3 !pr-3`}>
                       <span className="text-sm">{pg.label}</span><span className="text-xs text-dim">{pg.group}</span>
                     </Link>
                   ))}
@@ -294,6 +295,7 @@ export default function HeaderDraft(p: HeaderDraftProps) {
             </>
           )}
         </div>
+        {p.search ? <div className="border-t border-border p-2 [&>*]:!w-full">{p.search}</div> : null}
       </div>
     );
   })();

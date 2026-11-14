@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, stripJs } from './_source-slice.js';
 import {
-  toNextUpBosses, sortNextUp, summarize, matchesQuery, fmtWindow, groupExpansions, SOON_MS,
+  toNextUpBosses, sortNextUp, splitNextUp, summarize, matchesQuery, fmtWindow, groupExpansions, SOON_MS,
 } from '../web/lib/boardsNextUpView.ts';
 import { LAB_ROWS, LAB_NOW, LAB_EXPANSIONS } from '../web/lib/lab/fixtures/boards-next-up.ts';
 import { draft } from '../web/lib/lab/drafts/boards-next-up.ts';
@@ -31,8 +31,26 @@ describe('toNextUpBosses', () => {
 
 describe('sorting and counts', () => {
   const bosses = toNextUpBosses([row('far', 3000), row('soon', 12), row('upB', -5), row('upA', null), row('mid', 400)]);
-  it('puts up-now first, then soonest', () => {
-    expect(sortNextUp(bosses, NOW).map((b) => b.id)).toEqual(['upA', 'upB', 'soon', 'mid', 'far']);
+  it('puts running timers first, soonest first, then available bosses by name', () => {
+    expect(sortNextUp(bosses, NOW).map((b) => b.id)).toEqual(['soon', 'mid', 'far', 'upA', 'upB']);
+  });
+  it('with 250 available and 9 timers the first row is the soonest timer', () => {
+    const rows = [];
+    for (let i = 0; i < 250; i++) rows.push(row('a' + String(i).padStart(3, '0'), i % 2 ? null : -i));
+    for (let i = 0; i < 9; i++) rows.push(row('t' + i, 600 - i * 50));
+    const all = toNextUpBosses(rows);
+    const { timers, available } = splitNextUp(all, NOW);
+    expect(timers).toHaveLength(9);
+    expect(available).toHaveLength(250);
+    expect(sortNextUp(all, NOW)[0].id).toBe('t8');
+    expect(sortNextUp(all, NOW)[9].id).toBe('a000');
+  });
+  it('sorts names with a pinned locale, not the machine default', () => {
+    const src = stripJs(fs.readFileSync(path.join(ROOT, 'web/lib/boardsNextUpView.ts'), 'utf8')) +
+      stripJs(fs.readFileSync(path.join(ROOT, 'web/components/lab/boards-next-up/BossTable.tsx'), 'utf8'));
+    const calls = src.match(/localeCompare\([^)]*\)/g);
+    expect(calls.length).toBeGreaterThanOrEqual(3);
+    expect(calls.every((c) => /, 'en'\)$/.test(c))).toBe(true);
   });
   it('does not mutate its input', () => {
     const before = bosses.map((b) => b.id).join();
@@ -64,15 +82,17 @@ describe('filter, window, grouping', () => {
 describe('the fixture has the spread the draft needs', () => {
   const bosses = toNextUpBosses(LAB_ROWS);
   const s = summarize(bosses, LAB_NOW);
-  it('about 40 bosses over 5 expansions, 3 up, 2 soon, a long name, one expansion with nothing near', () => {
-    expect(bosses.length).toBeGreaterThanOrEqual(38);
+  it('40 bosses over 5 expansions, 28 available, 12 on timers (2 soon), a long name among the timers', () => {
+    expect(bosses.length).toBe(40);
     expect(new Set(bosses.map((b) => b.expansion)).size).toBe(5);
     expect(LAB_EXPANSIONS.length).toBe(5);
-    expect(s.up).toBe(3);
+    expect(s.up).toBe(28);
     expect(s.soon).toBe(2);
-    expect(Math.max(...bosses.map((b) => b.name.length))).toBeGreaterThan(40);
-    const kunark = bosses.filter((b) => b.expansion === 'Kunark');
-    expect(kunark.every((b) => b.opensAtMs - LAB_NOW > 24 * 3600000)).toBe(true);
+    const { timers } = splitNextUp(bosses, LAB_NOW);
+    expect(timers).toHaveLength(12);
+    expect(timers.some((b) => b.name.length > 40)).toBe(true);
+    expect(timers.some((b) => b.opensAtMs - LAB_NOW > 24 * 3600000)).toBe(true);
+    expect(timers.some((b) => { const h = (b.opensAtMs - LAB_NOW) / 3600000; return h > 1 && h < 24; })).toBe(true);
     expect(new Set(bosses.map((b) => b.id)).size).toBe(bosses.length);
   });
 });

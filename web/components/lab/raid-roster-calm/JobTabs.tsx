@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { MANA_LOW, type CalmRaider, type CalmView, hpTone } from '@/lib/raidRosterCalmView';
-import { HeaderLine, HP_TEXT, classAbbr, detailFor, hpLabel, type RenderDetail } from './shared';
+import { HeaderLine, HP_TEXT, classAbbr, detailFor, hpLabel, hpSize, type RenderDetail } from './shared';
 
 // Version C, "Job tabs". Roster, Buffs, Mana, Curses: four focused lists with counts on the tabs. The chosen tab
 // is remembered in this browser.
@@ -35,7 +35,7 @@ export default function JobTabs({
     { key: 'curses', label: 'Curses', n: curses.length, hot: curses.length > 0 },
   ];
   const row = (r: CalmRaider, right: React.ReactNode) => (
-    <li key={r.name}>
+    <li key={r.name} className={r.curse || r.dead ? 'bg-red/10' : ''}>
       <button
         type="button" aria-expanded={open === r.name} onClick={() => setOpen(open === r.name ? null : r.name)}
         className="grid min-h-[40px] w-full grid-cols-[minmax(0,1fr)_2.5rem_auto] items-center gap-x-2 px-3 py-1 text-left text-sm hover:bg-bg/60"
@@ -44,7 +44,7 @@ export default function JobTabs({
         <span className="text-text">{classAbbr(r.cls)}</span>
         <span className="text-right">{right}</span>
       </button>
-      {open === r.name ? detailFor(renderDetail, r) : null}
+      {open === r.name ? detailFor(renderDetail, r, () => setOpen(null)) : null}
     </li>
   );
   const empty = (t: string) => <li className="px-3 py-6 text-center text-sm text-green">{t}</li>;
@@ -64,10 +64,10 @@ export default function JobTabs({
       </div>
       <div className="overflow-hidden rounded-lg border border-border bg-panel">
         {tab === 'roster' && view.groups.map((g) => (
-          <div key={g.label}>
+          <div key={g.label} className="mt-2 first:mt-0">
             <h2 className="border-b border-border bg-bg/60 px-3 py-1 text-sm text-gold">{g.label}</h2>
             <ul className="divide-y divide-border/50">
-              {g.raiders.map((r) => row(r, <b className={'text-lg tabular-nums ' + HP_TEXT[hpTone(r.hp)]}>{hpLabel(r)}</b>))}
+              {g.raiders.map((r) => row(r, <b className={'inline-block w-14 text-right tabular-nums ' + hpSize(r) + ' ' + HP_TEXT[hpTone(r.hp)]}>{hpLabel(r)}</b>))}
             </ul>
           </div>
         ))}

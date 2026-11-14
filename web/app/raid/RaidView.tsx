@@ -422,9 +422,9 @@ export default function RaidView({
         <AlertFirst
           view={calmViewFromRows(tabRows, ari)}
           fullViewHref="/raid"
-          renderDetail={(c) => {
+          renderDetail={(c, close) => {
             const row = rows.find((x) => x.name === c.name);
-            return row ? <CharacterDetail row={row} dsValues={dsValues} onClose={() => setSelectedName(null)} /> : null;
+            return row ? <CharacterDetail row={row} dsValues={dsValues} onClose={close} /> : null;
           }}
         />
       </div>
