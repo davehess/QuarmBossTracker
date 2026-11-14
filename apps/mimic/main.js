@@ -1927,16 +1927,24 @@ async function _tickUiDeferred() {
   try {
     let eqUp = null;   // resolved lazily, once, only if needed
     const keep = [];
-    for (const entry of _uiDeferred) {
+    // The per-character keys step (keysplit) always applies first, whatever order the halves were queued in, and while
+    // it still waits no other character's shared half is applied: a character's own keys must land on a PC that
+    // already reads per-character keys (review of 3.1.0).
+    const isSplit = (e) => e.kind === 'restore' && Array.isArray(e.parts) && e.parts.includes('keysplit');
+    const ordered = _uiDeferred.filter(isSplit).concat(_uiDeferred.filter(e => !isSplit(e)));
+    let splitWaiting = false;
+    for (const entry of ordered) {
       const charLower = String(entry.character || '').toLowerCase();
-      if (_uiCharActiveInZeal(charLower)) { entry.sawActive = true; keep.push(entry); continue; }
+      const hold = () => { keep.push(entry); if (isSplit(entry)) splitWaiting = true; };
+      if (splitWaiting && entry.kind === 'restore' && _uiNeedsEqClosed(entry.parts)) { keep.push(entry); continue; }
+      if (_uiCharActiveInZeal(charLower)) { entry.sawActive = true; hold(); continue; }
       // Keybinds live in eqclient.ini, which EVERY running EverQuest writes on exit: a restore that carries
       // them waits for all of EverQuest to close, not just this character's camp.
       // Zeal's shared sections ride in the same two files, so they wait the same way.
       const ownOnly = entry.kind === 'restore' && !_uiNeedsEqClosed(entry.parts);
       if (entry.kind === 'restore' && !ownOnly) {
         if (eqUp === null) { try { eqUp = await _isEqRunning(); } catch { eqUp = false; } }
-        if (eqUp) { keep.push(entry); continue; }
+        if (eqUp) { hold(); continue; }
       }
       // Not in Zeal. Apply when we previously saw it in-game (logged out now),
       // or it was never in-game AND no EverQuest is running (nothing to clobber).
@@ -1947,11 +1955,11 @@ async function _tickUiDeferred() {
           if (_uiCharLogFresh(entry.eqDir, charLower)) { keep.push(entry); continue; }
         } else {
           if (eqUp === null) { try { eqUp = await _isEqRunning(); } catch { eqUp = false; } }
-          if (eqUp) { keep.push(entry); continue; }   // EQ up, char not seen → wait
+          if (eqUp) { hold(); continue; }   // EQ up, char not seen → wait
         }
       }
       // Stabilization: let EQ finish its logout write before we overwrite.
-      if (Date.now() - (entry.queuedAt || 0) < 6000) { keep.push(entry); continue; }
+      if (Date.now() - (entry.queuedAt || 0) < 6000) { hold(); continue; }
       _applyDeferredEntry(entry);   // drop on success or failure (don't loop forever)
     }
     if (keep.length !== _uiDeferred.length) { _uiDeferred = keep; _saveUiDeferred(); }
@@ -14776,6 +14784,8 @@ ipcMain.handle('ui-account-characters', async () => {
       pcPerCharKeys: (() => { try { return uiRestorePlan.perCharFlag(eqDir ? _readUiBundle(eqDir, (names[0] || 'x')) : {}) === true; } catch { return false; } })(),
       // What a bring-in restores before the member's own ticks (bring-setup.js reads this). It was never sent, so the
       // card restored no part but overlays and the shared ticks (a member, 2026-11-11, FB-124 / FB-126 / FB-127).
+      // Does this PC have a zeal.ini at all (Zeal installed)? Without one the per-character switch has nothing to turn on.
+      pcHasZealIni: (() => { try { return uiRestorePlan.perCharFlag(eqDir ? _readUiBundle(eqDir, (names[0] || 'x')) : {}) !== null; } catch { return false; } })(),
       parts: uiSync.defaultParts({ otherAccountsOnPc: uiSync.otherCharsOnPc(characters, names).length > 0 }),
       otherCharsOnPc: uiSync.otherCharsOnPc(characters, names),
       thisPc: { machine: _thisMachine(), w: (_primarySize() || {}).w || null, h: (_primarySize() || {}).h || null },

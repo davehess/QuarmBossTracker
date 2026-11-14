@@ -148,6 +148,26 @@ describe('main.js wiring', () => {
     const q = stripJs(sliceBlock(main, 'function _queueUiRestore(entry) {', '\n}\n'));
     expect(q).toMatch(/_uiNeedsEqClosed\(e\.parts\) === shared/);
   });
+  it('the deferred queue applies a keysplit entry before any other character\'s shared half, whatever the queue order', async () => {
+    const run = async (queue, { activeFor = [] } = {}) => {
+      globalThis.__applied = []; globalThis.__active = activeFor;
+      const src = `let _uiDeferTickBusy = false; let _uiDeferred = ${JSON.stringify(queue)};
+        const _uiCharActiveInZeal = (c) => globalThis.__active.includes(c); const _isEqRunning = async () => false;
+        const _uiCharLogFresh = () => false; const _applyDeferredEntry = (e) => { globalThis.__applied.push(e.character + ':' + e.parts.join('+')); return true; };
+        const _saveUiDeferred = () => {};\n`
+        + sliceBlock(main, 'function _uiNeedsEqClosed(parts) {', '\n}\n') + sliceBlock(main, 'async function _tickUiDeferred() {', '\n}\n');
+      const { _tickUiDeferred } = evalBlock(src, ['_tickUiDeferred']);
+      await _tickUiDeferred();
+      return globalThis.__applied;
+    };
+    const old = Date.now() - 60000;
+    const e = (character, parts) => ({ kind: 'restore', character, parts, eqDir: 'd', queuedAt: old, sawActive: false });
+    // the other character's keys half was queued BEFORE the shared step: the step still goes first
+    expect(await run([e('Brackwyn', ['zealchar', 'zeal']), e('Aldenmar', ['keysplit'])])).toEqual(['Aldenmar:keysplit', 'Brackwyn:zealchar+zeal']);
+    // while the step waits (its character is in game), no other shared half is applied; own-files halves still are
+    expect(await run([e('Brackwyn', ['zealchar', 'zeal']), e('Corvale', ['layout']), e('Aldenmar', ['keysplit'])], { activeFor: ['aldenmar'] })).toEqual(['Corvale:layout']);
+    delete globalThis.__applied; delete globalThis.__active;
+  });
   it('the old single Zeal choice still brings the character\'s own Zeal settings', () => {
     expect(sync.cleanSyncCfg({ parts: ['layout', 'zeal'] }).parts).toEqual(expect.arrayContaining(['zeal', 'zealchar']));
     expect(sync.cleanSyncCfg({ parts: ['layout'] }).parts).not.toContain('zealchar');

@@ -142,7 +142,7 @@ describe('both places that fit a layout use this one rule', () => {
     // ...except a backup made on THIS computer, which is put back as it was (its block for this screen size is kept)
     // (the size the backup was PLAYED at is always passed: a window with no place here is still fitted from it)
     expect(plan).toMatch(/const fitOpts = \(backupFiles, skinSizes, target, sameMachine, sourceRes\) =>/);
-    expect(plan).toMatch(/let from = !sameScreen \? at\(main\) : null;/);
+    expect(plan).toMatch(/let from = lost \? at\(tgt\) : \(!sameScreen \? at\(main\) : null\);/);
     expect(plan).not.toMatch(/x \* tw \/ rw/);
     // main hands the skin's window sizes, and whether the backup is this PC's own, to all three calls
     expect(main.match(/skinSizes: _uiSkinSizes\(entry\.eqDir\), sameMachine: !!entry\.sameMachine|\{ knownChars, target, skinSizes, sameMachine, sourceRes: _uiSnapSource\(snap\) \}|uiRestorePlan\.fitOpts\(snap\.files, skinSizes, target, sameMachine, _uiSnapSource\(snap\)\)/g)).toHaveLength(3);
