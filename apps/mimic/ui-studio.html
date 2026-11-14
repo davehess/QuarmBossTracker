@@ -55,6 +55,8 @@
   .win{position:absolute;background:rgba(31,111,235,0.18);
     border:1px solid rgba(88,166,255,0.7);border-radius:2px;cursor:move;
     overflow:hidden;transition:box-shadow .12s}
+  /* A window that hangs off the screen: a dashed red edge, whatever its kind. */
+  .win.off{border:1px dashed var(--wp-red);box-shadow:0 0 0 1px color-mix(in srgb, var(--wp-red) 55%, transparent)}
   .win.kind-chat     {background:rgba(126,231,199,0.18);border-color:rgba(126,231,199,0.7)}
   .win.kind-buffs    {background:rgba(212,153,255,0.18);border-color:rgba(212,153,255,0.7)}
   .win.kind-songs    {background:rgba(255,176,217,0.18);border-color:rgba(255,176,217,0.7)}
@@ -156,6 +158,9 @@
 <body>
   <div id="bar">
     <h1>🎨 UI Studio</h1>
+    <!-- The guild lead, 2026-11-11: restoring a backup has to be clear here, not only in Settings. The card is the
+         shared one (bring-setup.js), listing every character in the account, on this PC or not. -->
+    <button id="bringBtn" title="Bring in a backup from your account (or a version kept on this computer)" style="background:var(--wp-accent);color:var(--wp-text);border:0;font-weight:600">📦 Bring in / restore a backup</button>
     <label>Character
       <select id="charSelect"><option value="">— pick —</option></select>
     </label>
@@ -204,6 +209,7 @@
     <button id="captureBtn"        class="secondary" title="Scan your saved hotkeys/socials for a PvP layout draft you can review and share (writes a file into your EQ folder)">Capture PvP draft</button>
     <button id="cloudBackupBtn"    class="secondary" title="Upload encrypted backup of your UI ini files to the bot (existing capture flow)">☁ Backup</button>
     <button id="cloudRestoreBtn"   class="secondary" title="Pull a cloud backup into the editor — rescale it to this machine's monitor, then Save. Use this to deploy your layout on a new computer.">📥 Restore</button>
+    <button id="changesBtn"        class="secondary" title="Every change in this character's EverQuest and Zeal files since the previous version Mimic kept — the game's own changes too, not only the ones made here">🔍 Changes…</button>
     <span id="status"></span>
   </div>
   <!-- Named layouts for the picked character (uiLayouts.js): alternative screens ("Raid (full chat)",
@@ -225,6 +231,20 @@
   </div>
   <!-- Deferred-save banner — shown while a save is scheduled to apply when the
        character logs out. -->
+  <!-- A layout made for another screen size (files copied over by hand): how many windows have no place for this
+       screen, and a button that fits the other screen's layout to this one. -->
+  <div id="fitBanner" style="display:none;align-items:center;gap:10px;padding:6px 12px;
+       background:color-mix(in srgb, var(--wp-red) 14%, var(--wp-panel));border-bottom:1px solid var(--wp-red);color:var(--wp-text);font-size:11px">
+    <span class="txt"></span>
+    <span class="btns" style="margin-left:auto;display:flex;gap:6px"></span>
+  </div>
+  <!-- Windows that hang off the Target screen: how many, and one button that moves only those back on. -->
+  <div id="offBanner" style="display:none;align-items:center;gap:10px;padding:6px 12px;
+       background:color-mix(in srgb, var(--wp-red) 14%, var(--wp-panel));border-bottom:1px solid var(--wp-red);color:var(--wp-text);font-size:11px">
+    <span class="txt"></span>
+    <button id="offFix" style="margin-left:auto;background:var(--wp-bg);color:var(--wp-text);
+       border:1px solid var(--wp-border);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer">Bring them on screen</button>
+  </div>
   <div id="deferBanner" style="display:none;align-items:center;gap:10px;padding:6px 12px;
        background:#1c2330;border-bottom:1px solid #d6a922;color:#f0d264;font-size:11px">
     <span class="txt"></span>
@@ -243,6 +263,25 @@
     <button id="pvpImportBtn">Import to EQ folder</button>
     <button id="pvpDismissBtn"  class="secondary" style="margin-left:4px">Dismiss</button>
   </div>
+  <!-- Changes since a previous version (the guild lead, 2026-11-11): the versions Mimic keeps of the character's files
+       (newest 10, localVersions.js) against the files now, every key, labelled by who changed it. -->
+  <div id="chModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:80">
+    <div style="position:absolute;top:5%;left:50%;transform:translateX(-50%);width:min(760px,94vw);max-height:90%;display:flex;flex-direction:column;
+         background:var(--wp-panel);border:1px solid var(--wp-border);border-radius:8px;padding:16px;color:var(--wp-text);font-size:12px">
+      <button id="chClose" style="position:absolute;top:8px;right:10px;background:none;border:none;color:var(--wp-dim);cursor:pointer;font-size:16px">✕</button>
+      <h3 style="margin:0 0 4px">🔍 Changes since a previous version</h3>
+      <p id="chLine" style="margin:0 0 8px;color:var(--wp-dim);font-size:10px">Mimic keeps the last 10 copies of this character's files: after every camp, and before anything Mimic writes.</p>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        <label>Compare the files now with
+          <select id="chVersion" style="margin-left:4px;max-width:360px;background:var(--wp-bg);color:var(--wp-text);border:1px solid var(--wp-border);border-radius:4px;padding:3px"></select>
+        </label>
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="chHideMine"> Hide UI Studio's own changes</label>
+      </div>
+      <div id="chSummary" style="margin-bottom:8px;color:var(--wp-text);font-weight:600"></div>
+      <div id="chBody" style="overflow-y:auto;min-height:60px;user-select:text"></div>
+    </div>
+  </div>
+
   <!-- #187 Spell Sets bulk-swap — replace one song/spell with another across
        every named set in <Char>_spellsets.ini. Surgical id-value replace
        (CRLF-preserving); Save writes with a .bak backup. -->
@@ -306,6 +345,14 @@
       <div class="meta" id="sideMeta"></div>
     </aside>
   </div>
+<div id="bringPane" hidden style="position:fixed;inset:0;background:color-mix(in srgb, black 65%, transparent);z-index:50;overflow:auto;padding:40px 16px">
+  <div style="max-width:720px;margin:0 auto;background:var(--wp-panel);border:1px solid var(--wp-border);border-radius:8px;padding:12px 16px">
+    <div style="display:flex;justify-content:flex-end"><button id="bringClose" class="secondary" aria-label="Close">✕ Close</button></div>
+    <div id="bringCard"></div>
+  </div>
+</div>
+<script src="uiFit.js"></script>
+<script src="bring-setup.js"></script>
 <script src="sidlRender.js"></script>
 <script>
   // ── State ────────────────────────────────────────────────────────────────
@@ -347,16 +394,80 @@
     try {
       var chars = await window.mimic.uiStudioListCharacters();
       var sel = document.getElementById('charSelect');
+      // The signed-in account's characters first, the rest of this PC's under one group (the guild lead,
+      // 2026-11-11). With no answer from the bot the list stays as it was.
+      var mine = {}, hasMine = false;
+      try {
+        var acct = await window.mimic.uiAccountCharacters();
+        if (acct && acct.ok) (acct.characters || []).forEach(function(a){ mine[a.character.toLowerCase()] = 1; hasMine = true; });
+      } catch (e2) {}
+      var other = document.createElement('optgroup');
       for (var i = 0; i < chars.length; i++) {
         var c = chars[i];
         var opt = document.createElement('option');
         opt.value = c.character + '|' + c.eqDir;
         opt.textContent = c.character + (c.ini_count ? ' (' + c.ini_count + ' ini files)' : ' (no inis)');
-        sel.appendChild(opt);
+        (hasMine && !mine[c.character.toLowerCase()] ? other : sel).appendChild(opt);
       }
+      if (other.children.length) { other.label = 'Other characters on this computer (' + other.children.length + ')'; sel.appendChild(other); }
     } catch (e) { setStatus('IPC unavailable — open via tray', 'err'); }
   }
-  bootstrap();
+  var _bootDone = bootstrap();
+  // "Sort your chat channels" on the bring-in card (a member, 2026-11-11, FB-125): open on that character and show the
+  // chat routing inspector (drag chips between windows, + New chat window). Only an entry point; the routing UI is
+  // the one in the Hotbar Pages inspector. The character may be new to this PC (brought in a moment ago), so it is
+  // added to the list when the bootstrap list does not have it yet.
+  if (window.mimic && window.mimic.onUiStudioGoto) window.mimic.onUiStudioGoto(function(goto){
+    Promise.resolve(_bootDone).then(async function(){
+      if (!goto || !goto.character) return;
+      var sel = document.getElementById('charSelect');
+      var want = String(goto.character).toLowerCase(), found = null;
+      for (var i = 0; i < sel.options.length; i++) if (String(sel.options[i].value).split('|')[0].toLowerCase() === want) { found = sel.options[i]; break; }
+      if (!found) {
+        found = document.createElement('option');
+        found.value = goto.character + '|' + (goto.eqDir || '');
+        found.textContent = goto.character;
+        sel.appendChild(found);
+      }
+      sel.value = found.value;
+      await loadAndRescale(true);
+      if (goto.chat) {
+        document.getElementById('inspectSocialsBtn').click();
+        var tries = 0, t = setInterval(function(){
+          var b = document.getElementById('chatRoutingBlock');
+          if (b) { clearInterval(t); b.scrollIntoView({ block: 'start' }); }
+          else if (++tries > 40) clearInterval(t);
+        }, 150);
+      }
+    }).catch(function(e){ setStatus('could not open ' + (goto && goto.character) + ': ' + (e && e.message), 'err'); });
+  });
+  // 📦 Bring in / restore a backup: the shared card with every character in the account. Nothing is ticked for a
+  // character that is already on this PC, so a restore is always a choice.
+  document.getElementById('bringBtn').addEventListener('click', function(){
+    var pane = document.getElementById('bringPane');
+    pane.hidden = false;
+    window.wpBringSetup.mount(document.getElementById('bringCard'), { all: true, fresh: true, onDone: _reloadAfterBringIn });
+  });
+  document.getElementById('bringClose').addEventListener('click', function(){ document.getElementById('bringPane').hidden = true; });
+  // A bring-in writes the character's files behind this window. Without a reload the canvas kept showing the files
+  // as they were BEFORE it, and the next Save wrote those old places back over what had just been brought in.
+  // Runs only when a bring-in actually ran (the card's onDone), so closing the card never discards edits made here.
+  // And only when it wrote files for the character on this canvas (rows: the card's result lines); a bring-in for
+  // another character changes nothing here. Moves made here and not saved are kept, with a note, never thrown away.
+  function _reloadAfterBringIn(ok, rows){
+    if (!STATE.character || !STATE.eqDir) return;
+    var me = String(STATE.character).toLowerCase();
+    var wrote = !Array.isArray(rows) || rows.some(function(r){
+      return r && r.kind === 'done' && String(r.character).toLowerCase() === me && r.files && r.files.length;
+    });
+    if (!wrote) return;
+    if (STATE.windows.some(_windowChanged)) {
+      setStatus('the bring-in changed ' + STATE.character + '\'s files, and this canvas has moves that are not saved · ' +
+        'Save would write them over what was brought in · press Load to see the files as they are now', 'err');
+      return;
+    }
+    loadAndRescale(true).catch(function(e){ setStatus('could not re-read the files: ' + (e && e.message), 'err'); });
+  }
 
   // Show the active EQ folder for the picked character — so a multi-folder user
   // can see which install they're editing (the dropdown only shows the name).
@@ -475,7 +586,17 @@
     var x = props['XPos' + suffix], y = props['YPos' + suffix], used = suffix;
     if (x == null || y == null) {
       var alt = null;
+      // An optional third argument: the file's other screen sizes, fullest first. The fallback takes the first of
+      // those this window has, so every window falls back to the SAME layout (the one the file was really used
+      // at) instead of whichever block happens to come first in its own section.
+      var prefer = arguments[2];
+      if (prefer && prefer.length) {
+        for (var pi = 0; pi < prefer.length && !alt; pi++) {
+          if (props['XPos' + prefer[pi]] != null && props['YPos' + prefer[pi]] != null) alt = prefer[pi];
+        }
+      }
       for (var k in props) {
+        if (alt) break;
         var mm = k.match(/^XPos(\d+x\d+)$/i);
         if (mm && props['YPos' + mm[1]] != null) { alt = mm[1]; break; }
       }
@@ -571,7 +692,15 @@
     var num = function(v, d){ var n = parseInt(v, 10); return isFinite(n) ? n : d; };
     var on = function(v){ return /^(true|1)$/i.test(String(v == null ? '' : v).trim()); };
     function mk(s, bar, label, x, y, w, h, extra, contents){
-      var X = Math.round(x * fxX), Y = Math.round(y * fxY);
+      // The same fit as every window (uiFit.js): a bar keeps its place in the free space, so it stays on the new
+      // screen. A raid-bar box that runs to the screen edge keeps its start in proportion and runs to the NEW
+      // screen's edge (it used to keep the old screen's width and hang off).
+      var tw = Math.round(srcW * fxX), th = Math.round(srcH * fxY);
+      var toR = !!(extra && extra.toEdgeR), toB = !!(extra && extra.toEdgeB);
+      var f = UiFit.fitRect({ x: x, y: y, w: w, h: h }, { w: srcW, h: srcH }, { w: tw, h: th });
+      var X = toR ? Math.round(x * fxX) : f.x, Y = toB ? Math.round(y * fxY) : f.y;
+      if (toR) w = Math.max(16, tw - X);
+      if (toB) h = Math.max(16, th - Y);
       var o = { section: s.name, label: label, kind: 'zeal', category: 'zeal', zealBar: bar,
         contents: contents, props: s.props, hasWH: false, srcSuffix: '', chatMeta: null, xmlMax: null,
         x: X, y: Y, w: w, h: h, origX: X, origY: Y, origW: w, origH: h };
@@ -966,16 +1095,14 @@
     _renderLoadedBundle();
   }
 
-  // Resolution-mismatch warning for the apply UI (#146). When the snapshot was
-  // captured at a different resolution than the target we're applying to,
-  // positions get remapped but window SIZES are preserved verbatim (EQ sizes
-  // are absolute pixels) — say so plainly so an adapted layout reads as
-  // intended rather than looking broken. Returns '' when the resolutions match.
+  // What a rescale does, in plain words, for the status line. Returns '' when the two screen sizes match.
+  // (Since uiFit.js: windows are fitted onto the new screen and chat windows are resized in proportion; every
+  // other window keeps its size, which is why a busy layout can still overlap on a smaller screen.)
   function _resMismatchWarning(srcW, srcH, tgtW, tgtH){
     if (!srcW || !srcH || !tgtW || !tgtH) return '';
     if (srcW === tgtW && srcH === tgtH) return '';
-    return '⚠ captured at ' + srcW + '×' + srcH + " — you're at " + tgtW + '×' + tgtH +
-      '; window positions will be adapted, sizes preserved';
+    return 'made for a ' + srcW + '×' + srcH + ' screen, fitted to ' + tgtW + '×' + tgtH +
+      ': every window is placed on this screen, chat windows are resized to match, other windows keep their size';
   }
 
   // ── One window, one row ───────────────────────────────────────────────────
@@ -1028,6 +1155,60 @@
     return { kept: kept, shadowed: shadowed.length, shadowFiles: shadowFiles };
   }
 
+  // ── What the last rescale did to chat window sizes ────────────────────────
+  // Kept per EQ folder + character in this PC's storage: { from, to, sizes: { "file|section": [oldW, oldH, newW, newH] } }.
+  // Written when a rescale is saved. Read by the next rescale between the same two screen sizes: a chat window
+  // whose size in the file is still the size that rescale wrote is fitted from the size it had before, so running
+  // Load + Rescale again gives the same layout instead of a smaller one each time.
+  var FIT_MEMO_KEY = 'uiStudio.fitMemo';
+  function _fitMemoAll(){ try { return JSON.parse(localStorage.getItem(FIT_MEMO_KEY) || '{}') || {}; } catch (e) { return {}; } }
+  function _fitMemoId(){ return String(STATE.eqDir || '').toLowerCase() + '|' + String(STATE.character || '').toLowerCase(); }
+  function _fitMemoFor(file, section, fromRes, w, h){
+    var m = _fitMemoAll()[_fitMemoId()];
+    if (!m || m.from !== fromRes.w + 'x' + fromRes.h || m.to !== STATE.tgtW + 'x' + STATE.tgtH) return null;
+    var s = m.sizes && m.sizes[file + '|' + section];
+    return (s && s[2] === w && s[3] === h) ? { w: s[0], h: s[1] } : null;
+  }
+  function _fitMemoSave(wins, fromSuffix, toSuffix){
+    var sizes = {}, n = 0;
+    for (var i = 0; i < wins.length; i++) {
+      var w = wins[i];
+      if (w.fitFrom) { sizes[w.file + '|' + w.section] = [w.fitFrom.w, w.fitFrom.h, w.w, w.h]; n++; }
+    }
+    if (!n) return;
+    var all = _fitMemoAll();
+    all[_fitMemoId()] = { from: fromSuffix, to: toSuffix, sizes: sizes };
+    try { localStorage.setItem(FIT_MEMO_KEY, JSON.stringify(all)); } catch (e) { /* storage blocked: a second rescale would resize again */ }
+  }
+
+  // A window that hangs off the Target screen. One whose size is only the stand-in counts when less than 80 px of
+  // it could be on screen, so a small window near an edge is not called off-screen on a guess.
+  function _isOffScreen(w){
+    // Windows the game never shows in play (the "Not in-game / popups" group) are left out: the game itself parks
+    // some of them just past the corner of the screen, and "bringing them back" would be moving the game's own parking.
+    if (w.category === 'offscreen') return false;
+    var scr = { w: STATE.tgtW, h: STATE.tgtH };
+    if (w.sizeKnown || w.zealBar) return UiFit.isOffScreen(w, scr);
+    return w.x < -UiFit.TUCK || w.y < -UiFit.TUCK || w.x > scr.w - 80 || w.y > scr.h - 80;
+  }
+  function _offScreenCount(){
+    var n = 0;
+    for (var i = 0; i < STATE.windows.length; i++) if (_isOffScreen(STATE.windows[i])) n++;
+    return n;
+  }
+  // Move every window that hangs off the screen just far enough to be on it. Nothing else moves.
+  function _bringOnScreen(){
+    var scr = { w: STATE.tgtW, h: STATE.tgtH }, n = 0;
+    for (var i = 0; i < STATE.windows.length; i++) {
+      var w = STATE.windows[i];
+      if (!_isOffScreen(w)) continue;
+      if (w.sizeKnown || w.zealBar) { var f = UiFit.fitRect(w, scr, scr); w.x = f.x; w.y = f.y; }
+      else { w.x = Math.max(0, Math.min(scr.w - 80, w.x)); w.y = Math.max(0, Math.min(scr.h - 80, w.y)); }
+      n++;
+    }
+    return n;
+  }
+
   // Parse + rescale + render whatever is currently in STATE.bundle. Shared by
   // the local "Load + Rescale" path and the cloud "Restore from backup" path —
   // both end up with a { filename → text } bundle, so the only difference is
@@ -1058,6 +1239,18 @@
     STATE.srcSuffix = srcSuffix;
     var fxX = STATE.tgtW / STATE.srcW;
     var fxY = STATE.tgtH / STATE.srcH;
+    var tgtRes = { w: STATE.tgtW, h: STATE.tgtH };
+    var tgtSuffix = STATE.tgtW + 'x' + STATE.tgtH;
+    var rescaling = srcSuffix !== tgtSuffix;   // Load + Rescale to another screen size (not "show what is saved")
+    // The file's other screen sizes, fullest first (a tie goes to the larger screen): where a window with no place
+    // at the Source size is read from, and what the "made for another screen" banner offers.
+    var otherBlocks = Object.keys(resCounts).filter(function(k){ return k !== srcSuffix; }).sort(function(a, b){
+      if (resCounts[b] !== resCounts[a]) return resCounts[b] - resCounts[a];
+      var pa = UiFit.parseRes(a), pb = UiFit.parseRes(b);
+      return (pb ? pb.w * pb.h : 0) - (pa ? pa.w * pa.h : 0);
+    });
+    STATE.blockCounts = resCounts;
+    STATE.otherBlocks = otherBlocks;
     var seq = 0;
     var fnames = Object.keys(STATE.bundle).filter(function(k){ return k.indexOf('__parsed') < 0; });
     for (var fi = 0; fi < fnames.length; fi++) {
@@ -1067,7 +1260,7 @@
       var chatMeta = _buildChatMeta(parsed);   // per-file chat-window routing
       for (var i = 0; i < parsed.sections.length; i++) {
         var s = parsed.sections[i];
-        var pos = _readPos(s.props, srcSuffix);
+        var pos = _readPos(s.props, srcSuffix, otherBlocks);
         if (pos.x == null || pos.y == null) continue;
         var x = parseInt(pos.x, 10), y = parseInt(pos.y, 10);
         if (isNaN(x) || isNaN(y)) continue;
@@ -1083,17 +1276,8 @@
         var h = hasWH ? parseInt(rawH, 10) : 100;
         if (isNaN(w)) { w = 200; hasWH = false; }
         if (isNaN(h)) { h = 100; hasWH = false; }
-        // Remap POSITIONS to the target resolution — a window at 2000px on a
-        // 2560-wide screen belongs near 1500px on a 1920-wide one. SIZES are
-        // NOT rescaled: EQ window dimensions are absolute pixels (a 400px-wide
-        // window is 400px at every resolution), so multiplying Width/Height by
-        // the resolution ratio SHRINKS them wrongly. That was the field bug
-        // (#146, 2026-07): a 2560×1440 → 1920×1080 apply multiplied every
-        // window's Width/Height by 0.75, driving the non-resizable Merchant/
-        // Social/Loot/Trade windows into their minimum-size clamp with no way to
-        // drag them back. Positions adapt; sizes are copied verbatim.
-        x = Math.round(x * fxX);
-        y = Math.round(y * fxY);
+        // The position is fitted to the Target screen further down, once the window's size is known
+        // (uiFit.js): where a window belongs on another screen depends on how big it is.
         // Classify the window type + extract contents-of-interest for the
         // side panel. Most windows are self-describing by section name;
         // chat windows are the interesting one — they carry tab + channel
@@ -1147,6 +1331,25 @@
           // a verbatim 125-wide MerchantWnd vs a 0.75×-scaled 94 cap → 94).
           w = xmlMax.cx; h = xmlMax.cy;
         }
+        // Fit to the Target screen with the one rule the bring-in uses too (uiFit.js): a window keeps its place
+        // in the free space, so one docked to the right edge stays docked and nothing that fits is left hanging
+        // off the screen; a chat window is resized in proportion; every other window keeps its size (#146).
+        // The numbers were read at `pos.used`'s screen size: the Source block, or, for a window with no block
+        // there, whichever block it does have. Each is fitted from ITS OWN screen size, so a window that only has
+        // a 2560×1440 block is not drawn at raw 1440p numbers on a 1080 canvas, and is never scaled twice.
+        var usedRes = (pos.used === srcSuffix) ? { w: STATE.srcW, h: STATE.srcH } : UiFit.parseRes(pos.used);
+        var sizeKnown = hasWH || !!(xmlMax && xmlMax.cx > 0 && xmlMax.cy > 0);
+        var fitFrom = null;
+        if (usedRes && (usedRes.w !== STATE.tgtW || usedRes.h !== STATE.tgtH)) {
+          var chatFit = rescaling && hasWH && UiFit.isChatSection(s.name);
+          // A chat window's size is one value shared by every screen size, so a second rescale after a Save would
+          // shrink it again. The size this rescale wrote last time is remembered; when the file still holds it,
+          // the fit starts from the size it had before.
+          var memo = chatFit ? _fitMemoFor(fname, s.name, usedRes, w, h) : null;
+          var fit = UiFit.fitRect({ x: x, y: y, w: memo ? memo.w : w, h: memo ? memo.h : h }, usedRes, tgtRes, { resize: chatFit });
+          if (fit.resized) fitFrom = { w: memo ? memo.w : w, h: memo ? memo.h : h };
+          x = fit.x; y = fit.y; w = fit.w; h = fit.h;
+        }
         STATE.windows.push({
           id:     'w' + (seq++),
           file:   fname,
@@ -1160,6 +1363,9 @@
           srcSuffix: pos.used,
           chatMeta: cMeta,
           xmlMax:   xmlMax,    // { cx, cy, file } at the skin's design resolution
+          sizeKnown: sizeKnown,   // false = the 200×100 stand-in (no size in the ini, none in the skin)
+          noBlock:  pos.used !== tgtSuffix,   // the file has no place for this window at the Target screen size yet
+          fitFrom:  fitFrom,      // a chat window resized by this rescale: the size it had before
           x: x, y: y, w: w, h: h,
           origX: x, origY: y, origW: w, origH: h,
         });
@@ -1205,11 +1411,12 @@
       } else if (STATE.nativeLoad) {
         msg = 'showing ' + STATE.windows.length + ' windows as saved in the UI file now · ' + STATE.srcW + '×' + STATE.srcH;
         if (STATE.otherRes && STATE.otherRes.length) msg += ' (the file also holds ' + STATE.otherRes.join(', ') + ')';
-        msg += ' · to move them to another screen size, set Target and click Load + Rescale';
+        msg += ' · to refit a layout made for another screen size, pick that size as Source and click Load + Rescale';
       } else {
         msg = 'loaded ' + STATE.windows.length + ' windows · ' +
           STATE.srcW + '×' + STATE.srcH + ' → ' + STATE.tgtW + '×' + STATE.tgtH +
-          ' · Save writes a ' + STATE.tgtW + '×' + STATE.tgtH + ' block (keeps your original)';
+          ' · Save stores this as the ' + STATE.tgtW + '×' + STATE.tgtH + ' layout; the ' + STATE.srcW + '×' + STATE.srcH +
+          ' places stay in the file';
         if (STATE.autoSwitched) {
           msg = 'file is saved at ' + STATE.srcW + '×' + STATE.srcH + ' — ' + msg;
         }
@@ -1588,7 +1795,7 @@
       var cwin = _chatWinOfRect(STATE.windows, i);
       var dropCls = (cwin != null && w.chatMeta.defaultChannel !== 3) ? ' chat-drop' : '';
       var look = _lookUrl(w);
-      html += '<div class="win' + sel + kindCls + dropCls + (look ? ' real' : '') + '" data-i="' + i + '"'
+      html += '<div class="win' + sel + kindCls + dropCls + (look ? ' real' : '') + (_isOffScreen(w) ? ' off' : '') + '" data-i="' + i + '"'
             + (cwin != null ? ' data-chat-win="' + cwin + '"' : '') + ' '
             + 'style="left:' + it.sx + 'px;top:' + it.sy + 'px;width:' + it.sw + 'px;height:' + it.sh + 'px;'
             + (look ? 'background-image:url(' + look + ');' : '') + '">'
@@ -1599,11 +1806,88 @@
             + '</div>';
     }
     stage.innerHTML = html;
+    _offBanner();
     updateSidePanel();
     _syncChatCardSelection();
     _lookSchedule();
   }
   window.addEventListener('resize', function(){ if (STATE.windows.length) renderStage(); });
+
+  // The off-screen banner counts every window off the screen, hidden groups too (Save writes them all), except the
+  // group the game never shows in play (_isOffScreen).
+  // How many of the game's own windows the file has no place for at the Target screen size. `many` is a fifth of
+  // them or more (and at least three): the file is a layout made for another screen, not one with a few windows
+  // that were simply never opened at this size.
+  function _noPlaceCount(){
+    var missing = 0, total = 0;
+    for (var i = 0; i < STATE.windows.length; i++) {
+      if (STATE.windows[i].zealBar) continue;
+      total++;
+      if (STATE.windows[i].noBlock) missing++;
+    }
+    return { missing: missing, total: total, many: missing >= Math.max(3, Math.ceil(total * 0.2)) };
+  }
+  // A layout made for another screen. Files copied from another PC hold a full layout for THAT screen size and little
+  // or nothing for this one; the game then puts every window with no place wherever it likes (chat windows stacked
+  // bottom-centre). Shown when the file is being viewed as saved, MANY windows have no place for this screen size,
+  // and the file holds a fuller layout for another one. The button is Load + Rescale from that size.
+  // Not shown for a few missing windows: a member who changed screen size and has played at the new one since
+  // has a layout in use here, and the button would lay the old screen's layout over it.
+  function _fitCandidates(){
+    var tgt = STATE.tgtW + 'x' + STATE.tgtH;
+    if (!STATE.nativeLoad || STATE.fromCloud || STATE.srcSuffix !== tgt) return null;
+    var np = _noPlaceCount(), missing = np.missing, total = np.total;
+    var counts = STATE.blockCounts || {}, have = counts[tgt] || 0;
+    var fuller = (STATE.otherBlocks || []).filter(function(k){ return counts[k] > have; });
+    if (!np.many || !fuller.length) return null;
+    // the fullest, and any other just as full (the game run one pixel narrower leaves both 2559x1440 and 2560x1440)
+    var best = counts[fuller[0]];
+    return { missing: missing, total: total, sizes: fuller.filter(function(k){ return counts[k] === best; }).slice(0, 3) };
+  }
+  function _fitBanner(){
+    var b = document.getElementById('fitBanner');
+    if (!b) return;
+    var c = _fitCandidates();
+    b.style.display = c ? 'flex' : 'none';
+    if (!c) return;
+    var x = function(s){ return s.replace('x', '×'); };
+    b.querySelector('.txt').textContent = '⚠ ' + c.missing + ' of ' + c.total + ' windows have no saved place for this ' +
+      STATE.tgtW + '×' + STATE.tgtH + ' screen, and the file also holds a fuller layout for a ' + c.sizes.map(x).join(' or ') +
+      ' screen (files copied from another PC look like this). The game puts a window with no place wherever it likes. ' +
+      'Fitting replaces what you see here with that layout, fitted to this screen; nothing is written until you press Save.' +
+      (c.sizes.length > 1 ? ' Pick the size the game ran at on the other PC; if it looks wrong, pick the other.' : '');
+    b.querySelector('.btns').innerHTML = c.sizes.map(function(s){
+      return '<button data-fit="' + s + '" style="background:var(--wp-bg);color:var(--wp-text);border:1px solid var(--wp-border);' +
+        'border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer">Fit the ' + x(s) + ' layout to this screen</button>';
+    }).join('');
+  }
+  document.getElementById('fitBanner').addEventListener('click', function(e){
+    var t = e.target && e.target.closest ? e.target.closest('button[data-fit]') : null;
+    var r = t ? UiFit.parseRes(t.getAttribute('data-fit')) : null;
+    if (!r) return;
+    document.getElementById('srcW').value = r.w;
+    document.getElementById('srcH').value = r.h;
+    _syncPresetFromInputs('src');
+    loadAndRescale().then(function(){
+      if (STATE.windows.length) setStatus('fitted the ' + r.w + '×' + r.h + ' layout to this ' + STATE.tgtW + '×' + STATE.tgtH +
+        ' screen: every window is on it and chat windows are resized to match · look it over, then Save', 'ok');
+    }).catch(function(err){ setStatus('could not fit: ' + (err && err.message), 'err'); });
+  });
+
+  function _offBanner(){
+    _fitBanner();
+    var b = document.getElementById('offBanner');
+    if (!b) return;
+    var n = _offScreenCount();
+    b.style.display = n ? 'flex' : 'none';
+    if (n) b.querySelector('.txt').textContent = '⚠ ' + n + ' window' + (n === 1 ? ' hangs' : 's hang') +
+      ' off the ' + STATE.tgtW + '×' + STATE.tgtH + ' screen (red dashed edge).';
+  }
+  document.getElementById('offFix').addEventListener('click', function(){
+    var n = _bringOnScreen();
+    renderStage();
+    setStatus('moved ' + n + ' window' + (n === 1 ? '' : 's') + ' back on screen · nothing else moved · Save to keep it', 'ok');
+  });
 
   // ── Real look ────────────────────────────────────────────────────────────
   // Each window drawn from the active skin's EQUI_*.xml and textures at its in-game size (sidlRender.js; the skin is read
@@ -1781,11 +2065,14 @@
     // Snap-to-edges of other windows + screen edges (10px tolerance in
     // world coords). Only on move, not resize.
     if (STATE.snapOn && DRAG.mode === 'move') applySnap(w);
-    // Clamp to screen bounds.
-    if (w.x < 0) w.x = 0;
-    if (w.y < 0) w.y = 0;
-    if (w.x + w.w > STATE.tgtW) w.x = STATE.tgtW - w.w;
-    if (w.y + w.h > STATE.tgtH) w.y = STATE.tgtH - w.h;
+    // Clamp to screen bounds. A resize stops at the screen edge (it used to push the window left instead), and
+    // a window larger than the screen sits at 0 rather than at a negative place.
+    if (DRAG.mode === 'resize-se') {
+      w.w = Math.max(16, Math.min(w.w, STATE.tgtW - Math.max(0, w.x)));
+      w.h = Math.max(16, Math.min(w.h, STATE.tgtH - Math.max(0, w.y)));
+    }
+    w.x = Math.max(0, Math.min(w.x, STATE.tgtW - w.w));
+    w.y = Math.max(0, Math.min(w.y, STATE.tgtH - w.h));
     renderStage();
   });
 
@@ -1926,6 +2213,7 @@
       var w = wins[i];
       if (w.sizeEdited) { if (w.zealBar === 'raidbars') { w.toEdgeR = false; w.toEdgeB = false; } else if (!w.zealBar) w.hasWH = true; }
       w.sizeEdited = false;
+      w.noBlock = false;        // Save gave it a place at this screen size
       w.origX = w.x; w.origY = w.y; w.origW = w.w; w.origH = w.h;
     }
   }
@@ -1937,7 +2225,11 @@
     var edits = [], files = {}, nWin = 0;
     for (var i = 0; i < STATE.windows.length; i++) {
       var w = STATE.windows[i];
-      if (!all && !_windowChanged(w)) continue;
+      // A window the file has no place for at this screen size is written too, where the canvas shows it. Left
+      // out, the game puts it wherever it likes (chat windows stacked bottom-centre), and re-saving changed
+      // nothing (the guild lead, 2026-11-14: "they end up looking like this even after resaving in UI studio").
+      if (!all && !_windowChanged(w) && !(w.noBlock && !w.zealBar)) continue;
+      var guess = !all && !_windowChanged(w);   // written only because the file had no place for it (_queueDefer)
       var kv;
       if (w.zealBar) kv = _zealBarEdits(w);
       else {
@@ -1954,7 +2246,11 @@
         // that was merely moved keeps whatever size EQ has for it now.
         if (all ? (w.hasWH || w.sizeEdited) : _sizeChanged(w)) { kv.Width = w.w; kv.Height = w.h; }
       }
-      for (var k in kv) edits.push({ file: w.file, section: w.section, key: k, value: kv[k] });
+      for (var k in kv) {
+        var ed = { file: w.file, section: w.section, key: k, value: kv[k] };
+        if (guess) ed.guess = true;
+        edits.push(ed);
+      }
       files[w.file] = true;
       nWin++;
     }
@@ -1975,16 +2271,27 @@
   async function _writeEdits(built, opts){
     var deferred = opts && opts.deferred;
     var tgtSuffix = built.tgtSuffix;
-    var res = await window.mimic.uiStudioWriteEdits(STATE.eqDir, built.edits, deferred ? { backupTag: 'eq' } : null);
+    var res = await window.mimic.uiStudioWriteEdits(STATE.eqDir, built.edits, { character: STATE.character, backupTag: deferred ? 'eq' : null });
     if (!res || !res.ok) { setStatus('save failed: ' + (res && res.error ? res.error : 'unknown'), 'err'); return false; }
+    if (built.all === 'rescale') {
+      // Remember the chat sizes this rescale wrote (so doing it again does not shrink them again), and from here on
+      // the canvas IS the saved Target layout: Source follows Target, so the next Save writes only what changes
+      // and another Load + Rescale changes nothing.
+      _fitMemoSave(STATE.windows, STATE.srcSuffix || (STATE.srcW + 'x' + STATE.srcH), tgtSuffix);
+      STATE.srcW = STATE.tgtW; STATE.srcH = STATE.tgtH; STATE.srcSuffix = tgtSuffix; STATE.nativeLoad = true;
+      document.getElementById('srcW').value = STATE.srcW;
+      document.getElementById('srcH').value = STATE.srcH;
+      _syncPresetFromInputs('src');
+      for (var fi = 0; fi < STATE.windows.length; fi++) { STATE.windows[fi].noBlock = false; STATE.windows[fi].fitFrom = null; }
+    }
     _rebaselineWindows(STATE.windows);
     if (INSPECTOR_SAVED) INSPECTOR_SAVED(built.edits);
     var resWarn = '';
     try {
       var disp = await window.mimic.uiStudioListDisplays();
       if (disp && disp.primary && (disp.primary.w !== STATE.tgtW || disp.primary.h !== STATE.tgtH)) {
-        resWarn = ' · ⚠ your monitor is ' + disp.primary.w + '×' + disp.primary.h +
-          ' — set Target to that (🖥 Detect) or EQ reads a different block';
+        resWarn = ' · ⚠ this PC\'s main screen is ' + disp.primary.w + '×' + disp.primary.h +
+          ': if EverQuest runs at that size, set Target to it (🖥 Detect) and save again, or the game will not use this layout';
       }
     } catch (e2) {}
     // A file that is gone from the EQ folder is skipped, never re-created.
@@ -1995,8 +2302,8 @@
       setStatus('✅ applied ' + nFiles + ' file(s) now that ' + STATE.character +
         ' logged out — EQ\'s last copy backed up as .bak-eq. Log back in to see it.' + gone + resWarn, bad ? 'err' : 'ok');
     } else {
-      setStatus('saved ' + nFiles + ' file(s) · ' + built.windows + ' window(s) · wrote ' + tgtSuffix +
-        ' block · log the character in to apply (EQ reads positions at login)' + gone + resWarn, bad ? 'err' : 'ok');
+      setStatus('saved ' + nFiles + ' file(s) · ' + built.windows + ' window(s) as the ' + tgtSuffix.replace('x', '×') +
+        ' layout · log the character in to see it (EverQuest reads window places at login)' + gone + resWarn, bad ? 'err' : 'ok');
     }
     return true;
   }
@@ -2022,8 +2329,19 @@
   async function _queueDefer(built){
     // The queue holds the KEY EDITS, not file texts: they are merged into the
     // file as EQ leaves it on logout, so EQ's own save is never overwritten.
+    // The game writes a place for every window when the character camps. So a window this canvas only GUESSED a
+    // place for (the file had none, and it was not moved here) is left to the game: the edit would land after the
+    // camp and put the guess over where the window really was. The exception is a layout made for another screen
+    // (many windows with no place, _noPlaceCount): there the fitted places are what is being saved.
+    var edits = built.edits;
+    if (!_noPlaceCount().many) edits = edits.filter(function(e){ return !e.guess; });
+    if (!edits.length) {
+      setStatus('nothing to schedule: no window was moved here · the game saves a place for the windows that have none when ' +
+        STATE.character + ' camps', 'ok');
+      return;
+    }
     var res = await window.mimic.uiStudioDeferSave({
-      character: STATE.character, eqDir: STATE.eqDir, edits: built.edits, tgtSuffix: built.tgtSuffix,
+      character: STATE.character, eqDir: STATE.eqDir, edits: edits, tgtSuffix: built.tgtSuffix,
     }).catch(function(e){ return { ok: false, error: e && e.message }; });
     if (!res || !res.ok) { setStatus('could not schedule: ' + (res && res.error ? res.error : 'unknown'), 'err'); return; }
     _showDeferBanner();
@@ -2176,6 +2494,94 @@
     var nn=document.getElementById('ssNew'); if (nn) nn.addEventListener('input', _ssRefreshPreview);
   })();
 
+  // ── Changes since a previous version (the guild lead, 2026-11-11) ──────────
+  // Lists EVERY changed key between a kept version and the files now (main.js 'ui-studio-diff' → iniDiff.js), each
+  // labelled with where it came from. "Hide UI Studio's own changes" leaves the game's, so those can be read alone.
+  var CH = { diff: null };
+  var CH_ORIGIN = {
+    'ui-studio': ['UI Studio', 'var(--wp-blue)'], 'restore': ['UI Studio restore', 'var(--wp-blue)'],
+    'layout': ['UI Studio layout', 'var(--wp-blue)'], 'game': ['in game / elsewhere', 'var(--wp-orange)'],
+    'unknown': ['unknown', 'var(--wp-dim)']
+  };
+  function _chMine(o){ return o === 'ui-studio' || o === 'restore' || o === 'layout'; }
+  function _chSrc(s){
+    return s === 'game' ? 'after a camp' : s === 'ui-studio' ? 'before a UI Studio save' : s === 'restore' ? 'before a restore'
+      : s === 'layout' ? 'before a layout switch' : 'older copy';
+  }
+  function _chVal(v){ return v == null ? '' : (String(v) === '' ? '(empty)' : String(v)); }
+  function _chRow(c){
+    var o = CH_ORIGIN[c.origin] || CH_ORIGIN.unknown;
+    var chip = '<span style="color:' + o[1] + ';font-size:9px;margin-left:8px;white-space:nowrap">' + escapeHtml(o[0]) + '</span>';
+    var val = c.kind === 'added' ? '<span style="color:var(--wp-green)">+ ' + escapeHtml(_chVal(c.new)) + '</span>'
+      : c.kind === 'removed' ? '<span style="color:var(--wp-red)">− ' + escapeHtml(_chVal(c.old)) + ' (removed)</span>'
+      : '<span style="color:var(--wp-dim)">' + escapeHtml(_chVal(c.old)) + '</span> → <span>' + escapeHtml(_chVal(c.new)) + '</span>';
+    return '<div style="padding:1px 0 1px 12px;font-family:var(--wp-font-mono);font-size:11px;word-break:break-all">'
+      + escapeHtml(c.key) + ' &nbsp;' + val + chip + '</div>';
+  }
+  function _chRender(){
+    var d = CH.diff, sum = document.getElementById('chSummary'), body = document.getElementById('chBody');
+    if (!d || !d.ok) { sum.textContent = ''; body.textContent = d && d.error ? d.error : ''; return; }
+    var hide = document.getElementById('chHideMine').checked;
+    var shown = 0, mine = 0, game = 0, unk = 0, html = '', nFiles = 0;
+    d.files.forEach(function(f){
+      var secHtml = '', n = 0;
+      f.sections.forEach(function(s){
+        var rows = s.changes.filter(function(c){ return !(hide && _chMine(c.origin)); });
+        if (!rows.length) return;
+        n += rows.length;
+        secHtml += '<div style="margin:6px 0 2px 8px;color:var(--wp-purple)">[' + escapeHtml(s.section) + ']</div>' + rows.map(_chRow).join('');
+      });
+      f.sections.forEach(function(s){ s.changes.forEach(function(c){
+        if (hide && _chMine(c.origin)) return;
+        if (_chMine(c.origin)) mine++; else if (c.origin === 'game') game++; else unk++;
+      }); });
+      if (!n) return;
+      nFiles++; shown += n;
+      var tag = f.status === 'added' ? ' (new file)' : f.status === 'removed' ? ' (file gone)' : '';
+      html += '<details ' + (n <= 60 ? 'open' : '') + ' style="margin-bottom:8px"><summary style="cursor:pointer;font-weight:600">'
+        + escapeHtml(f.file) + escapeHtml(tag) + ' <span style="color:var(--wp-dim);font-weight:400">— ' + n + ' change' + (n === 1 ? '' : 's') + '</span></summary>'
+        + secHtml + '</details>';
+    });
+    var parts = [];
+    if (game) parts.push(game + ' in game / elsewhere');
+    if (mine) parts.push(mine + ' from UI Studio');
+    if (unk) parts.push(unk + ' unknown');
+    sum.textContent = shown ? shown + ' change' + (shown === 1 ? '' : 's') + ' in ' + nFiles + ' file' + (nFiles === 1 ? '' : 's') + ': ' + parts.join(', ')
+      : (d.total ? 'Only UI Studio\'s own changes — untick "Hide" to see them.' : 'No differences — the files are the same as that version.');
+    body.innerHTML = html;
+    document.getElementById('chLine').textContent = (d.complete ? '' : 'This version is older than the change records, so changes nobody can vouch for are marked "unknown". ')
+      + 'Passwords and chat channels are never shown.';
+  }
+  async function _chLoad(id){
+    var body = document.getElementById('chBody'); body.textContent = 'Reading…';
+    CH.diff = await window.mimic.uiStudioDiff(STATE.character, STATE.eqDir, id).catch(function(e){ return { ok: false, error: String(e) }; });
+    _chRender();
+  }
+  async function _chOpen(){
+    if (!STATE.character || !STATE.eqDir) { setStatus('pick a character first', 'err'); return; }
+    var modal = document.getElementById('chModal'), sel = document.getElementById('chVersion');
+    modal.style.display = 'block';
+    sel.innerHTML = ''; document.getElementById('chSummary').textContent = ''; document.getElementById('chBody').textContent = 'Reading…';
+    var r = await window.mimic.uiStudioVersions(STATE.character, STATE.eqDir).catch(function(e){ return { ok: false, error: String(e) }; });
+    if (!r || !r.ok) { CH.diff = r; _chRender(); return; }
+    r.versions.forEach(function(v){
+      var o = document.createElement('option'); o.value = v.id;
+      o.textContent = new Date(v.at).toLocaleString() + ' — ' + _chSrc(v.source) + (v.same ? ' (same as now)' : '');
+      o.disabled = !!v.same; sel.appendChild(o);
+    });
+    var first = r.versions.filter(function(v){ return !v.same; })[0];
+    if (!first) { CH.diff = null; document.getElementById('chBody').textContent = 'No earlier version differs from the files now yet. A copy is kept after every camp and before anything Mimic writes.'; return; }
+    sel.value = first.id;
+    _chLoad(first.id);
+  }
+  (function(){
+    var b = document.getElementById('changesBtn'); if (b) b.addEventListener('click', _chOpen);
+    var c = document.getElementById('chClose'); if (c) c.addEventListener('click', function(){ document.getElementById('chModal').style.display = 'none'; });
+    var m = document.getElementById('chModal'); if (m) m.addEventListener('click', function(ev){ if (ev.target === m) m.style.display = 'none'; });
+    var s = document.getElementById('chVersion'); if (s) s.addEventListener('change', function(){ _chLoad(s.value); });
+    var h = document.getElementById('chHideMine'); if (h) h.addEventListener('change', _chRender);
+  })();
+
   // A cloud backup loaded into the editor (📥 Restore) is a deliberate restore, often onto a new PC
   // where the files may not exist yet: it keeps writing WHOLE files from the backup, rescaled, as
   // before. Only while the character is logged out — EQ would overwrite it on camp, and a restore
@@ -2206,7 +2612,7 @@
     if (!STATE.character || !STATE.eqDir) { setStatus('nothing to save', 'err'); return; }
     var built = _buildSaveEdits();
     if (STATE.fromCloud) { try { await _saveCloudRestore(built); } catch (e) { setStatus('restore failed: ' + e.message, 'err'); } return; }
-    if (!built.edits.length) { setStatus('nothing to save — no window was moved or resized since Load', 'ok'); return; }
+    if (!built.edits.length) { setStatus('nothing to save: no window was moved or resized since Load, and every window already has a place for this screen size', 'ok'); return; }
     // Is the character logged in right now? If so, a plain Save won't apply
     // (EQ keeps the layout in memory, ignores it on a skin reload, and
     // overwrites the file on the next camp/zone/quit). Offer to schedule.

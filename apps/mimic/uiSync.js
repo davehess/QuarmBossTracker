@@ -15,7 +15,7 @@ const AUTO_LABEL = 'Auto: after camp';
 const NEWER_MODES = ['ask', 'quiet', 'never'];
 // What a newer copy from another PC brings over unless the member picks otherwise. Keybinds are shared by every
 // character on a PC, so they stay off until asked for.
-const DEFAULT_SYNC_PARTS = ['layout', 'hotkeys', 'socials', 'spellsets', 'zeal', 'other'];
+const DEFAULT_SYNC_PARTS = ['layout', 'hotkeys', 'socials', 'spellsets', 'zealchar', 'zeal', 'other'];
 
 const SECRET_RX = /ChannelAutoJoin|password/i;
 
@@ -91,12 +91,45 @@ function suggestScale({ width, height, scaleFactor = 1, inches = null } = {}) {
 function cleanSyncCfg(c) {
   const v = c && typeof c === 'object' ? c : {};
   const parts = Array.isArray(v.parts) ? v.parts.filter(p => typeof p === 'string' && /^[a-z]{2,12}$/.test(p)) : DEFAULT_SYNC_PARTS.slice();
+  // The one 'zeal' part was split into the character's own ('zealchar') and the shared sections (2026-11-11): a choice
+  // saved before that, with Zeal ticked, still means the character's own settings come over.
+  if (parts.includes('zeal') && !parts.includes('zealchar')) parts.push('zealchar');
   return {
-    autoBackup: v.autoBackup === true,
+    // On unless switched off (the guild lead, 2026-11-11: the latest setup should always be in the cloud). It only
+    // ever uploads the signed-in account's own characters and only when their files changed.
+    autoBackup: v.autoBackup !== false,
     newer: NEWER_MODES.includes(v.newer) ? v.newer : 'ask',
     parts,
     since: Number(v.since) || 0,
   };
 }
 
-module.exports = { AUTO_LABEL, NEWER_MODES, DEFAULT_SYNC_PARTS, redactForAutoBackup, bundleHash, newerElsewhere, suggestScale, cleanSyncCfg };
+// ---- "Bring your setup to this computer" (the guild lead, 2026-11-10/11) -------------------------------------
+// A member signed in on someone else's PC and his backups never came down, because Mimic only offers backups for
+// characters it finds on disk. These are the pure decisions; main.js owns the calls and the writes.
+
+// The bot's list of the signed-in account's characters that have backups, each marked with whether this PC has
+// files for it (case-insensitive, EQ names are one word but the case on disk varies). Order is kept.
+function markOnThisPc(accountChars, diskNames) {
+  const on = new Set((diskNames || []).map(n => String(n).toLowerCase()));
+  return (Array.isArray(accountChars) ? accountChars : [])
+    .filter(c => c && typeof c.character === 'string' && c.character)
+    .map(c => ({ ...c, onThisPc: on.has(c.character.toLowerCase()) }));
+}
+
+// Disk characters that are not the signed-in account's: when there are any, this PC is shared with another player.
+function otherCharsOnPc(accountChars, diskNames) {
+  const mine = new Set((accountChars || []).map(c => String(c && c.character || '').toLowerCase()));
+  return (diskNames || []).filter(n => !mine.has(String(n).toLowerCase()));
+}
+
+// Which parts a bring-in restores. Keybinds come from eqclient.ini [KeyMaps], and the 'zeal' part writes Zeal's SHARED
+// sections; every character on the PC shares those. So on a PC that also holds another account's characters both stay
+// off unless the member ticks them (the guild lead, 2026-11-11: a guest's setup must not change the host's own). The
+// character's own Zeal settings ('zealchar') are always on, like the layout (FB-124 / FB-127).
+function defaultParts({ otherAccountsOnPc = false } = {}) {
+  const all = ['layout', 'hotkeys', 'socials', 'spellsets', 'zealchar', 'keybinds', 'zeal', 'other', 'overlays'];
+  return otherAccountsOnPc ? all.filter(k => k !== 'keybinds' && k !== 'zeal') : all;
+}
+
+module.exports = { AUTO_LABEL, NEWER_MODES, DEFAULT_SYNC_PARTS, markOnThisPc, otherCharsOnPc, defaultParts, redactForAutoBackup, bundleHash, newerElsewhere, suggestScale, cleanSyncCfg };

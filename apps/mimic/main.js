@@ -24,6 +24,9 @@
 'use strict';
 
 const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog, screen, safeStorage, Notification, desktopCapturer } = require('electron');
+// One sender check for every handler below (readiness audit #22): installed BEFORE the first ipcMain.on/handle, so
+// call sites stay as they are. agentPort is a `let` declared further down; the getter reads it at call time.
+require('./ipcGuard').installIpcGuard(ipcMain, { appDir: __dirname, getAgentPort: () => agentPort, log: (m) => console.log(m) });
 const path  = require('path');
 const fs    = require('fs');
 const net   = require('net');
@@ -40,6 +43,9 @@ const uiLayouts = require('./uiLayouts');
 const { restorableName, filterRestorable } = require('./uiRestoreGuard');
 const uiRestorePlan = require('./uiRestorePlan');
 const uiSync = require('./uiSync');
+const overlayBackup = require('./overlayBackup');
+const localVersions = require('./localVersions');
+const iniDiff = require('./iniDiff');
 const soundLib = require('./sounds');
 const neuralVoice = require('./neuralVoice');
 const hubs = require('./hubs');
@@ -1731,11 +1737,52 @@ function _backupAndWriteFile(targetPath, contents, backupTag) {
   const bakPath = `${targetPath}.${tag}-${ts}`;
   if (fs.existsSync(targetPath)) {
     fs.copyFileSync(targetPath, bakPath);
+    // eqclient.ini and zeal.ini are shared by every character on the PC: whatever writes them, a dated copy
+    // (newest 10 kept) is taken first (the guild lead, 2026-11-11). A restore already took one in the same second.
+    const base = path.basename(targetPath);
+    if (/^(eqclient|zeal)\.ini$/i.test(base)) localVersions.stampedCopy(path.dirname(targetPath), base);
   }
   const tmp = targetPath + `.tmp-${ts}`;
   fs.writeFileSync(tmp, contents, 'utf8');
   fs.renameSync(tmp, targetPath);
   return bakPath;
+}
+
+// Always keep the previous version (the guild lead, 2026-11-11: "we should always retain previous and show diff to
+// previous"). Every Mimic write over a character's files goes between these two halves: _uiVersionBefore keeps the
+// files as they are (localVersions.js, newest 10, skipped when identical to the newest), _uiVersionAfter records which
+// keys the write changed, so the Changes panel can later tell Mimic's own changes from the game's. `source` says what
+// kind of write it is: 'ui-studio' | 'restore' | 'layout' (the after-camp copy is taken in _uiAutoBackup as 'game').
+// Best effort by design: a copy that cannot be taken never blocks the write. Returns a token for _uiVersionAfter, or
+// null when there was nothing to keep (no character known, or no files yet).
+function _uiVersionBefore(eqDir, character, source) {
+  try {
+    const c = String(character || '').trim();
+    if (!eqDir || !/^[A-Za-z]+$/.test(c)) return null;
+    const before = _readUiBundle(eqDir, c);
+    if (!Object.keys(before).length) return null;
+    const r = localVersions.snapshot(_localVersionsRoot(), c, before, undefined, undefined, { source });
+    return r ? { eqDir, character: c, source, before, id: r.id } : null;
+  } catch { return null; }
+}
+function _uiVersionAfter(tok) {
+  if (!tok) return;
+  try {
+    const keys = iniDiff.changedKeys(tok.before, _readUiBundle(tok.eqDir, tok.character));
+    if (iniDiff.countKeys(keys)) localVersions.noteWrites(_localVersionsRoot(), tok.character, tok.id, { source: tok.source, at: Date.now(), keys });
+  } catch { /* the record is a label, never a reason to fail the write */ }
+}
+function _uiVersioned(eqDir, character, source, fn) {
+  const tok = _uiVersionBefore(eqDir, character, source);
+  try { return fn(); } finally { _uiVersionAfter(tok); }
+}
+// Some write paths are handed file names, not a character: UI_<Name>_pq.proj.ini, Sock_<Name>_..., <Name>_spellsets.ini.
+function _uiCharFromIniNames(names) {
+  for (const n of Array.isArray(names) ? names : []) {
+    const m = /^(?:UI_|Sock_|Socials_)?([A-Za-z]+)_/.exec(path.basename(String(n || '')));
+    if (m) return m[1];
+  }
+  return null;
 }
 
 // UI Studio's key-level save (the guild lead, 2026-10-05: "A for UI Studio").
@@ -1834,7 +1881,7 @@ function _uiLayoutStore() {
 }
 function _applyDeferredLayout(entry) {
   let r;
-  try { r = _uiLayoutStore().apply(entry.character, entry.eqDir, entry.layoutId, { backupTag: 'eq' }); }
+  try { r = _uiVersioned(entry.eqDir, entry.character, 'layout', () => _uiLayoutStore().apply(entry.character, entry.eqDir, entry.layoutId, { backupTag: 'eq' })); }
   catch (err) { r = { ok: false, error: err && err.message }; }
   if (!r.ok) { appendAgentLog(`[ui-studio] queued layout switch for ${entry.character} not applied: ${r.error}\n`); return false; }
   appendAgentLog(`[ui-studio] switched ${entry.character} to layout "${r.name}" (${r.written.length} file(s)) after logout\n`);
@@ -1859,7 +1906,7 @@ function _applyDeferredEntry(entry) {
     return false;
   }
   try {
-    const r = _applyUiKeyEdits(entry.eqDir, entry.edits, 'eq');
+    const r = _uiVersioned(entry.eqDir, entry.character, 'ui-studio', () => _applyUiKeyEdits(entry.eqDir, entry.edits, 'eq'));
     written = r.written.length;
     if (r.missing.length) appendAgentLog(`[ui-studio] deferred save for ${entry.character}: not found, skipped: ${r.missing.join(', ')}\n`);
   } catch (err) { appendAgentLog(`[ui-studio] deferred apply failed for ${entry.character}: ${err && err.message}\n`); return false; }
@@ -1885,15 +1932,23 @@ async function _tickUiDeferred() {
       if (_uiCharActiveInZeal(charLower)) { entry.sawActive = true; keep.push(entry); continue; }
       // Keybinds live in eqclient.ini, which EVERY running EverQuest writes on exit: a restore that carries
       // them waits for all of EverQuest to close, not just this character's camp.
-      if (entry.kind === 'restore' && (entry.parts || []).includes('keybinds')) {
+      // Zeal's shared sections ride in the same two files, so they wait the same way.
+      const ownOnly = entry.kind === 'restore' && !_uiNeedsEqClosed(entry.parts);
+      if (entry.kind === 'restore' && !ownOnly) {
         if (eqUp === null) { try { eqUp = await _isEqRunning(); } catch { eqUp = false; } }
         if (eqUp) { keep.push(entry); continue; }
       }
       // Not in Zeal. Apply when we previously saw it in-game (logged out now),
       // or it was never in-game AND no EverQuest is running (nothing to clobber).
+      // A restore of only this character's own files has nothing to clobber while ANOTHER character plays, so it
+      // waits only for this character's own log to go quiet (it may be in game with the Zeal pipe down).
       if (!entry.sawActive) {
-        if (eqUp === null) { try { eqUp = await _isEqRunning(); } catch { eqUp = false; } }
-        if (eqUp) { keep.push(entry); continue; }   // EQ up, char not seen → wait
+        if (ownOnly) {
+          if (_uiCharLogFresh(entry.eqDir, charLower)) { keep.push(entry); continue; }
+        } else {
+          if (eqUp === null) { try { eqUp = await _isEqRunning(); } catch { eqUp = false; } }
+          if (eqUp) { keep.push(entry); continue; }   // EQ up, char not seen → wait
+        }
       }
       // Stabilization: let EQ finish its logout write before we overwrite.
       if (Date.now() - (entry.queuedAt || 0) < 6000) { keep.push(entry); continue; }
@@ -6822,8 +6877,15 @@ function openLocalSite(page) {
 // section, rescales 1440 → 1080 (or any source→target res), lets the user
 // drag/resize windows with snap-to-edges, then writes back with .bak
 // backups. Lets users prep a UI for a new monitor without launching EQ.
-function openUiStudio() {
-  if (uiStudioWindow) { uiStudioWindow.focus(); return; }
+// `goto` = { character, eqDir, chat: true }: open on that character with the chat-routing inspector (the bring-in
+// card's "Sort your chat channels", FB-125). An open window is told; a new one is told once its page has loaded.
+function _sendUiStudioGoto(goto) {
+  if (!goto || !uiStudioWindow || uiStudioWindow.isDestroyed()) return;
+  const send = () => { try { uiStudioWindow.webContents.send('ui-studio-goto', goto); } catch { /* window closing */ } };
+  if (uiStudioWindow.webContents.isLoading()) uiStudioWindow.webContents.once('did-finish-load', send); else send();
+}
+function openUiStudio(goto) {
+  if (uiStudioWindow) { uiStudioWindow.focus(); _sendUiStudioGoto(goto); return; }
   uiStudioWindow = new BrowserWindow({
     width: 1200, height: 780, title: 'Raid Mimic — UI Studio',
     backgroundColor: '#0d1117',
@@ -6833,6 +6895,7 @@ function openUiStudio() {
   uiStudioWindow.setMenu(null);
   uiStudioWindow.loadFile('ui-studio.html');
   uiStudioWindow.on('closed', () => { uiStudioWindow = null; });
+  _sendUiStudioGoto(goto);
 }
 
 // Read a character's full ini bundle (existing UI Studio capture helper
@@ -6857,7 +6920,8 @@ ipcMain.handle('ui-studio-write-edits', (_e, eqDir, edits, opts) => {
       return { ok: false, error: 'eqDir does not exist: ' + d };
     }
     const backupTag = (opts && /^[\w-]{1,16}$/.test(String(opts.backupTag || ''))) ? String(opts.backupTag) : null;
-    const r = _applyUiKeyEdits(d, edits, backupTag);
+    const who = opts && /^[A-Za-z]+$/.test(String(opts.character || '')) ? String(opts.character) : _uiCharFromIniNames(edits.map(e => e && e.file));
+    const r = _uiVersioned(d, who, 'ui-studio', () => _applyUiKeyEdits(d, edits, backupTag));
     return { ok: true, written: r.written, unchanged: r.unchanged, missing: r.missing, count: r.written.length };
   } catch (err) {
     return { ok: false, error: err && err.message ? err.message : String(err) };
@@ -6883,6 +6947,7 @@ ipcMain.handle('ui-studio-write-bundle', (_e, eqDir, bundle, opts) => {
     // copy was EQ's own last-written layout, not a prior UI Studio save.
     const backupTag = (opts && /^[\w-]{1,16}$/.test(String(opts.backupTag || ''))) ? String(opts.backupTag) : null;
     const written = [];
+    const ver = _uiVersionBefore(d, opts && /^[A-Za-z]+$/.test(String(opts.character || '')) ? String(opts.character) : _uiCharFromIniNames(Object.keys(bundle)), 'ui-studio');
     for (const [name, contents] of Object.entries(bundle)) {
       if (typeof contents !== 'string' || contents.length === 0) continue;
       // Sanity: only allow plain ini filenames in the EQ dir — no path
@@ -6892,6 +6957,7 @@ ipcMain.handle('ui-studio-write-bundle', (_e, eqDir, bundle, opts) => {
       _backupAndWriteFile(target, contents, backupTag);
       written.push(name);
     }
+    _uiVersionAfter(ver);
     return { ok: true, written, count: written.length };
   } catch (err) {
     return { ok: false, error: err && err.message ? err.message : String(err) };
@@ -6901,7 +6967,12 @@ ipcMain.handle('ui-studio-write-bundle', (_e, eqDir, bundle, opts) => {
 // Open UI Studio from the dashboard nav button. Same entry point as the
 // tray menu item — openUiStudio focuses the existing window if one is
 // already open instead of stacking duplicates.
-ipcMain.handle('open-ui-studio', () => { openUiStudio(); return true; });
+ipcMain.handle('open-ui-studio', (_e, goto) => {
+  const g = goto && typeof goto === 'object' && /^[A-Za-z]+$/.test(String(goto.character || ''))
+    ? { character: String(goto.character), eqDir: String(goto.eqDir || ''), chat: goto.chat === true } : null;
+  openUiStudio(g);
+  return true;
+});
 
 // ── PvP Sets (bundled in apps/mimic/pvp-sets/) ─────────────────────────────
 // Shared rotations contributed by guildies — pre-built hotkey pages,
@@ -7220,6 +7291,7 @@ ipcMain.handle('ui-studio-write-pages', (_e, eqDir, edits) => {
       });
     }
     const written = [];
+    const ver = _uiVersionBefore(d, _uiCharFromIniNames([...byFile.keys()]), 'ui-studio');
     for (const [fp, eds] of byFile) {
       const orig = fs.readFileSync(fp, 'utf8');
       // The shared key-level walk (iniKeyEdits.js — also what Studio's Save
@@ -7232,6 +7304,7 @@ ipcMain.handle('ui-studio-write-pages', (_e, eqDir, edits) => {
       fs.writeFileSync(fp, next);
       written.push({ file: path.basename(fp), bak: path.basename(bakPath) });
     }
+    _uiVersionAfter(ver);
     return { ok: true, written };
   } catch (err) {
     return { ok: false, error: err && err.message };
@@ -11718,18 +11791,24 @@ function _agentVersionNewer(a, b) {
   }
   return false;
 }
-function _httpsGetBuffer(url) {
-  const lib = new URL(url).protocol === 'http:' ? require('http') : require('https');
+const _agentSig = require('./agentSignature');
+// The agent download: https only, allowlisted host + repo path, same-host redirects only (audit #6).
+function _httpsGetBuffer(url, hops = 0) {
+  const chk = _agentSig.checkUrl(url);
+  if (!chk.ok) return Promise.reject(new Error('agent download refused: ' + chk.reason));
   return new Promise((resolve, reject) => {
-    const req = lib.get(url, { timeout: 30000 }, (res) => {
-      // Follow a single redirect (GitHub raw → CDN).
+    const req = require('https').get(url, { timeout: 30000 }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         res.resume();
-        return resolve(_httpsGetBuffer(res.headers.location));
+        if (hops >= 3) return reject(new Error('too many redirects'));
+        const to = new URL(res.headers.location, url).href;
+        const rc = _agentSig.checkRedirect(url, to);
+        if (!rc.ok) return reject(new Error('agent download refused: ' + rc.reason));
+        return resolve(_httpsGetBuffer(to, hops + 1));
       }
       if (res.statusCode !== 200) { res.resume(); return reject(new Error('HTTP ' + res.statusCode)); }
-      const chunks = [];
-      res.on('data', (c) => chunks.push(c));
+      const chunks = []; let n = 0;
+      res.on('data', (c) => { n += c.length; if (n > 20 * 1024 * 1024) return req.destroy(new Error('too large')); chunks.push(c); });
       res.on('end', () => resolve(Buffer.concat(chunks)));
     });
     req.on('error', reject);
@@ -11848,17 +11927,32 @@ async function checkAgentUpdate(opts) {
 
     appendAgentLog(`[mimic] agent update ${current} → ${latest} available; downloading…\n`);
     const buf = await _httpsGetBuffer(url);
+    let hashOk = true;
     if (sha) {
-      const crypto = require('crypto');
-      const got = crypto.createHash('sha256').update(buf).digest('hex');
+      const got = require('crypto').createHash('sha256').update(buf).digest('hex');
       if (got.toLowerCase() !== String(sha).toLowerCase()) {
         // Common + benign during the Railway redeploy window: the bot still
         // serves its OLD image's sha while `url` (GitHub main) already has the
         // new file. Fail safe — keep the working agent, retry next cycle.
         appendAgentLog(`[mimic] agent update held: sha256 mismatch (bot redeploy in progress?) expected ${String(sha).slice(0,12)}… got ${got.slice(0,12)}…\n`);
-        return;
+        hashOk = false;
       }
     }
+    // Audit #6 — Ed25519 signature over the exact bytes, published at <url>.sig. The .sig URL is derived
+    // here from the checked url, never taken from the bot. SIG_MODE is a build constant (agentSignature.js).
+    let sigResult = null;
+    // No trusted key in this build yet: nothing could verify, so the .sig is not fetched (verify answers "no-keys").
+    if (hashOk && _agentSig.normalizeMode(_agentSig.SIG_MODE) !== 'off' && !_agentSig.TRUSTED_PUBLIC_KEYS.length) {
+      sigResult = _agentSig.verifyAgentSignature(buf, '');
+    } else if (hashOk && _agentSig.normalizeMode(_agentSig.SIG_MODE) !== 'off') {
+      try {
+        const sigBuf = await _httpsGetBuffer(url + '.sig');
+        sigResult = _agentSig.verifyAgentSignature(buf, sigBuf.toString('utf8'));
+      } catch (e) { sigResult = null; appendAgentLog(`[mimic] agent signature not fetched: ${e && e.message}\n`); }
+    }
+    const decision = _agentSig.decideUpdate({ mode: _agentSig.SIG_MODE, hashOk, sig: sigResult });
+    if (decision.log && hashOk) appendAgentLog(`[mimic] agent ${latest} ${decision.log}\n`);   // a hash miss already logged its own line above
+    if (!decision.accept) return;
     // #74 Part 3 — snapshot the CURRENT working agent as last-known-good BEFORE
     // we overwrite it, so a crash-loop on the new version can auto-revert.
     _saveAgentLkg();
@@ -13891,8 +13985,10 @@ ipcMain.handle('ui-studio-defer-save', (_e, params) => {
     const edits     = _cleanUiKeyEdits(params?.edits);
     if (!character || !eqDir || !edits.length) return { ok: false, error: 'character + eqDir + edits required' };
     const charLower = character.toLowerCase();
-    // A queued layout switch stays: edits queued after it apply on top once it has run.
-    _uiDeferred = _uiDeferred.filter(e => !(String(e.character).toLowerCase() === charLower && e.eqDir === eqDir && e.kind !== 'layout'));
+    // A queued layout switch stays: edits queued after it apply on top once it has run. So does a queued bring-in
+    // (kind 'restore'): a Save made while one waits used to drop it without a word, and the setup never arrived.
+    _uiDeferred = _uiDeferred.filter(e => !(String(e.character).toLowerCase() === charLower && e.eqDir === eqDir
+      && e.kind !== 'layout' && e.kind !== 'restore'));
     _uiDeferred.push({
       character, eqDir, edits,
       tgtSuffix: params?.tgtSuffix || null,
@@ -13952,7 +14048,9 @@ ipcMain.handle('ui-studio-layout-switch', async (_e, params) => {
   const id = String(params && params.id || '');
   let eqRunning = _uiCharActiveInZeal(a.c.toLowerCase());
   if (!eqRunning) { try { eqRunning = await _isEqRunning(); } catch { eqRunning = false; } }
-  return _layoutCall(s => s.switchTo(a.c, a.d, id, { eqRunning, queue: _queueUiLayoutSwitch }));
+  // Queued (EQ up) writes nothing now; written now, the files as they were are kept first.
+  const doSwitch = () => _layoutCall(s => s.switchTo(a.c, a.d, id, { eqRunning, queue: _queueUiLayoutSwitch }));
+  return eqRunning ? doSwitch() : _uiVersioned(a.d, a.c, 'layout', doSwitch);
 });
 ipcMain.handle('ui-studio-layout-cancel-switch', (_e, params) => {
   const c = String(params && params.character || '').trim().toLowerCase(), d = String(params && params.eqDir || '').trim();
@@ -13994,8 +14092,32 @@ function _eqResOf(files) {
   }
   return w > 0 && h > 0 ? { w, h } : null;
 }
+// A display's size in REAL pixels. Electron reports a display in Windows' scaled units: a 2560x1440 screen set to 150%
+// reads 1707x960, and UI Studio then offered that as the game's screen size. EverQuest counts real pixels. Windows can
+// convert exactly; elsewhere multiply by the scale and round to an even number (1707 x 1.5 is 2560.5).
+function _displayPixels(d) {
+  try {
+    if (process.platform === 'win32' && typeof screen.dipToScreenRect === 'function') {
+      const r = screen.dipToScreenRect(null, d.bounds);
+      if (r && r.width > 0 && r.height > 0) return { w: r.width, h: r.height };
+    }
+  } catch { /* fall through to the arithmetic */ }
+  const sf = d.scaleFactor > 0 ? d.scaleFactor : 1;
+  const even = (n) => Math.round(n * sf / 2) * 2;
+  return sf === 1 ? { w: d.size.width, h: d.size.height } : { w: even(d.size.width), h: even(d.size.height) };
+}
 function _primarySize() {
-  try { const d = screen.getPrimaryDisplay(); return { w: d.size.width, h: d.size.height }; } catch { return null; }
+  try { return _displayPixels(screen.getPrimaryDisplay()); } catch { return null; }
+}
+// The active skin's window sizes on this PC as { name: { w, h } }, for fitting a layout whose ini gives a window no
+// size (uiRestorePlan.fitLayout). Empty when the EQ folder or the skin cannot be read.
+function _uiSkinSizes(eqDir) {
+  const out = {};
+  try {
+    const scan = _scanSkinWindowSizes(eqDir, { withDefault: true });
+    for (const k of Object.keys((scan && scan.ok && scan.sizes) || {})) out[k] = { w: scan.sizes[k].cx, h: scan.sizes[k].cy };
+  } catch { /* no skin: sizes fall back to the stand-in */ }
+  return out;
 }
 function _thisMachine() { try { return require('os').hostname(); } catch { return null; } }
 function _uiEqDirs() {
@@ -14029,7 +14151,90 @@ async function _fetchUiSnapshot(cfg, token, character, id) {
   const snap = await _httpsJson(`${_botBaseUrl(cfg)}/api/agent/ui_layout/${encodeURIComponent(id)}?character=${encodeURIComponent(character)}`,
     { headers: { 'Authorization': `Bearer ${token}` } });
   if (!snap || !snap.files) throw new Error('snapshot empty');
-  return { ...snap, files: filterRestorable(snap.files).files };   // UI settings files only (uiRestoreGuard.js)
+  // Mimic's own overlay layout is taken out BEFORE the filter: it is not an EQ file and never goes to the EQ folder.
+  const overlays = typeof snap.files[overlayBackup.FILE] === 'string' ? overlayBackup.parse(snap.files[overlayBackup.FILE]) : null;
+  return { ...snap, overlays, files: filterRestorable(snap.files).files };   // UI settings files only (uiRestoreGuard.js)
+}
+// A restore source: a cloud backup, or a version Mimic kept on this computer ('local-<stamp>', localVersions.js).
+async function _loadUiSource(cfg, token, character, id) {
+  if (localVersions.isLocalId(id)) {
+    const files = localVersions.readVersion(_localVersionsRoot(), character, id);
+    if (!files) throw new Error('that saved version is gone');
+    return { files: filterRestorable(files).files, overlays: null, source_width: _eqResOf(files) ? _eqResOf(files).w : null,
+      source_height: _eqResOf(files) ? _eqResOf(files).h : null, label: null, local: true };
+  }
+  if (!token) throw new Error('no token configured');
+  return _fetchUiSnapshot(cfg, token, character, id);
+}
+function _localVersionsRoot() { return path.join(app.getPath('userData'), 'char-versions'); }
+// Was this backup made on THIS computer (a version Mimic kept here, or a cloud backup carrying this PC's name)? Such
+// a backup is put back as it was: its layout is not re-fitted from the screen size the game ran at that day.
+function _uiSameMachine(snap) {
+  if (!snap) return false;
+  if (snap.local === true) return true;
+  const me = _thisMachine();
+  return !!me && typeof snap.machine_name === 'string' && snap.machine_name === me;
+}
+
+// ── Overlay positions as a part of a backup (the guild lead, 2026-11-11) ─────────────────────────────────────
+function _overlayBackupText() {
+  try {
+    if (_agentOnly()) return null;
+    const cfg = loadConfig();
+    const sig = _screenSignature();
+    const flagsSrc = _hideAllActive && _hideAllPrev ? _hideAllPrev : cfg;       // hide-all has every flag off in cfg
+    const flags = {};
+    for (const f of _HIDEALL_FLAGS) flags[f] = f === 'showTriggerOverlay' ? flagsSrc[f] !== false : !!flagsSrc[f];
+    const remembered = ((cfg.overlayLayoutBySig || {})[sig] || {}).rects || {};
+    const rects = Object.assign({}, remembered, _overlayRectsNow());
+    const eq = _eqMainWindow(10 * 60 * 1000);
+    return overlayBackup.build({
+      rects, flags, sig, machine: _thisMachine(), now: Date.now(),
+      displays: screen.getAllDisplays().map(d => d.bounds),
+      eq: eq ? { x: eq.client.x, y: eq.client.y, width: eq.client.width, height: eq.client.height } : null,
+    });
+  } catch { return null; }
+}
+// Fit a backup's overlay layout onto THIS computer's screens, with the same planner the screen-change question
+// uses (an overlay keeps its side: with EverQuest's screen or on another one), then bring anything still off every
+// screen to EverQuest's. Written to the saved layout either way; windows are moved and shown/hidden only while
+// overlays are locked and not being dragged, otherwise it takes effect at the next Mimic start.
+function _applyOverlayBackup(ob) {
+  if (!ob || _agentOnly()) return { applied: false };
+  const cfg = loadConfig();
+  const curSig = _screenSignature();
+  const eqWin = _eqMainWindow();
+  let target;
+  try { target = eqWin ? screen.getDisplayMatching(eqWin.client) : screen.getPrimaryDisplay(); } catch { target = screen.getPrimaryDisplay(); }
+  const displays = screen.getAllDisplays();
+  let rects = ob.rects;
+  if (ob.sig && ob.sig !== curSig) {
+    const plan = _displayChangePlan({
+      prevSig: ob.sig, curSig, memory: { [ob.sig]: { rects: ob.rects, eq: ob.eq } }, currentRects: ob.rects,
+      curDisplays: displays.map(d => ({ bounds: d.bounds, workArea: d.workArea })),
+      target: { bounds: target.bounds, workArea: target.workArea },
+    });
+    rects = Object.assign({}, ob.rects, plan.moves);
+  }
+  rects = overlayBackup.landOnScreens(rects, displays.map(d => d.workArea), target.workArea);
+  for (const [k, r] of Object.entries(rects)) {
+    if (!/Bounds(_|$)/.test(k) || k.startsWith('canvas:')) continue;          // only keys the windows restore from
+    cfg[k] = r;
+    _rememberLayout(cfg, curSig, k, r);
+  }
+  const flagStore = _hideAllActive && _hideAllPrev ? _hideAllPrev : cfg;
+  for (const [f, v] of Object.entries(ob.flags)) if (_HIDEALL_FLAGS.includes(f)) flagStore[f] = v;
+  saveConfig(cfg);
+  const live = cfg.overlaysLocked !== false && !setupMode;
+  if (live) {
+    for (const [key, win] of _overlayEntries()) {
+      const bk = _boundsKeyForEntry(key, win);
+      if (bk && rects[bk] && win && !win.isDestroyed() && !_holdForMove(win, 'overlay backup restore')) { try { win.setBounds(rects[bk]); } catch { /* mid-close */ } }
+    }
+    if (!_hideAllActive) { try { applyAllVisibility(); } catch { /* next start */ } }
+  }
+  appendAgentLog(`[ui-restore] overlay positions applied (${Object.keys(rects).length} overlay(s), ${live ? 'now' : 'at next start'})\n`);
+  return { applied: true, live, count: Object.keys(rects).length };
 }
 // The character's main layout file (UI_<char>_pq.proj.ini, else any UI_<char>*.ini), for the preview.
 function _uiMainLayoutText(files, character) {
@@ -14040,22 +14245,76 @@ function _uiMainLayoutText(files, character) {
   return name ? files[name] : null;
 }
 // Why a restore cannot write now: 'camp' (the character is in game), 'close' (EverQuest is running), or null.
-async function _uiEqBusyFor(character) {
-  if (_uiCharActiveInZeal(String(character).toLowerCase())) return 'camp';
+// The parts that write the two files EVERY running EverQuest rewrites when it exits (eqclient.ini, zeal.ini): those wait
+// for all of EverQuest to close. Every other part writes only this character's own files, which only this character's
+// client rewrites (a member, 2026-11-11, FB-126 / FB-127: with the guild lead's EverQuest running, a bring-in of a
+// character that was not logged in anywhere was queued "until EverQuest closes" and so never landed in the session).
+// 'zealchar' is the character's own sections, but they sit INSIDE those two shared files, so it waits as well.
+function _uiNeedsEqClosed(parts) {
+  return !Array.isArray(parts) || parts.some(k => k === 'keybinds' || k === 'zeal' || k === 'zealchar');
+}
+// A character that is in game without Zeal's pipe reporting it (the pipe fails on some PCs) still writes its log.
+function _uiCharLogFresh(eqDir, charLower) {
+  try {
+    for (const f of fs.readdirSync(eqDir)) {
+      if (!_isEqLogFile(eqDir, f)) continue;
+      const n = _characterFromLogName(f);
+      if (!n || n.toLowerCase() !== charLower) continue;
+      if (Date.now() - fs.statSync(path.join(eqDir, f)).mtimeMs < 120000) return true;
+    }
+  } catch { /* no folder to look in */ }
+  return false;
+}
+async function _uiEqBusyFor(character, parts, eqDir) {
+  const cl = String(character).toLowerCase();
+  // A half that writes eqclient.ini / zeal.ini waits for EverQuest to close even when this character is the one
+  // logged in: answering "camp" there promised something the queue does not do (it holds that half until every
+  // client is closed). With no part list (the compare card asking about the character as a whole) it stays "camp".
+  if (_uiCharActiveInZeal(cl)) return Array.isArray(parts) && _uiNeedsEqClosed(parts) ? 'close' : 'camp';
   let up = false;
   try { up = await _isEqRunning(); } catch { up = false; }
-  return up ? 'close' : null;
+  if (!up) return null;
+  if (_uiNeedsEqClosed(parts)) return 'close';
+  return eqDir && _uiCharLogFresh(eqDir, cl) ? 'camp' : null;
+}
+// The resolution EverQuest runs at on THIS PC, which the layout is fitted to (the guild lead, 2026-11-11: "resized for
+// the window"): eqclient.ini [VideoMode] when it holds one, else the EverQuest window that is open, else the screen.
+async function _uiTargetRes(local) {
+  const ini = _eqResOf(local);
+  if (ini) return { ...ini, from: 'eqclient.ini' };
+  try {
+    await _eqWindowGeometry(3000);
+    const win = _eqMainWindow(10000);
+    if (win) return { w: Math.round(win.client.width), h: Math.round(win.client.height), from: 'the EverQuest window' };
+  } catch { /* no window to measure */ }
+  const s = _primarySize();
+  return s ? { ...s, from: 'the screen' } : null;
 }
 function _uiPartKeys(parts) {
-  return (Array.isArray(parts) ? parts : []).filter(k => uiRestorePlan.PARTS.some(p => p.key === k));
+  // 'overlays' is Mimic's own overlay layout (overlayBackup.js); the rest are EverQuest's files (uiRestorePlan.PARTS).
+  return (Array.isArray(parts) ? parts : []).filter(k => k === 'overlays' || uiRestorePlan.PARTS.some(p => p.key === k));
+}
+// The two files every character on this PC shares get a dated copy before ANY restore touches the folder, whether
+// or not their parts are ticked (the guild lead, 2026-11-11): a keybind or Zeal section, or a write from another
+// path, must always be undoable. _backupAndWriteFile adds the same copy for every other write to them.
+function _uiSafetyCopies(eqDir) {
+  const out = [];
+  for (const n of ['eqclient.ini', 'zeal.ini']) { const c = localVersions.stampedCopy(eqDir, n); if (c) out.push(c); }
+  return out;
 }
 // Merge the chosen parts of a backup into the files as they are on disk NOW, and write what changed.
+// Returns the names written; `.savedCopies` lists the dated copies taken first, `.overlays` the overlay result.
 function _uiWriteRestore(entry, backupTag) {
+  const savedCopies = _uiSafetyCopies(entry.eqDir);
   const local = _readUiBundle(entry.eqDir, entry.character);
-  const target = _eqResOf(local) || _primarySize();
+  // The undo copy; _uiVersionAfter below records which keys the restore changed.
+  const ver = _uiVersionBefore(entry.eqDir, entry.character, 'restore');
+  // eqclient.ini as it is NOW, else what was measured when the restore was asked for (a queued one), else the screen.
+  const target = _eqResOf(local) || entry.target || _primarySize();
   const r = uiRestorePlan.buildRestore({
     backupFiles: entry.files, localFiles: local, character: entry.character,
     parts: _uiPartKeys(entry.parts), knownChars: _knownCharsIn(entry.eqDir, entry.character), target,
+    skinSizes: _uiSkinSizes(entry.eqDir), sameMachine: !!entry.sameMachine,
   });
   const written = [];
   for (const [name, text] of Object.entries(r.writes || {})) {
@@ -14063,11 +14322,19 @@ function _uiWriteRestore(entry, backupTag) {
     _backupAndWriteFile(path.join(entry.eqDir, name), text, backupTag || null);
     written.push(name);
   }
+  _uiVersionAfter(ver);
+  written.savedCopies = savedCopies;
+  written.fileParts = r.fileParts || {};
+  written.overlays = _uiPartKeys(entry.parts).includes('overlays') && entry.overlays ? _applyOverlayBackup(entry.overlays) : null;
   return written;
 }
 function _queueUiRestore(entry) {
   const cl = String(entry.character).toLowerCase();
-  _uiDeferred = _uiDeferred.filter(e => !(e.kind === 'restore' && String(e.character).toLowerCase() === cl && e.eqDir === entry.eqDir));
+  // A restore is queued in up to two halves (own files until the character camps, shared-file parts until EverQuest
+  // closes); a new half replaces only the same half for that character.
+  const shared = _uiNeedsEqClosed(entry.parts);
+  _uiDeferred = _uiDeferred.filter(e => !(e.kind === 'restore' && String(e.character).toLowerCase() === cl && e.eqDir === entry.eqDir
+    && _uiNeedsEqClosed(e.parts) === shared));
   _uiDeferred.push({ ...entry, kind: 'restore', queuedAt: Date.now(), sawActive: _uiCharActiveInZeal(cl) });
   _saveUiDeferred();
 }
@@ -14092,27 +14359,36 @@ ipcMain.handle('ui-restore-plan', async (_e, params) => {
   if (!character || !eqDir || !id) return { ok: false, error: 'character + eqDir + id required' };
   const cfg = loadConfig();
   const token = resolveUploadToken(cfg);
-  if (!token) return { ok: false, error: 'no token configured' };
+  if (!token && !localVersions.isLocalId(id)) return { ok: false, error: 'no token configured' };
   try {
-    const snap = await _fetchUiSnapshot(cfg, token, character, id);
+    const snap = await _loadUiSource(cfg, token, character, id);
     const local = _readUiBundle(eqDir, character);
     const knownChars = _knownCharsIn(eqDir, character);
-    const target = _eqResOf(local) || _primarySize();
+    const target = await _uiTargetRes(local);
+    const skinSizes = _uiSkinSizes(eqDir);
+    const sameMachine = _uiSameMachine(snap);
     const parts = uiRestorePlan.PARTS.map(p => ({ key: p.key, label: p.label, scope: p.scope,
-      ...uiRestorePlan.compare(p.key, snap.files, local, character, { knownChars, target }) }));
+      ...uiRestorePlan.compare(p.key, snap.files, local, character, { knownChars, target, skinSizes, sameMachine }) }));
+    // Mimic's own overlay layout: a part of its own when the backup holds one (no per-item compare; it is a layout).
+    if (snap.overlays) {
+      const n = Object.keys(snap.overlays.rects).length;
+      parts.push({ key: 'overlays', label: 'Overlay positions', scope: 'pc', inBackup: n, same: false, added: n, changed: 0, removed: 0,
+        summary: n + ' overlay' + (n === 1 ? '' : 's') + ', fitted to this PC\'s screens' });
+    }
     const bl = _uiMainLayoutText(snap.files, character), ml = _uiMainLayoutText(local, character);
-    const fitted = bl && target ? uiRestorePlan.fitLayout(bl, target.w, target.h).text : null;
+    const fitted = bl && target
+      ? uiRestorePlan.fitLayout(bl, target.w, target.h, uiRestorePlan.fitOpts(snap.files, skinSizes, target, sameMachine)).text : null;
     return {
       ok: true,
       source: { machine: params?.machine ? String(params.machine).slice(0, 64) : null,
         w: snap.source_width || null, h: snap.source_height || null, label: snap.label || null },
-      target: { machine: _thisMachine(), w: target ? target.w : null, h: target ? target.h : null },
+      target: { machine: _thisMachine(), w: target ? target.w : null, h: target ? target.h : null, from: target ? target.from : null },
       parts,
       preview: {
         backup: fitted ? uiRestorePlan.windowRects(fitted, target.w, target.h) : [],
         mine: ml && target ? uiRestorePlan.windowRects(ml, target.w, target.h) : [],
       },
-      busy: await _uiEqBusyFor(character),
+      busy: await _uiEqBusyFor(character, undefined, eqDir),
     };
   } catch (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
 });
@@ -14125,18 +14401,39 @@ ipcMain.handle('ui-restore-parts', async (_e, params) => {
   if (!parts.length) return { ok: false, error: 'pick at least one part to restore' };
   const cfg = loadConfig();
   const token = resolveUploadToken(cfg);
-  if (!token) return { ok: false, error: 'no token configured' };
+  if (!token && !localVersions.isLocalId(id)) return { ok: false, error: 'no token configured' };
   try {
-    const snap = await _fetchUiSnapshot(cfg, token, character, id);
-    _uiSyncPatchState(character, { seenId: id });
-    const busy = await _uiEqBusyFor(character);
-    if (busy) {
-      _queueUiRestore({ character, eqDir, files: snap.files, parts, label: snap.label || null });
-      return { ok: true, queued: true, busy };
+    const snap = await _loadUiSource(cfg, token, character, id);
+    if (!localVersions.isLocalId(id)) _uiSyncPatchState(character, { seenId: id });
+    // The size the layout is fitted to is measured now (the EverQuest window needs an async look); a queued
+    // restore keeps it for the case eqclient.ini has no [VideoMode] when it applies.
+    const target = await _uiTargetRes(_readUiBundle(eqDir, character));
+    const sameMachine = _uiSameMachine(snap);
+    // Two halves, so one never holds the other back: the character's own files go now (or when that character camps),
+    // and the parts inside eqclient.ini / zeal.ini wait for EverQuest to close, since a running client rewrites them.
+    const halves = [parts.filter(k => !_uiNeedsEqClosed([k])), parts.filter(k => _uiNeedsEqClosed([k]))].filter(g => g.length);
+    const queued = [];
+    const written = [], fileParts = {}, savedCopies = [];
+    let overlays = null;
+    for (const g of halves) {
+      const busy = await _uiEqBusyFor(character, g, eqDir);
+      if (busy) {
+        _queueUiRestore({ character, eqDir, files: snap.files, overlays: snap.overlays || null, parts: g, label: snap.label || null, target, sameMachine });
+        queued.push({ parts: g, busy });
+        continue;
+      }
+      const w = _uiWriteRestore({ character, eqDir, files: snap.files, overlays: snap.overlays || null, parts: g, target, sameMachine });
+      for (const n of w) if (!written.includes(n)) written.push(n);
+      for (const [n, ps] of Object.entries(w.fileParts || {})) fileParts[n] = [...new Set([...(fileParts[n] || []), ...ps])];
+      for (const s of (w.savedCopies || [])) if (!savedCopies.includes(s)) savedCopies.push(s);
+      if (w.overlays) overlays = w.overlays;
     }
-    const written = _uiWriteRestore({ character, eqDir, files: snap.files, parts });
-    _uiSyncPatchState(character, { lastSyncAt: Date.now() });
-    return { ok: true, queued: false, written };
+    if (written.length) _uiSyncPatchState(character, { lastSyncAt: Date.now() });
+    // What was written, file by file with the parts that cover it, so the card can show it (FB-123).
+    const partLabel = (k) => (uiRestorePlan.PARTS.find(p => p.key === k) || { label: k }).label;
+    const files = written.map(name => ({ name, parts: (fileParts[name] || []).map(partLabel) }));
+    return { ok: true, character, queued: queued.length > 0, busy: queued.length ? queued[0].busy : null, queuedParts: queued,
+      written, files, savedCopies, overlays, target: target ? { w: target.w, h: target.h, from: target.from } : null };
   } catch (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
 });
 
@@ -14156,7 +14453,7 @@ const _uiAutoTimers = new Map();
 // Called when a character leaves the Zeal pipe (camped, swapped, client closed). EQ writes its files on the way
 // out, so the backup waits 15 s, and skips itself if the character came straight back.
 function _uiScheduleAutoBackup(character) {
-  if (!_uiSyncCfg().autoBackup) return;
+  // No autoBackup check here any more: the local copy (below) always runs; only the cloud upload honours the setting.
   const k = String(character || '').toLowerCase();
   if (!/^[a-z]+$/.test(k)) return;
   clearTimeout(_uiAutoTimers.get(k));
@@ -14167,14 +14464,26 @@ async function _uiAutoBackup(character) {
   if (_uiCharActiveInZeal(k)) return;
   const eqDir = _uiDirForChar(character);
   if (!eqDir) return;
-  const files = uiSync.redactForAutoBackup(_readUiBundle(eqDir, character));
-  if (!Object.keys(files).length) return;
+  const whole = _readUiBundle(eqDir, character);
+  if (!Object.keys(whole).length) return;
+  // The last few versions of the character's files stay on THIS computer (newest 5, only when something changed),
+  // so a mess-up can be undone offline (the guild lead, 2026-11-11). Kept whole: it never leaves the machine.
+  // source 'game': the files as the game left them on camp, so the Changes panel can show what the game changed.
+  try { localVersions.saveVersion(_localVersionsRoot(), character, whole, undefined, undefined, { source: 'game' }); } catch { /* best effort */ }
+  if (!_uiSyncCfg().autoBackup) return;
+  const files = uiSync.redactForAutoBackup(whole);
   const hash = uiSync.bundleHash(files);
   const cfg = loadConfig();
   if (((cfg.uiSyncState || {})[k] || {}).lastHash === hash) return;   // nothing changed since the last one
   const token = resolveUploadToken(cfg);
   if (!token) return;
-  const r = await _uiUploadBundle(cfg, token, character, files, uiSync.AUTO_LABEL);
+  // On by default now, so on a PC shared with another player it must not upload (or file a link request for)
+  // a character that is not the signed-in account's: only characters the bot already lists for this account.
+  try {
+    const mine = await _httpsJson(`${_botBaseUrl(cfg)}/api/agent/ui_layout/characters`, { headers: { 'Authorization': `Bearer ${token}` } });
+    if (!uiSync.markOnThisPc(mine && mine.characters, []).some(c => c.character.toLowerCase() === k)) return;
+  } catch { return; }
+  const r =await _uiUploadBundle(cfg, token, character, files, uiSync.AUTO_LABEL);
   if (!r.ok) { appendAgentLog(`[ui-sync] backup after camp failed for ${character}: ${r.error}\n`); return; }
   _uiSyncPatchState(character, { lastHash: hash, lastSyncAt: Date.now() });
   appendAgentLog(`[ui-sync] backed up ${character} after camp (${r.file_count} file(s))\n`);
@@ -14228,7 +14537,7 @@ async function _uiSyncCheck() {
         if (!parts.length) continue;
         try {
           const full = await _fetchUiSnapshot(cfg, token, character, snap.id);
-          if (await _uiEqBusyFor(character)) _queueUiRestore({ character, eqDir, files: full.files, parts, label: snap.label || null });
+          if (await _uiEqBusyFor(character, parts, eqDir)) _queueUiRestore({ character, eqDir, files: full.files, parts, label: snap.label || null });
           else {
             const written = _uiWriteRestore({ character, eqDir, files: full.files, parts });
             _uiSyncPatchState(character, { lastSyncAt: Date.now() });
@@ -14297,10 +14606,8 @@ ipcMain.handle('ui-studio-list-displays', () => {
     const all = screen.getAllDisplays();
     const displays = all.map((d, i) => {
       const isPrimary = d.id === primary.id;
-      // size = full pixel resolution; workAreaSize subtracts taskbar etc.
-      // EQ renders fullscreen → use `size`, not `workAreaSize`.
-      const w = (d.size && d.size.width)  || d.workAreaSize.width;
-      const h = (d.size && d.size.height) || d.workAreaSize.height;
+      // The whole display (EQ renders fullscreen, so not workAreaSize), in REAL pixels: _displayPixels.
+      const { w, h } = _displayPixels(d);
       return {
         id: d.id,
         label: `Display ${i + 1}${isPrimary ? ' (primary)' : ''} — ${w}×${h}`,
@@ -14310,7 +14617,7 @@ ipcMain.handle('ui-studio-list-displays', () => {
       };
     });
     return {
-      primary: { w: primary.size.width, h: primary.size.height },
+      primary: _displayPixels(primary),
       displays,
     };
   } catch (err) {
@@ -14320,7 +14627,8 @@ ipcMain.handle('ui-studio-list-displays', () => {
 
 // UI Studio — list characters available for capture across configured EQ
 // folders. Returns [{ character, eqDir, ini_count, has_eqclient }, ...].
-ipcMain.handle('ui-studio-list-characters', () => {
+ipcMain.handle('ui-studio-list-characters', () => _uiStudioDiskCharacters());
+function _uiStudioDiskCharacters() {
   const cfg = loadConfig();
   const userPaths = Array.isArray(cfg.eqPaths) && cfg.eqPaths.length > 0
                   ? cfg.eqPaths
@@ -14365,6 +14673,78 @@ ipcMain.handle('ui-studio-list-characters', () => {
   // Biggest log first (most-played characters at the top of the picker).
   out.sort((a, b) => (b.log_size || 0) - (a.log_size || 0));
   return out;
+}
+
+// "Bring your setup to this computer": the signed-in account's characters that have cloud backups, each marked with
+// whether this PC has files for it. The per-character calls above all start from a name read off the disk, so a
+// person with no files here could not reach their own backups (the guild lead, 2026-11-10).
+// The versions of one character's files this PC kept itself, newest first (localVersions.js).
+ipcMain.handle('ui-local-versions', (_e, character) => localVersions.listVersions(_localVersionsRoot(), character));
+
+// UI Studio's "Changes since previous version" panel (the guild lead, 2026-11-11). The versions this PC kept for the
+// character, each marked `same` when it is exactly what is on disk now (so the panel defaults to the newest one that
+// is not), and the key-by-key diff of one of them against the files now.
+const _sameFiles = (a, b) => {
+  const ka = Object.keys(a || {}).sort(), kb = Object.keys(b || {}).sort();
+  return ka.length === kb.length && ka.every((n, i) => n === kb[i] && a[n] === b[n]);
+};
+ipcMain.handle('ui-studio-versions', (_e, character, eqDir) => {
+  try {
+    const c = String(character || '').trim(), d = String(eqDir || '').trim();
+    if (!c || !d) return { ok: false, error: 'character + eqDir required' };
+    const now = _readUiBundle(d, c);
+    const versions = localVersions.listVersions(_localVersionsRoot(), c)
+      .map(v => ({ ...v, same: _sameFiles(localVersions.readVersion(_localVersionsRoot(), c, v.id), now) }));
+    return { ok: true, versions };
+  } catch (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
+});
+ipcMain.handle('ui-studio-diff', (_e, character, eqDir, id) => {
+  try {
+    const c = String(character || '').trim(), d = String(eqDir || '').trim();
+    if (!c || !d || !localVersions.isLocalId(id)) return { ok: false, error: 'character + eqDir + version required' };
+    const root = _localVersionsRoot();
+    const list = localVersions.listVersions(root, c);
+    const at = list.findIndex(v => v.id === id);
+    const prev = at < 0 ? null : localVersions.readVersion(root, c, id);
+    if (!prev) return { ok: false, error: 'that version is no longer kept' };
+    // What Mimic itself wrote since: the write records of this version and every newer one, oldest first. If any of
+    // them has no record (a version from before records existed) a change nobody claims is "unknown", not "game".
+    const records = [];
+    let complete = true;
+    for (let i = at; i >= 0; i--) {
+      const m = localVersions.readMeta(root, c, list[i].id);
+      if (!m) { complete = false; continue; }
+      for (const w of (Array.isArray(m.writes) ? m.writes : [])) records.push(w);
+    }
+    const diff = iniDiff.diffBundles(prev, _readUiBundle(d, c), { origin: iniDiff.makeOrigin(records, complete) });
+    return { ok: true, base: list[at], complete, ...diff };
+  } catch (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
+});
+ipcMain.handle('ui-account-characters', async () => {
+  const cfg = loadConfig();
+  const token = resolveUploadToken(cfg);
+  if (!token) return { ok: false, error: 'no token configured' };
+  try {
+    const r = await _httpsJson(`${_botBaseUrl(cfg)}/api/agent/ui_layout/characters`, { headers: { 'Authorization': `Bearer ${token}` } });
+    const disk = _uiStudioDiskCharacters();
+    const names = disk.map(d => d.character);
+    // + the versions this PC kept itself ("On this computer"), newest first, so a mess-up can be undone offline.
+    const characters = uiSync.markOnThisPc(r && r.characters, names)
+      .map(c => ({ ...c, local: localVersions.listVersions(_localVersionsRoot(), c.character) }));
+    // A restore needs a folder to write into: the first EverQuest folder this PC has (none = nothing to bring into).
+    const eqDir = (disk[0] && disk[0].eqDir) || _uiEqDirs()[0] || null;
+    return {
+      ok: true, characters, eqDir,
+      otherAccountsOnPc: uiSync.otherCharsOnPc(characters, names).length > 0,
+      // What a bring-in restores before the member's own ticks (bring-setup.js reads this). It was never sent, so the
+      // card restored no part but overlays and the shared ticks (a member, 2026-11-11, FB-124 / FB-126 / FB-127).
+      parts: uiSync.defaultParts({ otherAccountsOnPc: uiSync.otherCharsOnPc(characters, names).length > 0 }),
+      otherCharsOnPc: uiSync.otherCharsOnPc(characters, names),
+      thisPc: { machine: _thisMachine(), w: (_primarySize() || {}).w || null, h: (_primarySize() || {}).h || null },
+    };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
 });
 
 // Enumerate every character detected in the user's configured EQ folders by
@@ -14434,6 +14814,12 @@ ipcMain.handle('ui-studio-capture', async (_e, params) => {
 // (eqclient.ini [VideoMode]) when the bundle has it, so a restore on another PC knows what the layout was made
 // for; else the main screen's full size (EQ runs fullscreen, so not the work area).
 async function _uiUploadBundle(cfg, token, character, files, label) {
+  // Mimic's own overlay layout rides in the bundle as one extra entry (overlayBackup.js), except in a named layout,
+  // which holds only the layout file.
+  if (!/^Layout: /.test(label || '') && !files[overlayBackup.FILE]) {
+    const ob = _overlayBackupText();
+    if (ob) files = { ...files, [overlayBackup.FILE]: ob };
+  }
   const fileCount = Object.keys(files).length;
   const res = _eqResOf(files) || _primarySize();
   try {
@@ -14541,6 +14927,7 @@ ipcMain.handle('ui-studio-restore', async (_e, params) => {
   const written = [];
   const errors  = [];
   const skipped = [];
+  const ver = _uiVersionBefore(eqDir, character, 'restore');
   for (const [name, contents] of Object.entries(snap.files)) {
     // Restore writes only the settings files UI Studio backs up (uiRestoreGuard.js): a bare .ini name.
     // Anything else is skipped, never written, and reported.
@@ -14554,6 +14941,7 @@ ipcMain.handle('ui-studio-restore', async (_e, params) => {
       errors.push({ name, error: err && err.message ? err.message : String(err) });
     }
   }
+  _uiVersionAfter(ver);
   if (skipped.length) appendAgentLog(`[ui-studio] restore skipped ${skipped.length} file(s) that are not UI settings\n`);
   const skipNote = skipped.length ? ` Skipped ${skipped.length} file(s) that are not UI settings.` : '';
   return {

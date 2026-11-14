@@ -9420,14 +9420,32 @@ function _lootFromOwnPet(state, petRec, zone, nowMs, lineMs) {
 }
 
 function trackLootedLine(line, character) {
-  if (!line || !character || line.indexOf('You have looted') === -1) return;   // cheap gate
-  const m = line.match(_LOOTED_RX);
-  if (!m) return;
-  const item = m[1].replace(/^an?\s+/i, '').trim();   // drop the "a "/"an " article
+  if (!line || !character) return;
+  // Someone else's loot too (the guild lead, 2026-11-10: "it should also capture X has looted lines"): an item handed out
+  // without a bid (a queued Essence of Fire) never reaches OpenDKP, and when the looter runs no Mimic the
+  // "--<Name> has looted a <item>--" line their group sees is the only record. It is stored under that looter, marked
+  // witnessed; the bot drops a witness of a loot another uploader already reported (PC clocks differ by seconds).
+  const isSelf = line.indexOf('You have looted') !== -1;
+  if (!isSelf && line.indexOf(' has looted ') === -1) return;   // cheap gate
+  let rawItem, looterName = String(character);
+  if (isSelf) {
+    const m = line.match(_LOOTED_RX);
+    if (!m) return;
+    rawItem = m[1];
+  } else {
+    const body = _chatLogBody(line);
+    const m = body ? body.match(_OTHER_LOOTED_RX) : null;
+    if (!m) return;
+    looterName = m[1];
+    rawItem = m[2];
+    if (looterName.toLowerCase() === String(character).toLowerCase()) return;
+  }
+  const item = rawItem.replace(/^an?\s+/i, '').trim();   // drop the "a "/"an " article
   if (!item || item.length < 2) return;
   const ts = parseEqTimestamp(line);
   const atMs = ts ? ts.getTime() : Date.now();
-  const cl = String(character).toLowerCase();
+  const cl = looterName.toLowerCase();
+  const observerLower = String(character).toLowerCase();
   // Restart/re-read dedup: the same character looting the same item within a few
   // seconds is one loot re-seen (a tail re-read), not two distinct loots.
   const fp = cl + '|' + item.toLowerCase() + '|' + Math.round(atMs / 1000);
@@ -9438,20 +9456,21 @@ function trackLootedLine(line, character) {
     const cutoff = Date.now() - 60000;
     for (const [k, v] of _lootedRecentFp) if (v < cutoff) _lootedRecentFp.delete(k);
   }
-  let zone = null, zst = null;
+  let zone = null, zst = null;   // the observer's zone: a witness is in the same zone as the looter
   for (const ch of Object.keys(_zealState || {})) {
-    if (String(ch).toLowerCase() === cl) { zst = _zealState[ch]; zone = zst.zone || null; break; }
+    if (String(ch).toLowerCase() === observerLower) { zst = _zealState[ch]; zone = zst.zone || null; break; }
   }
-  const fromOwnPet = _lootFromOwnPet(zst, _ownPetRecs.get(cl), zone, Date.now(), atMs);
+  const fromOwnPet = isSelf && _lootFromOwnPet(zst, _ownPetRecs.get(cl), zone, Date.now(), atMs);
   lootedBuffer.push({
     item:   item.slice(0, 64),
-    looter: String(character).slice(0, 32),
+    looter: looterName.slice(0, 32),
     zone:   zone ? String(zone).slice(0, 64) : null,
     atMs,
     ...(fromOwnPet ? { fromOwnPet: true } : {}),
+    ...(isSelf ? {} : { witnessed: true }),
   });
   if (lootedBuffer.length > 200) lootedBuffer.splice(0, lootedBuffer.length - 200);
-  try { _raidCodeNoteLoot(lootedBuffer[lootedBuffer.length - 1], character); } catch { void 0; }   // under a raid code: kept on this PC
+  if (isSelf) { try { _raidCodeNoteLoot(lootedBuffer[lootedBuffer.length - 1], character); } catch { void 0; } }   // under a raid code: kept on this PC
 }
 
 // Upload recently-looted items. Mirrors uploadRollSets' recency discipline:
@@ -9467,7 +9486,7 @@ function uploadLooted() {
     _lootedUploadHW = Math.max(_lootedUploadHW, ...fresh.map(e => e.atMs));
     enqueueUpload('looted', {
       agent_version: AGENT_VERSION,
-      events: fresh.map(e => ({ item: e.item, looter: e.looter, zone: e.zone, at: new Date(e.atMs).toISOString(), ...(e.fromOwnPet ? { from_own_pet: true } : {}) })),
+      events: fresh.map(e => ({ item: e.item, looter: e.looter, zone: e.zone, at: new Date(e.atMs).toISOString(), ...(e.fromOwnPet ? { from_own_pet: true } : {}), ...(e.witnessed ? { witnessed: true } : {}) })),
     });
   }
   // Bound the buffer — drop anything already uploaded or past the 30-min window
@@ -54957,6 +54976,9 @@ const CHARM_PET_SPELLS = [
 ];
 const CHARM_PET_TARGETS = { 5: 'any mob', 9: 'animals', 10: 'undead', 11: 'summoned', 16: 'plants' };
 const CHARM_PET_LIST_MAX = 8;
+// A pet under half the spell's level cap is not worth a charm (the guild lead, 2026-11-10: mobs that "are SUPER low
+// level" should not be on the list; a level 2 and a level 10 showed under Boltran's Agacerie, cap 53).
+const CHARM_PET_MIN_CAP_FRACTION = 0.5;
 const CHARM_PET_DPS_STEP = 1.1;   // two pets within 10% of each other's damage are a tie: the tougher one goes first
 
 // EQMacEmu zone/spells.cpp: an animal / undead / summoned / plant charm only lands on its own body type; the
@@ -55021,6 +55043,7 @@ function rankCharmPets(npcs, spell) {
   const rows = [];
   for (const n of Array.isArray(npcs) ? npcs : []) {
     if (!n || !(Number(n.level) >= 1) || Number(n.level) > spell.cap) continue;
+    if (Number(n.level) < Math.floor(spell.cap * CHARM_PET_MIN_CAP_FRACTION)) continue;
     if (!charmPetBodyOk(spell.tt, n.bodytype)) continue;
     const dps = charmPetDps(n);
     rows.push({ n, dps, step: Math.floor(Math.log(Math.max(dps, 0.1)) / Math.log(CHARM_PET_DPS_STEP)) });
