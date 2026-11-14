@@ -37,6 +37,29 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-3-0-10-2026-11-14',
+    title: 'Mimic 3.0.10',
+    version: 'Mimic 3.0.10',
+    date: '2026-11-14',
+    headline: 'Bring your whole setup to another PC, a UI Studio that keeps your changes, and a Map that remembers.',
+    features: [
+      { name: 'Bring your setup to this computer', blurb: 'One card brings a character from a backup: windows, chat windows, hotbars, macros, spell sets, Zeal settings and your Mimic overlay positions. A safety copy of your files is kept first.' },
+      { name: 'Fitted to this screen', blurb: 'A layout from a bigger or smaller screen is fitted to this one. Windows docked to an edge stay docked, nothing is left off the screen, and chat windows are resized to match.' },
+      { name: 'Your key bindings come with the character', blurb: 'Whichever way each PC keeps its keys. Restoring a backup made on this same PC puts everything back exactly as it was.' },
+      { name: 'UI Studio keeps your changes', blurb: 'It keeps the previous version before every save and lists every change since, warns about windows off the screen, and fits a layout that was made for another screen size in one click.' },
+      { name: 'A Map that remembers', blurb: 'The named mobs you have targeted, per character and zone, with their spawn points highlighted if you like. Zoom, Pan mode and settings are remembered per character.' },
+    ],
+    fixes: [
+      'A setup brought from a 1440p PC to a 1080p PC left windows hanging off the screen and came up with default keys.',
+      'Saving in UI Studio wrote only the windows you had moved, so a copied layout stayed scrambled in game.',
+      'Detect offered the wrong screen size when Windows display scaling was above 100%.',
+      'Pan / zoom mode on the Map stays off when you log in; scripted mobs no longer show spawn points.',
+      'A minimised Weaving timer still shows its thin bar.',
+      'Loot you see other people take is recorded too.',
+      'A cancelled custom voice download no longer leaves an empty file behind.',
+    ],
+  },
+  {
     key: 'mimic-3-0-10-beta-ui-fit-2026-11-14',
     title: 'Mimic 3.0.10 beta',
     version: 'Mimic 3.0.10 beta',
