@@ -10,8 +10,8 @@ export const LABEL = 'text-xs uppercase tracking-wider text-dim';
 const own = (v: ResultView) => new Set(v.mine.map((m) => m.toLowerCase()));
 
 export function ResultStrip({ v }: { v: ResultView }) {
-  const stateWord = v.state === 'killed' ? 'Killed' : v.state === 'wipe' ? 'Wipe' : 'Not counted';
-  const stateColour = v.state === 'killed' ? 'text-green' : v.state === 'wipe' ? 'text-red' : 'text-orange';
+  const stateWord = v.state === 'killed' ? 'Killed' : v.state === 'wipe' ? 'Wipe' : v.state === 'open' ? 'No kill seen' : 'Not counted';
+  const stateColour = v.state === 'killed' ? 'text-green' : v.state === 'wipe' ? 'text-red' : v.state === 'open' ? 'text-text' : 'text-orange';
   return (
     <section className={`${CARD} p-4`} aria-label="Fight result">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -50,13 +50,15 @@ export function YouLine({ v }: { v: ResultView }) {
   const rows = v.players.filter((p) => o.has(p.name.toLowerCase()));
   if (!rows.length) return null;
   return (
-    <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 rounded-md border-l-4 border-gold bg-panel px-3 py-2 text-sm" aria-label="Your rows">
-      <span className="text-xs font-bold uppercase tracking-wider text-gold">You</span>
-      {rows.map((p) => (
-        <span key={p.name} className="text-text">
-          <b className="text-gold">{p.name}</b> #{p.rank} of {v.players.length} · {fmtBig(p.dps)} DPS · {p.pct.toFixed(1)}%
-        </span>
-      ))}
+    <div className="flex items-baseline gap-x-4 rounded-md border-l-4 border-gold bg-panel px-3 py-2 text-sm" aria-label="Your rows">
+      <span className="w-10 shrink-0 text-xs font-bold uppercase tracking-wider text-gold">You</span>
+      <div className="flex min-w-0 flex-col gap-1">
+        {rows.map((p) => (
+          <span key={p.name} className="text-text">
+            <b className="text-gold">{p.name}</b> #{p.rank} of {v.players.length} · {fmtBig(p.dps)} DPS · {p.pct.toFixed(1)}%
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
@@ -77,7 +79,7 @@ export function ClassBar({ v }: { v: ResultView }) {
       </div>
       <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-text">
         {rows.slice(0, 5).map((r) => <span key={r.cls}>{r.cls} {r.pct.toFixed(0)}%</span>)}
-        {rows.length > 5 ? <span className="text-dim">+{rows.length - 5} more</span> : null}
+        {rows.length > 5 ? <span className="text-text">+{rows.length - 5} more</span> : null}
       </div>
     </div>
   );
@@ -105,17 +107,17 @@ export function DamageTable({ v, linkNames }: { v: ResultView; linkNames?: boole
             const mine = o.has(p.name.toLowerCase());
             return (
               <tr key={p.name} className={`border-b border-border/50 ${mine ? 'bg-gold/10' : ''}`} aria-current={mine ? 'true' : undefined}>
-                <td className={`border-l-4 py-1.5 pl-2 pr-2 ${mine ? 'border-gold font-bold text-gold' : 'border-transparent text-text'}`}>{p.rank}</td>
-                <td className="py-1.5 pr-2">
+                <td className={`border-l-4 align-top py-1.5 pl-2 pr-2 ${mine ? 'border-gold font-bold text-gold' : 'border-transparent text-text'}`}>{p.rank}</td>
+                <td className="py-1.5 pr-2 align-top">
                   <div className={`truncate ${mine ? 'font-bold text-gold' : 'text-text'}`}>
                     {linkNames ? <Link href={`/character/${encodeURIComponent(p.name)}`} className="hover:underline">{p.name}</Link> : p.name}
                   </div>
                   <div className="mt-0.5 h-0.5 rounded bg-bg"><div className={`h-full rounded ${mine ? 'bg-gold' : 'bg-blue/60'}`} style={{ width: `${(p.damage / top) * 100}%` }} /></div>
                 </td>
-                <td className="hidden py-1.5 pr-2 text-text sm:table-cell">{p.cls ?? ''}</td>
-                <td className="py-1.5 pr-2 text-right tabular-nums text-text">{fmtBig(p.dps)}</td>
-                <td className="py-1.5 pr-2 text-right tabular-nums text-text">{fmtBig(p.damage)}</td>
-                <td className="py-1.5 pr-3 text-right tabular-nums text-text">{p.pct.toFixed(1)}%</td>
+                <td className="hidden py-1.5 pr-2 align-top text-text sm:table-cell">{p.cls ?? ''}</td>
+                <td className="py-1.5 pr-2 align-top text-right tabular-nums text-text">{fmtBig(p.dps)}</td>
+                <td className="py-1.5 pr-2 align-top text-right tabular-nums text-text">{fmtBig(p.damage)}</td>
+                <td className="py-1.5 pr-3 align-top text-right tabular-nums text-text">{p.pct.toFixed(1)}%</td>
               </tr>
             );
           })}
@@ -137,7 +139,10 @@ export function DamagePanel({ v, linkNames }: { v: ResultView; linkNames?: boole
 const Empty = ({ children }: { children: React.ReactNode }) => <p className="px-3 py-2 text-sm text-text">{children}</p>;
 const Row = ({ children }: { children: React.ReactNode }) => <li className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 border-b border-border/50 px-3 py-2 text-sm last:border-b-0">{children}</li>;
 
+const OLD = 'Detail is kept for 7 days. This fight is older.';
+
 export function DeathsPanel({ v }: { v: ResultView }) {
+  if (!v.detailKept) return <Empty>{OLD}</Empty>;
   if (!v.deaths.length) return <Empty>Nobody died.</Empty>;
   const o = own(v);
   return (
@@ -153,6 +158,7 @@ export function DeathsPanel({ v }: { v: ResultView }) {
 }
 
 export function TankPanel({ v }: { v: ResultView }) {
+  if (!v.detailKept) return <Empty>{OLD}</Empty>;
   if (!v.tanks.length) return <Empty>No tank log was uploaded for this fight.</Empty>;
   return (
     <ul>
@@ -167,6 +173,7 @@ export function TankPanel({ v }: { v: ResultView }) {
 }
 
 export function HealPanel({ v }: { v: ResultView }) {
+  if (!v.detailKept) return <Empty>{OLD}</Empty>;
   if (!v.healers.length) return <Empty>No heal log was uploaded for this fight.</Empty>;
   const o = own(v);
   return (
@@ -232,9 +239,9 @@ export const damageHeadline = (v: ResultView): string => {
 
 export const PANELS: { key: PanelKey; label: string; headline: (v: ResultView) => string; body: (v: ResultView, linkNames?: boolean) => React.ReactNode }[] = [
   { key: 'damage', label: 'Damage', headline: damageHeadline, body: (v, l) => <DamagePanel v={v} linkNames={l} /> },
-  { key: 'deaths', label: 'Deaths', headline: headlines.deaths, body: (v) => <DeathsPanel v={v} /> },
-  { key: 'tank', label: 'Tank', headline: headlines.tank, body: (v) => <TankPanel v={v} /> },
-  { key: 'heal', label: 'Heal', headline: headlines.heal, body: (v) => <HealPanel v={v} /> },
+  { key: 'deaths', label: 'Deaths', headline: (v) => (v.detailKept ? headlines.deaths(v) : 'Detail kept for 7 days'), body: (v) => <DeathsPanel v={v} /> },
+  { key: 'tank', label: 'Tank', headline: (v) => (v.detailKept ? headlines.tank(v) : 'Detail kept for 7 days'), body: (v) => <TankPanel v={v} /> },
+  { key: 'heal', label: 'Heal', headline: (v) => (v.detailKept ? headlines.heal(v) : 'Detail kept for 7 days'), body: (v) => <HealPanel v={v} /> },
   { key: 'timeline', label: 'Timeline', headline: headlines.timeline, body: (v) => <TimelinePanel v={v} /> },
   { key: 'loot', label: 'Loot', headline: headlines.loot, body: (v) => <LootPanel v={v} /> },
   { key: 'contributors', label: 'Contributors', headline: headlines.contributors, body: (v) => <ContributorsPanel v={v} /> },

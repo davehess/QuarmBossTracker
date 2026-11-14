@@ -103,6 +103,23 @@ describe('the draft keeps to the real navigation and the staged switch is the on
     for (const v of draft.variants) { expect(v.name.length).toBeLessThanOrEqual(28); expect(v.diff.length).toBeLessThanOrEqual(110); }
     expect(draft.variants.map((v) => v.key)).toEqual(['a', 'b', 'c']);
   });
+  it('phone: Admin moves into the account menu and the doors row can shrink', () => {
+    const code = stripJs(src('components/lab/site-header/HeaderDraft.tsx'));
+    expect(code).toMatch(/showAdmin && !phone && <Link href="\/admin"/);
+    expect(code).toMatch(/phone && p\.showAdmin && <Link href="\/admin"/);
+    expect(code).toMatch(/<nav aria-label="Sections" className="flex min-w-0/);
+  });
+  it('the real header re-reads ?hdr= after navigation, without useSearchParams', () => {
+    const code = stripJs(src('components/SiteHeader.tsx'));
+    expect(code).toMatch(/const hdrPath = usePathname\(\)/);
+    expect(code).toMatch(/\}, \[hdrPath\]\);/);
+    expect(code).not.toMatch(/useSearchParams/);
+  });
+  it('version C: Enter on an empty box does nothing, and the site search sits in the jump panel', () => {
+    const code = stripJs(src('components/lab/site-header/HeaderDraft.tsx'));
+    expect(code).toMatch(/e\.key === 'Enter' && q\.trim\(\) && hits\[active\]/);
+    expect(code).toMatch(/\{p\.search \? <div className="border-t border-border p-2 \[&>\*\]:!w-full">\{p\.search\}<\/div> : null\}\n\s+<\/div>\n\s+\);\n\s+\}\)\(\);\n\n\s+return/);
+  });
   it('no emoji and no em dash in the draft', () => {
     for (const f of ['components/lab/site-header/HeaderDraft.tsx', 'components/lab/site-header/Mocks.tsx', 'app/lab/site-header/page.tsx', 'lib/siteHeaderView.ts']) {
       expect(stripJs(src(f))).not.toMatch(/\p{Extended_Pictographic}|—/u);

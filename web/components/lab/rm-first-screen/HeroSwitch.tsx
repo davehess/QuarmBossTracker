@@ -7,8 +7,9 @@ import { useSearchParams } from 'next/navigation';
 import RmFirstScreen from '@/components/lab/rm-first-screen';
 import { COPY, MEDIA, type HeroLinks } from '@/lib/lab/fixtures/rm-first-screen';
 
-export default function HeroSwitch({ links, children }: { links: HeroLinks; children: ReactNode }) {
+export default function HeroSwitch({ links, enabled, children }: { links: HeroLinks; enabled: boolean; children: ReactNode }) {
   const hero = useSearchParams()?.get('hero');
+  if (!enabled) return <>{children}</>;
   if (hero !== 'a' && hero !== 'b' && hero !== 'c') return <>{children}</>;
   return <RmFirstScreen which={hero} copy={COPY} links={links} media={MEDIA} />;
 }

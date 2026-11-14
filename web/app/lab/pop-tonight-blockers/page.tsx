@@ -8,7 +8,7 @@ import VersionC from '@/components/lab/pop-tonight-blockers/VersionC';
 
 export const metadata = {
   title: '[draft] Raid night blockers',
-  description: 'Three designs for showing who cannot enter tonight\'s Planes of Power targets, with made-up data.',
+  description: 'Three designs for showing who is missing a preflag for tonight\'s Planes of Power targets, with made-up data.',
 };
 
 export default function Page({ searchParams }: { searchParams?: { v?: string; bare?: string; state?: string } }) {

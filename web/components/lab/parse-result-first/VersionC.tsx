@@ -12,7 +12,7 @@ export default function VersionC({ v, linkNames }: { v: ResultView; linkNames?: 
       <ResultStrip v={v} />
       <YouLine v={v} />
       <section className={`${CARD} py-3`} aria-label={first.label}>
-        <h2 className={`mb-1 px-3 ${LABEL}`}>{first.label}{v.mine.length ? <span className="ml-2 normal-case tracking-normal text-blue">opened first for your role</span> : null}</h2>
+        <h2 className={`mb-1 px-3 ${LABEL}`}>{first.label}</h2>
         <p className="mb-2 px-3 text-sm text-text">{first.headline(v)}</p>
         {first.body(v, linkNames)}
       </section>

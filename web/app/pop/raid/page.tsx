@@ -106,7 +106,7 @@ const H = ({ children }: { children: React.ReactNode }) => (
 export default async function RaidPlanPage({ searchParams }: { searchParams?: Promise<{ v?: string }> }) {
   const alt = (await searchParams)?.v; // ?v=a: the blockers strip first, the full raider table folded (draft)
   const { data: { user } } = await supabaseServer().auth.getUser();
-  if (!user) redirect('/auth/signin?next=/pop/raid');
+  if (!user) redirect('/auth/signin?next=' + encodeURIComponent(alt === 'a' ? '/pop/raid?v=a' : '/pop/raid'));
   await requireMember(user.id);
 
   const [data, walls, saved, loot] = await Promise.all([

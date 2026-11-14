@@ -3,7 +3,7 @@
 // Version B: a sticky filter box and a pin per boss, remembered in this browser. First visit pins the five that
 // open soonest, so the page is useful before anyone has pinned anything.
 import { useEffect, useState } from 'react';
-import { matchesQuery, sortNextUp, type NextUpBoss } from '@/lib/boardsNextUpView';
+import { matchesQuery, sortNextUp, splitNextUp, type NextUpBoss } from '@/lib/boardsNextUpView';
 import { BossRow, Card, HeadRow, useNow } from './shared';
 
 const KEY = 'wp.boards.pins';
@@ -14,7 +14,7 @@ export default function WatchList({ bosses, nowMs, tick = false }: { bosses: Nex
   const [q, setQ] = useState('');
   const [stored, setStored] = useState<string[] | null>(null);
   const sorted = sortNextUp(bosses, now);
-  const seed = sorted.slice(0, SEED).map((b) => b.id);
+  const seed = splitNextUp(bosses, now).timers.slice(0, SEED).map((b) => b.id);
   const pins = stored ?? seed;
 
   useEffect(() => {
@@ -41,7 +41,7 @@ export default function WatchList({ bosses, nowMs, tick = false }: { bosses: Nex
     return (
       <button
         type="button" onClick={() => toggle(b.id)} aria-pressed={on}
-        className={`min-h-[2.5rem] shrink-0 rounded border px-2 text-xs ${on ? 'border-gold text-gold' : 'border-border text-blue hover:border-blue'}`}
+        className={`min-h-[2.5rem] min-w-[4.5rem] shrink-0 rounded border px-2 text-center text-xs ${on ? 'border-gold text-gold' : 'border-border text-blue hover:border-blue'}`}
       >{on ? 'Pinned' : 'Pin'}</button>
     );
   };

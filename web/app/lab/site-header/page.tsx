@@ -16,7 +16,7 @@ function frames(v: HeaderKey): Frame[] {
     { label: 'Desktop 1440, top of page', w: 1440, h: 200, size: 'wide', folded: false, path: '/parses' },
     { label: 'Desktop 1440, folded (scrolled)', w: 1440, h: 540, size: 'wide', folded: true, open: doorOpen('stats'), path: '/parses' },
     { label: 'Half monitor 960', w: 960, h: 200, size: 'mid', folded: false, path: '/boards' },
-    { label: 'Half monitor 960, account menu open', w: 960, h: 480, size: 'mid', folded: false, open: { kind: 'account' }, path: '/boards' },
+    { label: 'Half monitor 960, account menu open', w: 960, h: 540, size: 'mid', folded: false, open: { kind: 'account' }, path: '/boards' },
     { label: 'Phone 412, closed', w: 412, h: 200, size: 'phone', folded: false, path: '/boards' },
     { label: 'Phone 412, menu open', w: 412, h: 700, size: 'phone', folded: false, open: doorOpen('raid'), path: '/boards' },
   ];
@@ -30,7 +30,7 @@ export default function Page({ searchParams }: { searchParams?: { v?: string; ba
     <LabFrame draft={draft} current={current} bare={searchParams?.bare === '1'}>
       {current === 'b' && (
         <div className="mb-4 text-xs text-text">
-          <div className="mb-1 text-dim">The pill needs a clock. Pick the moment the frames pretend it is:</div>
+          <div className="mb-1 text-text">The pill needs a clock. Pick the moment the frames pretend it is:</div>
           <div className="flex flex-wrap gap-2">
             {(Object.keys(LAB_NOWS) as LabNowKey[]).map((k) => (
               <a key={k} href={`/lab/site-header?v=b&now=${k}`} aria-current={k === nowKey ? 'page' : undefined}

@@ -6,7 +6,7 @@ export const draft: LabDraft = {
   site: 'wolfpack.quest',
   problem: 'The page exists to answer "when does it spawn" but opens on a title card and five folded sections, with no search.',
   variants: [
-    { key: 'a', name: 'Next up', diff: 'One list across every expansion, soonest first, the top 10 open; countdown is the biggest thing.' },
+    { key: 'a', name: 'Next up', diff: 'Running timers only, soonest first, top 10; available bosses fold into a list underneath.' },
     { key: 'b', name: 'Watch list', diff: 'A filter box plus pins you keep in the browser; pinned bosses sit on top.' },
     { key: 'c', name: 'One table', diff: 'Boss, zone, opens in and window in one sortable dense table with a sticky header, no cards.' },
   ],

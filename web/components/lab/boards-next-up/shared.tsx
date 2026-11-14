@@ -31,9 +31,9 @@ export function HeadRow({ title, bosses, now, right }: { title: string; bosses: 
   const s = summarize(bosses, now);
   return (
     <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-      <h2 className="text-xl font-semibold text-text">{title}</h2>
+      <h2 className="text-lg font-semibold text-text">{title}</h2>
       <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
-        <span className={s.up ? 'text-green' : 'text-text'}><b className="text-xl tabular-nums">{s.up}</b> up now</span>
+        <span className={s.up ? 'text-green' : 'text-text'}><b className="text-xl tabular-nums">{s.up}</b> available now</span>
         <span className={s.soon ? 'text-orange' : 'text-text'}><b className="text-xl tabular-nums">{s.soon}</b> within 30m</span>
         {right}
       </div>
@@ -51,10 +51,10 @@ export function BossName({ b, className = '' }: { b: NextUpBoss; className?: str
 export function BossRow({ b, now, action }: { b: NextUpBoss; now: number; action?: ReactNode }) {
   return (
     <li className="flex items-center gap-3 border-t border-border px-3 py-2 first:border-t-0 min-h-[3.25rem]">
-      <div className={`w-32 shrink-0 text-lg sm:text-xl font-bold tabular-nums ${toneOf(b, now)}`}>{countdownText(b, now)}</div>
+      <div className={`w-32 shrink-0 text-xl font-bold tabular-nums ${toneOf(b, now)}`}>{countdownText(b, now)}</div>
       <div className="min-w-0 flex-1">
         <BossName b={b} className="block break-words text-sm leading-snug" />
-        <div className="break-words text-xs text-dim">{b.zone} · {b.expansion}</div>
+        <div className="break-words text-xs text-text">{b.zone} · {b.expansion}</div>
       </div>
       {action}
     </li>

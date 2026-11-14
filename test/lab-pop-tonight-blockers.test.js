@@ -1,5 +1,6 @@
 // The design lab's "who cannot enter tonight" draft: the pure mapper and the text people paste into the game.
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
 import { mapBlockers, buildCopyText, flagName } from '../web/lib/popTonightBlockersView.ts';
 import { draft } from '../web/lib/lab/drafts/pop-tonight-blockers.ts';
 import { popBlockersFixture } from '../web/lib/lab/fixtures/pop-tonight-blockers.ts';
@@ -46,6 +47,24 @@ describe('buildCopyText', () => {
     expect(s.endsWith(`+${60 - kept} more`)).toBe(true);
     expect(buildCopyText(names.slice(0, 5))).not.toMatch(/more/);
     expect(buildCopyText(names, 5)).toBe('+60 more');
+  });
+});
+
+// We do not know which preflags are door checks, so no copy may say cannot enter or blocked.
+const read = (f) => fs.readFileSync(new URL(f, import.meta.url), 'utf8').split('\n').filter((l) => !/^\s*(\/\/|\/\*|\*)/.test(l)).join('\n');
+describe('wording and redirect', () => {
+  const files = ['../web/components/lab/pop-tonight-blockers/BlockersStrip.tsx', '../web/components/lab/pop-tonight-blockers/VersionB.tsx',
+    '../web/components/lab/pop-tonight-blockers/VersionC.tsx', '../web/lib/lab/drafts/pop-tonight-blockers.ts'];
+  it('never says cannot enter or blocked in what a reader sees', () => {
+    for (const f of files) expect(read(f)).not.toMatch(/cannot (enter|zone)|\} blocked|Can enter|can enter/i);
+  });
+  it('says missing a preflag', () => {
+    expect(read(files[0])).toMatch(/are missing a preflag for tonight/);
+    expect(read(files[0])).toMatch(/Everyone has every preflag for tonight/);
+    expect(read(files[0])).toMatch(/\} missing</);
+  });
+  it('the signed-out redirect keeps ?v=a', () => {
+    expect(read('../web/app/pop/raid/page.tsx')).toMatch(/signin\?next=' \+ encodeURIComponent\(alt === 'a' \? '\/pop\/raid\?v=a'/);
   });
 });
 

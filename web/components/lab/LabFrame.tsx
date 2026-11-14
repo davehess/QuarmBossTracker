@@ -34,7 +34,9 @@ export default function LabFrame({
         {cur ? <div className="mt-2 text-dim">{cur.diff}</div> : null}
         <div className="mt-1 text-dim">
           {draft.live ? <>Today: <Link href={draft.live} className="text-blue hover:underline">{draft.live}</Link></> : null}
-          {draft.staged ? <>{draft.live ? ' · ' : ''}With real data: <Link href={draft.staged} className="text-blue hover:underline">{draft.staged}</Link></> : null}
+          {/* A plain link, so it is a full page load: a staged switch that is read when the page first loads (the top
+              bar's ?hdr=) would not see a query that arrived by an in-site navigation. */}
+          {draft.staged ? <>{draft.live ? ' · ' : ''}With real data: <a href={draft.staged} className="text-blue hover:underline">{draft.staged}</a></> : null}
         </div>
       </div>
       {children}

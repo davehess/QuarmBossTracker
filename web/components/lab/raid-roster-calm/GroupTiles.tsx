@@ -35,13 +35,13 @@ export default function GroupTiles({
                       onClick={() => setOpen(open === r.name ? null : r.name)}
                       className={'flex min-h-[40px] w-full items-baseline justify-between gap-1 rounded border px-2 py-1 text-left text-sm ' + chipClass(r) + (open === r.name ? ' ring-2 ring-accent' : '')}
                     >
-                      <span className={'truncate ' + (r.dead || r.curse ? 'text-red' : 'text-text')}>{r.name}</span>
-                      <b className={'shrink-0 tabular-nums ' + HP_TEXT[hpTone(r.hp)]}>{r.curse ? 'curse' : hpLabel(r)}</b>
+                      <span className="truncate text-text">{r.name}</span>
+                      <b className={'shrink-0 tabular-nums ' + HP_TEXT[hpTone(r.hp)]}>{r.curse ? <span className="text-red">curse </span> : null}{hpLabel(r)}</b>
                     </button>
                   </li>
                 ))}
               </ul>
-              {sel ? <div className="mt-2 overflow-hidden rounded border border-border">{detailFor(renderDetail, sel)}</div> : null}
+              {sel ? <div className="mt-2 overflow-hidden rounded border border-border">{detailFor(renderDetail, sel, () => setOpen(null))}</div> : null}
             </section>
           );
         })}

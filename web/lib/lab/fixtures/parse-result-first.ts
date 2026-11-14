@@ -6,7 +6,7 @@ const VIEWER_MAIN = 'Tolvane';   // a rogue, lands mid-table at rank 14
 const VIEWER_HEALER = 'Merrin';  // a cleric, lands near the bottom
 const clsOf = (n: string) => LAB_RAID.find((p) => p.name === n)?.cls ?? null;
 
-function build(state: 'killed' | 'wipe', role: ViewRole): ResultView {
+function build(state: 'killed' | 'wipe' | 'open', role: ViewRole, old = false): ResultView {
   const wipe = state === 'wipe';
   const dur = wipe ? 188 : 252;
   const others = LAB_RAID.filter((p) => p.name !== VIEWER_MAIN && p.name !== VIEWER_HEALER)
@@ -64,8 +64,16 @@ function build(state: 'killed' | 'wipe', role: ViewRole): ResultView {
     ].map((c) => ({ name: c.name, damage: Math.round(c.damage) })),
     mine: [VIEWER_MAIN, VIEWER_HEALER],
     role,
+    detailKept: !old,
   };
 }
 
 export const fixtureKill = (role: ViewRole = 'damage') => build('killed', role);
 export const fixtureWipe = (role: ViewRole = 'damage') => build('wipe', role);
+/** A fight nobody saw end: no kill line, not marked a wipe. */
+export const fixtureOpen = (role: ViewRole = 'damage') => build('open', role);
+/** A kill older than 7 days: the detailed log is gone, so deaths, tank and heal are unknown. */
+export const fixtureOld = (role: ViewRole = 'damage') => {
+  const v = build('killed', role, true);
+  return { ...v, deaths: [], tanks: [], healers: [] };
+};

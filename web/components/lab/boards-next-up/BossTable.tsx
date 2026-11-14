@@ -17,8 +17,8 @@ export default function BossTable({ bosses, nowMs, tick = false }: { bosses: Nex
   const rows = col === 'opens'
     ? (dir === 1 ? base : [...base].reverse())
     : [...base].sort((a, b) => {
-        const r = col === 'name' ? a.name.localeCompare(b.name)
-          : col === 'zone' ? a.zone.localeCompare(b.zone)
+        const r = col === 'name' ? a.name.localeCompare(b.name, 'en')
+          : col === 'zone' ? a.zone.localeCompare(b.zone, 'en')
           : (a.timerHours ?? 0) - (b.timerHours ?? 0);
         return r * dir;
       });
@@ -42,17 +42,17 @@ export default function BossTable({ bosses, nowMs, tick = false }: { bosses: Nex
             <thead>
               <tr>
                 {th('name', 'Boss')}
-                {th('zone', 'Zone', 'w-[30%] sm:w-[26%]')}
-                {th('opens', 'Opens in', 'w-[7.5rem] sm:w-[9rem]')}
+                {th('zone', 'Zone', 'hidden sm:table-cell sm:w-[26%]')}
+                {th('opens', 'Opens in', 'w-[9rem]')}
                 {th('window', 'Window', 'hidden sm:table-cell w-[5.5rem]')}
               </tr>
             </thead>
             <tbody>
               {rows.map((b) => (
                 <tr key={b.id} className="hover:bg-bg">
-                  <td className="border-b border-border/60 px-3 py-1.5 align-top leading-snug break-words"><BossName b={b} /></td>
-                  <td className="truncate border-b border-border/60 px-3 py-1.5 align-top text-xs text-text" title={b.zone}>{b.zone}</td>
-                  <td className={`border-b border-border/60 px-3 py-1.5 align-top font-bold tabular-nums ${toneOf(b, now)}`}>{countdownText(b, now)}</td>
+                  <td className="border-b border-border/60 px-3 py-1.5 align-top leading-snug break-words"><BossName b={b} /><div className="break-words text-xs text-text sm:hidden">{b.zone}</div></td>
+                  <td className="hidden border-b border-border/60 px-3 py-1.5 align-top text-xs text-text sm:table-cell">{b.zone}</td>
+                  <td className={`border-b border-border/60 px-3 py-1.5 align-top text-base font-bold tabular-nums ${toneOf(b, now)}`}>{countdownText(b, now)}</td>
                   <td className="hidden border-b border-border/60 px-3 py-1.5 align-top text-xs text-text sm:table-cell">{fmtWindow(b.timerHours)}</td>
                 </tr>
               ))}

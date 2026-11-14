@@ -97,4 +97,22 @@ describe('draft and staging', () => {
     const src = stripJs(fs.readFileSync(path.join(ROOT, 'web/components/lab/raid-roster-calm/shared.tsx'), 'utf8'));
     expect(src).toMatch(/alerts\.length === 0\) return null/);
   });
+  const lab = (f) => stripJs(fs.readFileSync(path.join(ROOT, 'web/components/lab/raid-roster-calm', f), 'utf8'));
+  it('the real page closes a raider detail through the close callback the view hands it', () => {
+    const real = stripJs(fs.readFileSync(path.join(ROOT, 'web/app/raid/RaidView.tsx'), 'utf8'));
+    expect(real).toMatch(/renderDetail=\{\(c, close\)[\s\S]{0,200}onClose=\{close\}/);
+    expect(lab('shared.tsx')).toMatch(/render\(r, close\)/);
+    for (const f of ['AlertFirst.tsx', 'GroupTiles.tsx', 'JobTabs.tsx']) expect(lab(f)).toMatch(/detailFor\(renderDetail, \w+, (?:onClose|\(\) => setOpen\(null\))\)/);
+  });
+  it('alert text is text-lg, tap targets are 40px, HP is text-base unless hurt', () => {
+    const s = lab('shared.tsx');
+    expect(s).toMatch(/gap-y-0 text-lg font-bold text-red/);
+    expect(s).toMatch(/inline-flex min-h-\[40px\] items-center px-1/);
+    expect(s).toMatch(/hpSize[\s\S]{0,120}'text-base' : 'text-lg'/);
+    expect(s).not.toMatch(/who is not/);
+  });
+  it('version B keeps HP on a cursed tile and version C tints cursed rows', () => {
+    expect(lab('GroupTiles.tsx')).toMatch(/curse <\/span> : null\}\{hpLabel\(r\)\}/);
+    expect(lab('JobTabs.tsx')).toMatch(/r\.curse \|\| r\.dead \? 'bg-red\/10'/);
+  });
 });

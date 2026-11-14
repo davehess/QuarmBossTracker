@@ -22,6 +22,11 @@ describe('?hero= leaves the default page alone', () => {
     expect(sw).toMatch(/get\('hero'\)/);
     expect(sw).toMatch(/if \(hero !== 'a' && hero !== 'b' && hero !== 'c'\) return <>\{children\}<\/>;/);
   });
+  it('is off on the product\'s own address: enabled prop, passed as !onHost', () => {
+    expect(sw).toMatch(/enabled: boolean/);
+    expect(sw).toMatch(/if \(!enabled\) return <>\{children\}<\/>;/);
+    expect(page).toMatch(/<HeroSwitch enabled=\{!onHost\} /);
+  });
   it('does not touch the existing v parameter', () => {
     expect(sw).not.toMatch(/get\('v'\)/);
   });
