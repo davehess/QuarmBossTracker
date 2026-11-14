@@ -14,11 +14,28 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { readSource, stripJs, ROOT } from './_source-slice.js';
+import { readSource, stripJs, ROOT, sliceBlock, evalBlock } from './_source-slice.js';
 
 const require = createRequire(import.meta.url);
 const fit = require(path.join(ROOT, 'apps', 'mimic', 'uiFit.js'));
 const QHD = { w: 2560, h: 1440 }, FHD = { w: 1920, h: 1080 };
+
+describe('_uiSameMachine (main.js), run as it ships', () => {
+  const src = readSource(path.join(ROOT, 'apps', 'mimic', 'main.js'));
+  const sameAs = (me) => {
+    const block = sliceBlock(src, 'function _uiSameMachine(snap) {', '\n}\n');
+    return evalBlock('const _thisMachine = () => ' + JSON.stringify(me) + ';\n' + block, ['_uiSameMachine'])._uiSameMachine;
+  };
+  it('a matching name (any case, trimmed) is the same machine; blank, missing or different names are not', () => {
+    const f = sameAs('Gaming-PC');
+    expect(f({ machine_name: 'gaming-pc ' })).toBe(true);
+    expect(f({ local: true })).toBe(true);
+    for (const n of ['', '   ', null, undefined, 5, 'other-pc']) expect(f({ machine_name: n })).toBe(false);
+    expect(sameAs('')(({ machine_name: '' }))).toBe(false);
+    expect(sameAs('  ')(({ machine_name: '  ' }))).toBe(false);
+    expect(f(null)).toBe(false);
+  });
+});
 
 describe('a window keeps its place in the free space', () => {
   it('flush left stays flush left, flush right stays flush right, centred stays centred', () => {
@@ -124,13 +141,14 @@ describe('both places that fit a layout use this one rule', () => {
     expect(plan).toMatch(/uiFit\.fitRect\(\{ x: from\.x, y: from\.y, w, h \}, from\.res, tgt, \{ resize: uiFit\.isChatSection\(s\.name\)/);
     // ...except a backup made on THIS computer, which is put back as it was (its block for this screen size is kept)
     // (the size the backup was PLAYED at is always passed: a window with no place here is still fitted from it)
-    expect(plan).toMatch(/const fitOpts = \(backupFiles, skinSizes, target, sameMachine\) =>\s*\(\{ source: videoModeOf\(backupFiles\), keep: !!sameMachine, skinSizes \}\);/);
-    expect(plan).toMatch(/let from = \(keep && had\) \? at\(tgt\) : \(!sameScreen \? at\(main\) : null\);/);
+    expect(plan).toMatch(/const fitOpts = \(backupFiles, skinSizes, target, sameMachine, sourceRes\) =>/);
+    expect(plan).toMatch(/let from = !sameScreen \? at\(main\) : null;/);
     expect(plan).not.toMatch(/x \* tw \/ rw/);
     // main hands the skin's window sizes, and whether the backup is this PC's own, to all three calls
-    expect(main.match(/skinSizes: _uiSkinSizes\(entry\.eqDir\), sameMachine: !!entry\.sameMachine|\{ knownChars, target, skinSizes, sameMachine \}|uiRestorePlan\.fitOpts\(snap\.files, skinSizes, target, sameMachine\)/g)).toHaveLength(3);
+    expect(main.match(/skinSizes: _uiSkinSizes\(entry\.eqDir\), sameMachine: !!entry\.sameMachine|\{ knownChars, target, skinSizes, sameMachine, sourceRes: _uiSnapSource\(snap\) \}|uiRestorePlan\.fitOpts\(snap\.files, skinSizes, target, sameMachine, _uiSnapSource\(snap\)\)/g)).toHaveLength(3);
     expect(main).toMatch(/if \(snap\.local === true\) return true;/);
-    expect(main).toMatch(/snap\.machine_name\.toLowerCase\(\) === me\.toLowerCase\(\)/);
+    expect(main).toMatch(/theirs\.toLowerCase\(\) === me\.toLowerCase\(\)/);
+    expect(main).toMatch(/return !!me && !!theirs && /);
   });
 
   it('UI Studio warns about windows off the screen and can bring only those back', () => {
@@ -151,6 +169,7 @@ describe('both places that fit a layout use this one rule', () => {
     expect(studio).toMatch(/function _isOffScreen\(w\)\{\s*if \(w\.category === 'offscreen'\) return false;/);
     // a save that waits for the camp leaves a guessed place to the game, unless the layout was made for another screen
     expect(studio).toMatch(/if \(!_noPlaceCount\(\)\.many\) edits = edits\.filter\(function\(e\)\{ return !e\.guess; \}\);/);
+    // (bags, bank and the other windows the game leaves unplaced until opened: test/ui-studio-bring-in-reload.test.js)
     expect(studio).toMatch(/var guess = !all && !_windowChanged\(w\);/);
     expect(studio).toMatch(/_syncPresetFromInputs\('src'\);\s*loadAndRescale\(\)\.then\(/);
     expect(studio).toMatch(/var pos = _readPos\(s\.props, srcSuffix, otherBlocks\);/);
@@ -158,16 +177,12 @@ describe('both places that fit a layout use this one rule', () => {
   });
 
   it('after a bring-in the canvas re-reads the files, so the next Save cannot write the old places back', () => {
-    expect(studio).toMatch(/mount\(document\.getElementById\('bringCard'\), \{ all: true, fresh: true, onDone: _reloadAfterBringIn \}\)/);
+    // The main process tells the window when a restore is WRITTEN (now, or after a camp / EverQuest closing); what the
+    // window then does is run, not text-matched, in test/ui-studio-bring-in-reload.test.js.
+    expect(studio).toMatch(/window\.mimic\.onUiStudioRestored\(function\(info\)/);
     expect(studio).toMatch(/function _reloadAfterBringIn\(ok, rows\)\{\s*if \(!STATE\.character \|\| !STATE\.eqDir\) return;/);
-    // only for the character on the canvas, and never over moves that are not saved
-    expect(studio).toMatch(/var mine = !done \|\| done\.some\(function\(r\)\{ return String\(r\.character\)\.toLowerCase\(\) === me; \}\);/);
-    // ...or when it wrote, for another character, a file loaded here (the shared files hold Zeal's bars)
-    expect(studio).toMatch(/var wrote = mine \|\| done\.some\(function\(r\)\{\s*return r\.files\.some\(function\(f\)\{ return f && loaded\[String\(f\.name\)\.toLowerCase\(\)\]; \}\);/);
-    expect(studio).toMatch(/if \(!wrote\) return;\s*if \(STATE\.windows\.some\(_windowChanged\)\) \{/);
-    // the places this canvas only guessed are not written over what the bring-in just placed
-    expect(studio).toMatch(/if \(mine\) for \(var bi = 0; bi < STATE\.windows\.length; bi\+\+\) STATE\.windows\[bi\]\.noBlock = false;/);
-    expect(stripJs(readSource(path.join(ROOT, 'apps', 'mimic', 'bring-setup.js')))).toMatch(/el\.__wpbsDone\(ok, rows\)/);
+    expect(main).toMatch(/_tellUiStudioRestored\(entry\.character, entry\.eqDir, written\);/);
+    expect(main).toMatch(/webContents\.send\('ui-studio-restored'/);
   });
 
   it('a Save queued while a bring-in waits no longer drops the bring-in', () => {

@@ -78,8 +78,10 @@ function mainRes(secs, prefer) {
     const m = RES_KEY.exec(k.key);
     if (m) { const id = m[1] + 'x' + m[2]; count.set(id, (count.get(id) || 0) + 1); }
   }
+  // Equal counts go to the larger screen, so the pick never depends on which block the file lists first.
+  const area = (id) => id.split('x').reduce((a, v) => a * parseInt(v, 10), 1);
   let best = null, n = 0;
-  for (const [id, c] of count) if (c > n) { n = c; best = id; }
+  for (const [id, c] of count) if (c > n || (c === n && best && area(id) > area(best))) { n = c; best = id; }
   // A tie goes to the size asked about (this PC's screen): a block as full as any other is in use, not left over.
   const p = prefer && prefer.w > 0 && prefer.h > 0 ? prefer.w + 'x' + prefer.h : null;
   if (p && n > 0 && count.get(p) === n) best = p;
@@ -114,7 +116,33 @@ function perCharFlag(files) {
 const perCharKeys = (files) => perCharFlag(files) === true;
 // Never copied between PCs: the chat sign-in keys, and the per-character-keybinds switch itself. That switch says
 // which section THIS PC's game reads its keys from; copying it would change where every character's keys come from.
-const ZEAL_SHARED_KEY = (k) => !/ChannelAutoJoin|password|^PerCharKeybinds$/i.test(k);
+// Every other PerChar* switch (PerCharAutojoin redirects the chat auto-join keys to ChannelAutoJoin_<Name>) is the same
+// kind of fact about THIS PC and is never copied either.
+const ZEAL_SHARED_KEY = (k) => !/ChannelAutoJoin|password/i.test(k) && !/^PerChar/i.test(k);
+const ZEAL_CHAR_KEY = (k) => !/ChannelAutoJoin|password/i.test(k) && !/^PerChar/i.test(k);
+// A section is a character's own only when it is not Zeal's own global [Zeal] section (a character may be named Zeal).
+const ownSec = (n, c) => !/^zeal$/i.test(n) && forChar(n, c);
+// The section a character's keys live in, with its keys: null when the section is absent or empty.
+const ownKeys = (text, c) => {
+  const s = firstBlocks(parseSections(text)).find((x) => lc(x.name) === 'keymaps_' + c);
+  return s && s.keys.length ? s : null;
+};
+const sharedKeys = (text) => {
+  const s = firstBlocks(parseSections(text)).find((x) => /^keymaps$/i.test(x.name));
+  return s && s.keys.length ? s : null;
+};
+
+// What the bring-in needs to know about keys for one character: does the backup's PC keep keys per character, does
+// it hold keys for this character, and does THIS PC keep keys per character.
+function keysInfo(backupFiles, localFiles, character) {
+  const c = lc(String(character || '').trim());
+  const bn = findName(backupFiles, 'eqclient.ini');
+  return {
+    backupPerChar: perCharKeys(backupFiles),
+    hasOwn: !!(c && bn && typeof backupFiles[bn] === 'string' && ownKeys(backupFiles[bn], c)),
+    pcPerChar: perCharKeys(localFiles),
+  };
+}
 // An entry that brings one section under another name (entry.from -> entry.as): the backup's text for it is that
 // one section, renamed, so the rest of the restore treats it like any section.
 function entryText(entry, text) {
@@ -146,11 +174,14 @@ function classify(files, character, opts = {}) {
       // When THIS PC shares one set, the game here reads [KeyMaps], so the character's own section is written as
       // [KeyMaps]. Bringing the backup's [KeyMaps] instead gave the character keys that were never its own (the
       // switch itself is no longer copied, so its own section stays unread here). Review, 2026-11-14.
-      const sharedKeys = (n) => /^KeyMaps$/i.test(n);
-      if (c && perCharFlag(files) === true && !(opts && opts.localPerCharKeys)
-          && parseSections(files[file]).some((s) => lc(s.name) === 'keymaps_' + c)) {
-        res.keybinds.push({ file, mode: 'sections', keepAbsent: true, test: sharedKeys, from: 'KeyMaps_' + String(character).trim(), as: 'KeyMaps' });
-      } else res.keybinds.push({ file, mode: 'sections', keepAbsent: true, test: sharedKeys });
+      // A per-character backup with no keys of its own for this character (no section, or an empty one) brings no
+      // keys at all here: the character played on the defaults, and the backup's [KeyMaps] is read by nobody.
+      const sharedTest = (n) => /^KeyMaps$/i.test(n);
+      if (c && perCharFlag(files) === true && !(opts && opts.localPerCharKeys)) {
+        if (ownKeys(files[file], c)) {
+          res.keybinds.push({ file, mode: 'sections', keepAbsent: true, test: sharedTest, from: 'KeyMaps_' + String(character).trim(), as: 'KeyMaps' });
+        }
+      } else res.keybinds.push({ file, mode: 'sections', keepAbsent: true, test: sharedTest });
       // Zeal's "per character keybinds" option ([Zeal] PerCharKeybinds in zeal.ini) keeps a character's bindings
       // in [KeyMaps_<Char>] (Zeal binds.cpp update_ini_section_name). They are the character's own, so they come
       // with the character whatever the shared Key bindings tick says. Two cases, both seen in real files:
@@ -167,11 +198,12 @@ function classify(files, character, opts = {}) {
         const own = 'KeyMaps_' + String(character).trim();
         const isOwn = (n) => lc(n) === 'keymaps_' + c;
         const names = parseSections(files[file]).map((s) => lc(s.name));
-        const hasOwn = names.includes('keymaps_' + c);
+        const hasOwnHeader = names.includes('keymaps_' + c);
+        const hasOwn = !!ownKeys(files[file], c);
         const flag = perCharFlag(files);
-        if (flag == null ? hasOwn : flag) {
+        if (flag == null ? hasOwnHeader : flag) {
           if (hasOwn) res.zealchar.push({ file, mode: 'sections', keepAbsent: true, test: isOwn });
-        } else if (opts && opts.localPerCharKeys && names.includes('keymaps')) {
+        } else if (opts && opts.localPerCharKeys && sharedKeys(files[file])) {
           res.zealchar.push({ file, mode: 'sections', keepAbsent: true, test: isOwn, from: 'KeyMaps', as: own });
         }
       }
@@ -179,7 +211,7 @@ function classify(files, character, opts = {}) {
       // (TellWindows), seen in a real file 2026-11-01. Only those two; every other section stays as it is.
       if (c) {
         res.zeal.push({ file, mode: 'keys', test: (n) => /^Zeal$/i.test(n), keyTest: ZEAL_SHARED_KEY });
-        res.zealchar.push({ file, mode: 'keys', test: (n) => lc(n) === c, keyTest: (k) => !/ChannelAutoJoin|password/i.test(k) });
+        res.zealchar.push({ file, mode: 'keys', test: (n) => lc(n) === c && !/^zeal$/i.test(n), keyTest: ZEAL_CHAR_KEY });
       }
     } else if (lf === 'zeal.ini') {
       // A bare section holding only TellWindows keys is a character's own ([<Char>]), even for a character this
@@ -189,13 +221,13 @@ function classify(files, character, opts = {}) {
       // This character's own sections are the 'zealchar' part; every other section that is nobody else's is shared.
       if (c) res.zealchar.push({
         file, mode: 'keys',
-        test: (n) => !/ChannelAutoJoin/i.test(n) && forChar(n, c),
-        keyTest: (k) => !/ChannelAutoJoin|password/i.test(k),
+        test: (n) => !/ChannelAutoJoin/i.test(n) && ownSec(n, c),
+        keyTest: ZEAL_CHAR_KEY,
       });
       res.zeal.push({
         file, mode: 'keys',
-        test: (n) => !/ChannelAutoJoin/i.test(n) && !(c && forChar(n, c)) &&
-          !tellOnly.has(lc(n)) && !others.some((o) => forChar(n, o)),
+        test: (n) => !/ChannelAutoJoin/i.test(n) && !(c && ownSec(n, c)) &&
+          !tellOnly.has(lc(n)) && !others.some((o) => ownSec(n, o)),
         keyTest: ZEAL_SHARED_KEY,
       });
     } else if (!c || !belongs(lf, c)) {
@@ -260,7 +292,12 @@ function fitLayout(text, targetW, targetH, opts) {
     const known = !!((iw && ih) || skin);
     const w = iw || (skin && skin.w) || uiFit.GUESS_W, h = ih || (skin && skin.h) || uiFit.GUESS_H;
     const had = m.has(lc(tx)) && m.has(lc(ty));
-    const at = (r) => (r && m.has('xpos' + r.w + 'x' + r.h) && m.has('ypos' + r.w + 'x' + r.h))
+    // A backup made on this computer is put back AS IT WAS: a window with a place at this screen size keeps it,
+    // position and size, even one the game parked past an edge on purpose. And when the backup was played at this
+    // very size, a window with no place here never had one: the game gives it its default, so none is invented
+    // from a stale block of another size (review 2026-11-14: 13-34 windows "moved" on an unchanged backup).
+    if (keep && (had || sameScreen)) continue;
+    const at =(r) => (r && m.has('xpos' + r.w + 'x' + r.h) && m.has('ypos' + r.w + 'x' + r.h))
       ? { x: parseInt(m.get('xpos' + r.w + 'x' + r.h), 10), y: parseInt(m.get('ypos' + r.w + 'x' + r.h), 10), res: r } : null;
 
     // Where the window is read from: the block the backup was played at; else, on a backup played on this screen
@@ -268,7 +305,7 @@ function fitLayout(text, targetW, targetH, opts) {
     // old bare XPos/YPos, whose screen size is not known.
     // opts.keep (a backup made on this computer): a window that has a place at this screen size keeps it. A window
     // with none is fitted from the size the backup was played at, like any other backup.
-    let from = (keep && had) ? at(tgt) : (!sameScreen ? at(main) : null);
+    let from = !sameScreen ? at(main) : null;
     if (!from && had) from = at(tgt);
     if (!from && main) from = at(main);
     if (!from && m.has('xpos') && m.has('ypos')) from = { x: parseInt(m.get('xpos'), 10), y: parseInt(m.get('ypos'), 10), res: null };
@@ -321,11 +358,53 @@ function videoModeOf(files) {
 // screen size keeps it, even when the game ran at another size the day the backup was made. The size the backup was
 // PLAYED at is still passed (source): a window with no place at this size is fitted from that one. Passing the
 // target as the source instead lost it, and such windows were fitted from whichever block came first in the file.
-const fitOpts = (backupFiles, skinSizes, target, sameMachine) =>
-  ({ source: videoModeOf(backupFiles), keep: !!sameMachine, skinSizes });
+// sourceRes ({ w, h }, optional): the screen size the snapshot says it came from, used when the backup has no
+// eqclient.ini of its own to say (a named 'Layout:' cloud backup).
+const fitOpts = (backupFiles, skinSizes, target, sameMachine, sourceRes) =>
+  ({ source: videoModeOf(backupFiles) || (sourceRes && sourceRes.w > 0 && sourceRes.h > 0 ? sourceRes : null),
+    keep: !!sameMachine, skinSizes });
 
-const prep = (partKey, text, target, fit) =>
-  (partKey === 'layout' && target && target.w > 0 && target.h > 0) ? fitLayout(text, target.w, target.h, fit).text : text;
+// Zeal's own bars sit in zeal.ini as raw screen pixels at the game's size: [RaidBars] Left/Top/Right/Bottom (0 =
+// runs to the screen edge) and [AssistBar] Left/Top. Fitted with the window rule, from the screen the backup was
+// played at to this one, only when the two differ. A bar's size is kept (it is not a chat window).
+function fitZealBars(text, src, tgt) {
+  const sw = src && src.w, sh = src && src.h, tw = tgt && tgt.w, th = tgt && tgt.h;
+  if (!(sw > 0 && sh > 0 && tw > 0 && th > 0) || (sw === tw && sh === th)) return text;
+  const int = (m, k) => { const n = parseInt(m.get(k), 10); return Number.isFinite(n) ? n : null; };
+  const edits = [];
+  for (const s of firstBlocks(parseSections(text))) {
+    const m = keyMap(s), name = lc(s.name);
+    if (name !== 'raidbars' && name !== 'assistbar') continue;
+    const L = int(m, 'left'), T = int(m, 'top');
+    if (L == null || T == null) continue;
+    let w, h, R = 0, B = 0;
+    if (name === 'raidbars') {
+      R = int(m, 'right') || 0; B = int(m, 'bottom') || 0;
+      w = R > L ? R - L : 0; h = B > T ? B - T : 0;
+    } else {
+      const fs = int(m, 'fontsize') || 16;               // the same estimate as main.js _zealBarRects
+      w = Math.round(fs * 11); h = Math.round(fs * 2) + 4;
+    }
+    // A side that runs to the screen edge (0) has no size to keep: its corner just scales.
+    const x = w ? uiFit.fitAxis(L, w, sw, tw, w) : Math.round(L * tw / sw);
+    const y = h ? uiFit.fitAxis(T, h, sh, th, h) : Math.round(T * th / sh);
+    edits.push({ section: s.name, key: 'Left', value: String(x) }, { section: s.name, key: 'Top', value: String(y) });
+    if (name === 'raidbars') {
+      if (R > L) edits.push({ section: s.name, key: 'Right', value: String(x + w) });
+      if (B > T) edits.push({ section: s.name, key: 'Bottom', value: String(y + h) });
+    }
+  }
+  return edits.length ? applyIniKeyEdits(text, edits).text : text;
+}
+
+// The backup's text as it will be applied. A backup from this computer (fit.keep) is put back as it was: its Zeal
+// bars are left alone too.
+const prep = (partKey, text, target, fit) => {
+  if (!(target && target.w > 0 && target.h > 0)) return text;
+  if (partKey === 'layout') return fitLayout(text, target.w, target.h, fit).text;
+  if ((partKey === 'zeal' || partKey === 'zealchar') && fit && !fit.keep) return fitZealBars(text, fit.source, target);
+  return text;
+};
 
 // What an entry covers, as id -> signature. Whole files count per section (a window, a spell set);
 // sections/keys modes count per key (a button, a keybind).
@@ -387,6 +466,18 @@ function summarize(partKey, r, diffKeys) {
 }
 
 function compare(partKey, backupFiles, localFiles, character, opts = {}) {
+  if (partKey === 'keysplit') {
+    // What the shared step writes: a section per character that has none yet (each a copy of this PC's keys), then the switch.
+    const w = splitKeysWrites(localFiles, opts.splitChars);
+    const en = findName(localFiles, 'eqclient.ini');
+    const before = new Set(parseSections(en ? localFiles[en] : '').map((x) => lc(x.name)));
+    const ek = en || 'eqclient.ini';
+    const added = w[ek] ? parseSections(w[ek]).filter((x) => !before.has(lc(x.name))).length : 0;
+    const sw = Object.keys(w).some((n) => lc(n) === 'zeal.ini');
+    return { inBackup: added + (sw ? 1 : 0), same: !added && !sw, added, changed: sw ? 1 : 0, removed: 0,
+      summary: !added && !sw ? 'already per character'
+        : (added ? plural(added, ['character keeps', 'characters keep']) + ' the keys used today in a section of their own' : '') + (added && sw ? '; ' : '') + (sw ? "Zeal's per-character keys turned on" : '') };
+  }
   const entries = classify(backupFiles, character, { ...opts, localPerCharKeys: perCharKeys(localFiles) })[partKey] || [];
   const r = { inBackup: 0, same: false, added: 0, changed: 0, removed: 0, summary: '' };
   let sameN = 0;
@@ -394,7 +485,7 @@ function compare(partKey, backupFiles, localFiles, character, opts = {}) {
   for (const entry of entries) {
     const ln = findName(localFiles, entry.file);
     const local = ln && typeof localFiles[ln] === 'string' ? localFiles[ln] : '';
-    const b = unitsOf(entry, entryText(entry, prep(partKey, backupFiles[entry.file], opts.target, fitOpts(backupFiles, opts.skinSizes, opts.target, opts.sameMachine))));
+    const b = unitsOf(entry, entryText(entry, prep(partKey, backupFiles[entry.file], opts.target, fitOpts(backupFiles, opts.skinSizes, opts.target, opts.sameMachine, opts.sourceRes))));
     const l = unitsOf(entry, local);
     for (const [id, u] of b) {
       r.inBackup++;
@@ -476,11 +567,52 @@ function mergeKeys(localText, backupText, entry) {
   return text;
 }
 
-function buildRestore({ backupFiles, localFiles, character, parts, knownChars, target, skinSizes, sameMachine } = {}) {
+// The shared step of "give each character its own keys on this PC" (a bring-in of per-character backups onto a PC that
+// shares one set): every named character that has no [KeyMaps_<Name>] yet gets the keys this PC uses today as its own
+// section, then Zeal's per-character switch is turned on. [KeyMaps] itself stays as it is. Returns the new texts of
+// eqclient.ini and zeal.ini (keyed by the local name, or the plain name when this PC has none), changed files only.
+// 'keysplit' is not a PARTS entry: it is a step of its own that the bring-in runs once, before any character's keys.
+const NAME_OK = /^[\w'-]+$/;
+function splitKeysWrites(localFiles, names) {
+  const out = {};
+  const en = findName(localFiles, 'eqclient.ini');
+  const etext = en && typeof localFiles[en] === 'string' ? localFiles[en] : '';
+  const shared = sharedKeys(etext);
+  const have = new Set(parseSections(etext).map((x) => lc(x.name)));
+  const eol = etext.includes('\r\n') || !etext.includes('\n') ? '\r\n' : '\n';
+  const want = [];
+  const seen = new Set();
+  for (const n of Array.isArray(names) ? names : []) {
+    const name = String(n || '').trim();
+    if (!NAME_OK.test(name) || seen.has(lc(name)) || have.has('keymaps_' + lc(name))) continue;
+    seen.add(lc(name));
+    want.push(name);
+  }
+  if (shared && want.length) {
+    const add = want.map((n) => '[KeyMaps_' + n + ']' + eol + shared.keys.map((k) => k.key + '=' + k.value + eol).join('')).join('');
+    const text = replaceSections(etext, add, (n) => /^KeyMaps_/i.test(n), true);
+    if (text !== etext) out[en || 'eqclient.ini'] = text;
+  }
+  const zn = findName(localFiles, 'zeal.ini');
+  const ztext = zn && typeof localFiles[zn] === 'string' ? localFiles[zn] : '';
+  const z = applyIniKeyEdits(ztext, [{ section: 'Zeal', key: 'PerCharKeybinds', value: 'TRUE' }]).text;
+  if (z !== ztext) out[zn || 'zeal.ini'] = z;
+  return out;
+}
+
+function buildRestore({ backupFiles, localFiles, character, parts, knownChars, target, skinSizes, sameMachine, sourceRes, splitChars } = {}) {
   const { files: backup, skipped } = filterRestorable(backupFiles);
   const classes = classify(backup, character, { knownChars, localPerCharKeys: perCharKeys(localFiles) });
   const chosen = new Set(parts || []);
   const work = new Map();                              // lowercase name -> { name, orig, text, parts }
+  if (chosen.has('keysplit')) {
+    // First, so a character's own keys in the same run land on a PC that already reads per-character keys.
+    for (const [name, text] of Object.entries(splitKeysWrites(localFiles, splitChars))) {
+      const ln = findName(localFiles, name);
+      const orig = ln && typeof localFiles[ln] === 'string' ? localFiles[ln] : null;
+      work.set(lc(name), { name: ln || name, orig, text, parts: new Set(['keysplit']) });
+    }
+  }
   for (const part of PARTS) {
     if (!chosen.has(part.key)) continue;
     for (const entry of classes[part.key]) {
@@ -492,7 +624,7 @@ function buildRestore({ backupFiles, localFiles, character, parts, knownChars, t
       }
       const w = work.get(lc(name));
       w.parts.add(part.key);
-      const bText = entryText(entry, prep(part.key, backup[entry.file], target, fitOpts(backupFiles, skinSizes, target, sameMachine)));
+      const bText = entryText(entry, prep(part.key, backup[entry.file], target, fitOpts(backupFiles, skinSizes, target, sameMachine, sourceRes)));
       if (entry.mode === 'whole') w.text = bText;
       else if (entry.mode === 'sections') w.text = replaceSections(w.text, bText, entry.test, entry.keepAbsent);
       else w.text = mergeKeys(w.text, bText, entry);
@@ -502,7 +634,7 @@ function buildRestore({ backupFiles, localFiles, character, parts, knownChars, t
   for (const w of work.values()) {
     if (w.text !== (w.orig == null ? '' : w.orig)) {                            // unchanged files are not rewritten
       writes[w.name] = w.text;
-      fileParts[w.name] = PARTS.filter((p) => w.parts.has(p.key)).map((p) => p.key);   // which parts changed it, for the result list
+      fileParts[w.name] = PARTS.filter((p) => w.parts.has(p.key)).map((p) => p.key).concat(w.parts.has('keysplit') ? ['keysplit'] : []);   // which parts changed it, for the result list
     }
   }
   return { writes, skipped, fileParts };
@@ -536,4 +668,4 @@ function windowRects(text, w, h) {
   return out;
 }
 
-module.exports = { PARTS, parseSections, classify, fitLayout, fitOpts, videoModeOf, compare, buildRestore, windowRects };
+module.exports = { PARTS, keysInfo, perCharFlag, parseSections, classify, fitLayout, fitOpts, videoModeOf, compare, buildRestore, windowRects };

@@ -700,11 +700,21 @@
     try { p = await window.mimic.uiRestorePlan(t); } catch (err) { p = { ok: false, error: err && err.message }; }
     if (!p || !p.ok) { box.innerHTML = '<div class="uicmp" style="color:var(--wp-red)">✕ ' + _uiEsc(p && p.error ? p.error : 'could not compare') + '</div>'; return; }
     const use = {};
-    // Default: take the backup where it differs, except keybinds (shared by every character on this PC).
-    p.parts.forEach(x => { use[x.key] = x.inBackup && !x.same && x.scope !== 'all' ? 'backup' : 'mine'; });
-    const when = p.busy === 'camp' ? ' when ' + t.character + ' camps' : p.busy === 'close' ? ' when EverQuest closes' : ' now';
+    // Default: take the backup where it differs, except the parts inside the files every character on this PC shares:
+    // keybinds, and Zeal's shared options and bar positions ('zeal': its scope says 'character', but the sections
+    // it carries are Zeal's own settings for the whole PC; the bring-in card keeps it behind the shared tick too).
+    const shared = x => x.scope === 'all' || x.key === 'zeal';
+    p.parts.forEach(x => { use[x.key] = x.inBackup && !x.same && !shared(x) ? 'backup' : 'mine'; });
+    // Parts that write eqclient.ini / zeal.ini wait for EverQuest to close; the rest write the character's own files.
+    const needsClose = x => x.key === 'keybinds' || x.key === 'zeal' || x.key === 'zealchar';
+    const whenOf = b => b === 'camp' ? ' when ' + t.character + ' camps' : b === 'close' ? ' when EverQuest closes' : ' now';
     function paint() {
       const n = p.parts.filter(x => use[x.key] === 'backup').length;
+      const picked = p.parts.filter(x => use[x.key] === 'backup');
+      const ownW = whenOf(p.busy), sharedW = whenOf(p.busyShared === undefined ? p.busy : p.busyShared);
+      const hasOwn = picked.some(x => !needsClose(x)), hasShared = picked.some(needsClose);
+      const when = hasOwn && hasShared && ownW !== sharedW ? ' (own files' + ownW + ', shared files' + sharedW + ')'
+        : hasShared ? sharedW : ownW;
       box.innerHTML = '<div class="uicmp">' +
         '<div class="src"><span>📦 <b>' + _uiEsc(p.source.machine || 'backup') + '</b> <span class="m">' + _uiRes(p.source.w, p.source.h) + '</span></span>' +
           '<span style="color:var(--wp-gold)">vs</span><span>💻 <b>This PC</b> <span class="m">' + _uiRes(p.target.w, p.target.h) + '</span></span></div>' +
@@ -713,7 +723,7 @@
             '<div>' + _uiThumb(p.preview.mine) + '<div class="cap">this PC now</div></div></div>' : '') +
         '<table><tr><th>Part</th><th>Difference</th><th>Use</th></tr>' + p.parts.map(x => {
           const can = x.inBackup > 0 && !x.same;
-          const diff = x.summary + (x.scope === 'all' && x.inBackup ? ' · all characters' : '');
+          const diff = x.summary + (shared(x) && x.inBackup ? ' · all characters' : '');
           return '<tr><td>' + _uiEsc(x.label) + '</td><td class="d' + (can ? ' chg' : '') + '">' + _uiEsc(diff) + '</td><td>' +
             (can ? '<span class="seg"><button type="button" data-part="' + x.key + '" data-use="mine" class="' + (use[x.key] === 'mine' ? 'on' : '') + '">Keep mine</button>' +
                    '<button type="button" data-part="' + x.key + '" data-use="backup" class="' + (use[x.key] === 'backup' ? 'on' : '') + '">Backup</button></span>'
@@ -732,9 +742,12 @@
         catch (err) { r = { ok: false, error: err && err.message }; }
         if (r && r.ok) {
           msg.style.color = 'var(--wp-green)';
+          // Every queued half is named: the own files wait for the camp, the shared-file parts for EverQuest to close.
+          const nowTxt = 'Restored (' + (r.written ? r.written.length : 0) + ' file' + (r.written && r.written.length === 1 ? '' : 's') + ' changed)';
+          const qTxt = (r.queuedParts || [{ busy: r.busy }]).map(q => whenOf(q.busy).trim()).filter((v, i, a) => a.indexOf(v) === i).join(' and ');
           msg.textContent = r.queued
-            ? '✓ Queued. It applies' + (r.busy === 'camp' ? ' when ' + t.character + ' camps.' : ' when EverQuest closes.')
-            : '✓ Restored (' + (r.written ? r.written.length : 0) + ' file' + (r.written && r.written.length === 1 ? '' : 's') + ' changed).';
+            ? '✓ ' + (r.written && r.written.length ? nowTxt + '; the rest is queued: it applies ' : 'Queued. It applies ') + qTxt + '.'
+            : '✓ ' + nowTxt + '.';
           if (t.onDone) t.onDone(true);
         } else { msg.style.color = 'var(--wp-red)'; msg.textContent = '✕ ' + (r && r.error ? r.error : 'restore failed'); e.target.disabled = false; }
       });

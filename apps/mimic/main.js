@@ -14172,9 +14172,18 @@ function _localVersionsRoot() { return path.join(app.getPath('userData'), 'char-
 function _uiSameMachine(snap) {
   if (!snap) return false;
   if (snap.local === true) return true;
-  const me = _thisMachine();
-  // Windows computer names are not case-sensitive (uiSync.newerElsewhere compares them the same way).
-  return !!me && typeof snap.machine_name === 'string' && snap.machine_name.toLowerCase() === me.toLowerCase();
+  const me = String(_thisMachine() || '').trim();
+  const theirs = typeof snap.machine_name === 'string' ? snap.machine_name.trim() : '';
+  // Windows computer names are not case-sensitive (uiSync.newerElsewhere compares them the same way). An empty
+  // or blank name never matches anything.
+  // ponytail: ceiling: two PCs that share a computer name (a cloned image, 'steamdeck' on every Deck) still read
+  // as one machine; telling them apart needs a per-install id in the upload, not a guess from the screen size.
+  return !!me && !!theirs && theirs.toLowerCase() === me.toLowerCase();
+}
+// The screen size a snapshot says it came from, for a backup that carries no eqclient.ini of its own.
+function _uiSnapSource(snap) {
+  const w = Number(snap && snap.source_width), h = Number(snap && snap.source_height);
+  return w > 0 && h > 0 ? { w, h } : null;
 }
 
 // ── Overlay positions as a part of a backup (the guild lead, 2026-11-11) ─────────────────────────────────────
@@ -14252,7 +14261,7 @@ function _uiMainLayoutText(files, character) {
 // character that was not logged in anywhere was queued "until EverQuest closes" and so never landed in the session).
 // 'zealchar' is the character's own sections, but they sit INSIDE those two shared files, so it waits as well.
 function _uiNeedsEqClosed(parts) {
-  return !Array.isArray(parts) || parts.some(k => k === 'keybinds' || k === 'zeal' || k === 'zealchar');
+  return !Array.isArray(parts) || parts.some(k => k === 'keybinds' || k === 'zeal' || k === 'zealchar' || k === 'keysplit');
 }
 // A character that is in game without Zeal's pipe reporting it (the pipe fails on some PCs) still writes its log.
 function _uiCharLogFresh(eqDir, charLower) {
@@ -14270,8 +14279,11 @@ async function _uiEqBusyFor(character, parts, eqDir) {
   const cl = String(character).toLowerCase();
   // A half that writes eqclient.ini / zeal.ini waits for EverQuest to close even when this character is the one
   // logged in: answering "camp" there promised something the queue does not do (it holds that half until every
-  // client is closed). With no part list (the compare card asking about the character as a whole) it stays "camp".
-  if (_uiCharActiveInZeal(cl)) return Array.isArray(parts) && _uiNeedsEqClosed(parts) ? 'close' : 'camp';
+  // client is closed). With no part list (the compare card asking about the character as a whole) it answers for the
+  // character's OWN files; the card asks again with a shared part for the other half (busyShared in ui-restore-plan).
+  // Treating "no list" as shared made another running EverQuest read 'close' for own files that are written at once.
+  if (!Array.isArray(parts)) parts = [];
+  if (_uiCharActiveInZeal(cl)) return _uiNeedsEqClosed(parts) ? 'close' : 'camp';
   let up = false;
   try { up = await _isEqRunning(); } catch { up = false; }
   if (!up) return null;
@@ -14293,7 +14305,8 @@ async function _uiTargetRes(local) {
 }
 function _uiPartKeys(parts) {
   // 'overlays' is Mimic's own overlay layout (overlayBackup.js); the rest are EverQuest's files (uiRestorePlan.PARTS).
-  return (Array.isArray(parts) ? parts : []).filter(k => k === 'overlays' || uiRestorePlan.PARTS.some(p => p.key === k));
+  // 'keysplit' is the bring-in's one shared step (every character gets its own keys on a shared-keys PC; uiRestorePlan.splitKeysWrites).
+  return (Array.isArray(parts) ? parts : []).filter(k => k === 'overlays' || k === 'keysplit' || uiRestorePlan.PARTS.some(p => p.key === k));
 }
 // The two files every character on this PC shares get a dated copy before ANY restore touches the folder, whether
 // or not their parts are ticked (the guild lead, 2026-11-11): a keybind or Zeal section, or a write from another
@@ -14315,7 +14328,9 @@ function _uiWriteRestore(entry, backupTag) {
   const r = uiRestorePlan.buildRestore({
     backupFiles: entry.files, localFiles: local, character: entry.character,
     parts: _uiPartKeys(entry.parts), knownChars: _knownCharsIn(entry.eqDir, entry.character), target,
-    skinSizes: _uiSkinSizes(entry.eqDir), sameMachine: !!entry.sameMachine,
+    skinSizes: _uiSkinSizes(entry.eqDir), sameMachine: !!entry.sameMachine, sourceRes: entry.sourceRes || null,
+    // every character with files here, read now (a queued step applies later); the step skips any that already have keys of their own
+    splitChars: _uiPartKeys(entry.parts).includes('keysplit') ? _knownCharsIn(entry.eqDir, '') : undefined,
   });
   const written = [];
   for (const [name, text] of Object.entries(r.writes || {})) {
@@ -14327,15 +14342,25 @@ function _uiWriteRestore(entry, backupTag) {
   written.savedCopies = savedCopies;
   written.fileParts = r.fileParts || {};
   written.overlays = _uiPartKeys(entry.parts).includes('overlays') && entry.overlays ? _applyOverlayBackup(entry.overlays) : null;
+  _tellUiStudioRestored(entry.character, entry.eqDir, written);
   return written;
+}
+// An open UI Studio must re-read when a restore is actually WRITTEN, whichever surface started it (its own card, Settings,
+// the welcome walkthrough, quiet keep-in-sync) and whether it ran at once or after a camp / EverQuest closing. A queued
+// restore sends nothing until it lands, so the canvas never reloads early (and never saves guesses over it meanwhile).
+function _tellUiStudioRestored(character, eqDir, written) {
+  if (!uiStudioWindow || uiStudioWindow.isDestroyed() || !Array.isArray(written) || !written.length) return;
+  try { uiStudioWindow.webContents.send('ui-studio-restored', { character, eqDir, files: written.slice() }); } catch { /* window closing */ }
 }
 function _queueUiRestore(entry) {
   const cl = String(entry.character).toLowerCase();
   // A restore is queued in up to two halves (own files until the character camps, shared-file parts until EverQuest
   // closes); a new half replaces only the same half for that character.
   const shared = _uiNeedsEqClosed(entry.parts);
+  // The keys step is its own entry: a character's later keys half must not replace it (it has to run first).
+  const isSplit = (p) => Array.isArray(p) && p.includes('keysplit');
   _uiDeferred = _uiDeferred.filter(e => !(e.kind === 'restore' && String(e.character).toLowerCase() === cl && e.eqDir === entry.eqDir
-    && _uiNeedsEqClosed(e.parts) === shared));
+    && _uiNeedsEqClosed(e.parts) === shared && isSplit(e.parts) === isSplit(entry.parts)));
   _uiDeferred.push({ ...entry, kind: 'restore', queuedAt: Date.now(), sawActive: _uiCharActiveInZeal(cl) });
   _saveUiDeferred();
 }
@@ -14369,7 +14394,7 @@ ipcMain.handle('ui-restore-plan', async (_e, params) => {
     const skinSizes = _uiSkinSizes(eqDir);
     const sameMachine = _uiSameMachine(snap);
     const parts = uiRestorePlan.PARTS.map(p => ({ key: p.key, label: p.label, scope: p.scope,
-      ...uiRestorePlan.compare(p.key, snap.files, local, character, { knownChars, target, skinSizes, sameMachine }) }));
+      ...uiRestorePlan.compare(p.key, snap.files, local, character, { knownChars, target, skinSizes, sameMachine, sourceRes: _uiSnapSource(snap) }) }));
     // Mimic's own overlay layout: a part of its own when the backup holds one (no per-item compare; it is a layout).
     if (snap.overlays) {
       const n = Object.keys(snap.overlays.rects).length;
@@ -14378,18 +14403,22 @@ ipcMain.handle('ui-restore-plan', async (_e, params) => {
     }
     const bl = _uiMainLayoutText(snap.files, character), ml = _uiMainLayoutText(local, character);
     const fitted = bl && target
-      ? uiRestorePlan.fitLayout(bl, target.w, target.h, uiRestorePlan.fitOpts(snap.files, skinSizes, target, sameMachine)).text : null;
+      ? uiRestorePlan.fitLayout(bl, target.w, target.h, uiRestorePlan.fitOpts(snap.files, skinSizes, target, sameMachine, _uiSnapSource(snap))).text : null;
     return {
       ok: true,
       source: { machine: params?.machine ? String(params.machine).slice(0, 64) : null,
         w: snap.source_width || null, h: snap.source_height || null, label: snap.label || null },
       target: { machine: _thisMachine(), w: target ? target.w : null, h: target ? target.h : null, from: target ? target.from : null },
+      sameMachine,
+      // how keys are kept on the backup's PC and on this one (the bring-in card's key options read this)
+      keys: uiRestorePlan.keysInfo(snap.files, local, character),
       parts,
       preview: {
         backup: fitted ? uiRestorePlan.windowRects(fitted, target.w, target.h) : [],
         mine: ml && target ? uiRestorePlan.windowRects(ml, target.w, target.h) : [],
       },
-      busy: await _uiEqBusyFor(character, undefined, eqDir),
+      busy: await _uiEqBusyFor(character, undefined, eqDir),                 // the character's own files
+      busyShared: await _uiEqBusyFor(character, ['keybinds'], eqDir),        // the parts inside eqclient.ini / zeal.ini
     };
   } catch (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
 });
@@ -14419,11 +14448,11 @@ ipcMain.handle('ui-restore-parts', async (_e, params) => {
     for (const g of halves) {
       const busy = await _uiEqBusyFor(character, g, eqDir);
       if (busy) {
-        _queueUiRestore({ character, eqDir, files: snap.files, overlays: snap.overlays || null, parts: g, label: snap.label || null, target, sameMachine });
+        _queueUiRestore({ character, eqDir, files: snap.files, overlays: snap.overlays || null, parts: g, label: snap.label || null, target, sameMachine, sourceRes: _uiSnapSource(snap) });
         queued.push({ parts: g, busy });
         continue;
       }
-      const w = _uiWriteRestore({ character, eqDir, files: snap.files, overlays: snap.overlays || null, parts: g, target, sameMachine });
+      const w = _uiWriteRestore({ character, eqDir, files: snap.files, overlays: snap.overlays || null, parts: g, target, sameMachine, sourceRes: _uiSnapSource(snap) });
       for (const n of w) if (!written.includes(n)) written.push(n);
       for (const [n, ps] of Object.entries(w.fileParts || {})) fileParts[n] = [...new Set([...(fileParts[n] || []), ...ps])];
       for (const s of (w.savedCopies || [])) if (!savedCopies.includes(s)) savedCopies.push(s);
@@ -14431,7 +14460,7 @@ ipcMain.handle('ui-restore-parts', async (_e, params) => {
     }
     if (written.length) _uiSyncPatchState(character, { lastSyncAt: Date.now() });
     // What was written, file by file with the parts that cover it, so the card can show it (FB-123).
-    const partLabel = (k) => (uiRestorePlan.PARTS.find(p => p.key === k) || { label: k }).label;
+    const partLabel = (k) => k === 'keysplit' ? 'Per-character keys' : (uiRestorePlan.PARTS.find(p => p.key === k) || { label: k }).label;
     const files = written.map(name => ({ name, parts: (fileParts[name] || []).map(partLabel) }));
     return { ok: true, character, queued: queued.length > 0, busy: queued.length ? queued[0].busy : null, queuedParts: queued,
       written, files, savedCopies, overlays, target: target ? { w: target.w, h: target.h, from: target.from } : null };
@@ -14534,10 +14563,16 @@ async function _uiSyncCheck() {
       _uiSyncPatchState(character, { seenId: snap.id });
       const from = String(snap.machine_name).slice(0, 64);
       if (sc.newer === 'quiet') {
-        const parts = _uiPartKeys(sc.parts);
+        let parts = _uiPartKeys(sc.parts).filter(k => k !== 'keysplit');
         if (!parts.length) continue;
         try {
           const full = await _fetchUiSnapshot(cfg, token, character, snap.id);
+          // Never flip the shared [KeyMaps] between characters in the background: a per-character backup on a PC that
+          // shares one set is a decision for the bring-in card (which character's keys, or a set each), not for sync.
+          if (parts.includes('keybinds')) {
+            const ki = uiRestorePlan.keysInfo(full.files, _readUiBundle(eqDir, character), character);
+            if (ki.backupPerChar && !ki.pcPerChar) { parts = parts.filter(k => k !== 'keybinds'); if (!parts.length) continue; }
+          }
           if (await _uiEqBusyFor(character, parts, eqDir)) _queueUiRestore({ character, eqDir, files: full.files, parts, label: snap.label || null });
           else {
             const written = _uiWriteRestore({ character, eqDir, files: full.files, parts });
@@ -14737,6 +14772,8 @@ ipcMain.handle('ui-account-characters', async () => {
     return {
       ok: true, characters, eqDir,
       otherAccountsOnPc: uiSync.otherCharsOnPc(characters, names).length > 0,
+      // Zeal's per-character keys switch on THIS PC (zeal.ini), for the bring-in card's key options
+      pcPerCharKeys: (() => { try { return uiRestorePlan.perCharFlag(eqDir ? _readUiBundle(eqDir, (names[0] || 'x')) : {}) === true; } catch { return false; } })(),
       // What a bring-in restores before the member's own ticks (bring-setup.js reads this). It was never sent, so the
       // card restored no part but overlays and the shared ticks (a member, 2026-11-11, FB-124 / FB-126 / FB-127).
       parts: uiSync.defaultParts({ otherAccountsOnPc: uiSync.otherCharsOnPc(characters, names).length > 0 }),

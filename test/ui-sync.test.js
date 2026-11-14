@@ -115,10 +115,27 @@ describe('main.js wiring', () => {
     expect(await busyFor(true, true, false)('Aldenmar', ['zealchar'], 'd')).toBe('close');
     expect(await busyFor(true, true, false)('Aldenmar', ['keybinds', 'zeal'], 'd')).toBe('close');
     expect(await busyFor(true, true, false)('Aldenmar', undefined, 'd')).toBe('camp');        // the compare card: the character as a whole
+    // no part list answers for the own files: another running EverQuest must not read as "close" for them
+    expect(await busyFor(false, true, false)('Aldenmar', undefined, 'd')).toBe(null);
+    expect(await busyFor(false, true, true)('Aldenmar', undefined, 'd')).toBe('camp');
     expect(await busyFor(false, true, false)('Aldenmar', ['keybinds'], 'd')).toBe('close');
     expect(await busyFor(false, true, true)('Aldenmar', ['layout'], 'd')).toBe('camp');       // in game with the pipe down
     expect(await busyFor(false, true, false)('Aldenmar', ['layout'], 'd')).toBe(null);        // someone else's client is running
     expect(await busyFor(false, false, true)('Aldenmar', ['keybinds'], 'd')).toBe(null);
+  });
+  it('an open UI Studio is told when a restore is WRITTEN, never when it is queued or wrote nothing', () => {
+    const sent = [];
+    const mk = (win) => evalBlock(`let uiStudioWindow = ${win};\n` + sliceBlock(main, 'function _tellUiStudioRestored(character, eqDir, written) {', '\n}\n'),
+      ['_tellUiStudioRestored'])._tellUiStudioRestored;
+    const live = '{ isDestroyed: () => false, webContents: { send: (ch, info) => globalThis.__sent.push([ch, info]) } }';
+    globalThis.__sent = sent;
+    mk(live)('Aldenmar', 'C:\\EQ', ['UI_Aldenmar_pq.proj.ini']);
+    mk(live)('Aldenmar', 'C:\\EQ', []);
+    mk('null')('Aldenmar', 'C:\\EQ', ['x.ini']);
+    expect(sent).toEqual([['ui-studio-restored', { character: 'Aldenmar', eqDir: 'C:\\EQ', files: ['UI_Aldenmar_pq.proj.ini'] }]]);
+    delete globalThis.__sent;
+    // every restore write (immediate, queued-then-applied, quiet sync) goes through _uiWriteRestore, which tells it
+    expect(stripJs(sliceBlock(main, 'function _uiWriteRestore(entry, backupTag) {', '\n}\n'))).toMatch(/_tellUiStudioRestored\(entry\.character, entry\.eqDir, written\);/);
   });
   it('a restore runs in two halves: own files now or at camp, shared-file parts when EverQuest closes, and the queue keeps both', () => {
     const h = stripJs(sliceBlock(main, "ipcMain.handle('ui-restore-parts', async (_e, params) => {", '\n});\n'));
@@ -126,8 +143,8 @@ describe('main.js wiring', () => {
     expect(h).toMatch(/const busy = await _uiEqBusyFor\(character, g, eqDir\);/);
     expect(h).toMatch(/queuedParts: queued/);
     // a half that waits carries "made on this computer" with it, so it is not re-fitted when it lands
-    expect(h).toMatch(/_queueUiRestore\(\{[^}]*target, sameMachine \}\)/);
-    expect(h).toMatch(/_uiWriteRestore\(\{[^}]*target, sameMachine \}\)/);
+    expect(h).toMatch(/_queueUiRestore\(\{[^}]*target, sameMachine, sourceRes: _uiSnapSource\(snap\) \}\)/);
+    expect(h).toMatch(/_uiWriteRestore\(\{[^}]*target, sameMachine, sourceRes: _uiSnapSource\(snap\) \}\)/);
     const q = stripJs(sliceBlock(main, 'function _queueUiRestore(entry) {', '\n}\n'));
     expect(q).toMatch(/_uiNeedsEqClosed\(e\.parts\) === shared/);
   });

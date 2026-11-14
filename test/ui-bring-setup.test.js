@@ -281,7 +281,7 @@ describe('the bring-in card (behaviour, a stub page)', () => {
     const el = {
       html: '',
       set innerHTML(v) { this.html = v; }, get innerHTML() { return this.html; },
-      querySelector(sel) { return stubs[sel] || (stubs[sel] = { style: {}, checked: false, dataset: {}, addEventListener(ev, fn) { handlers[sel + ev] = fn; } }); },
+      querySelector(sel) { return stubs[sel] || (stubs[sel] = { style: {}, checked: false, dataset: {}, querySelector() { return null; }, addEventListener(ev, fn) { handlers[sel + ev] = fn; } }); },
       querySelectorAll(sel) {
         if (sel !== '[data-wpbs-chat]') return [];
         return [...this.html.matchAll(/data-wpbs-chat="([^"]+)"/g)].map(m => ({ dataset: { wpbsChat: m[1] }, addEventListener(ev, fn) { handlers['chat:' + m[1]] = fn; } }));
