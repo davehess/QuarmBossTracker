@@ -17,7 +17,7 @@ type Props = {
   timerHours: number | null;
 };
 
-function fmtRemaining(ms: number): string {
+export function fmtRemaining(ms: number): string {
   if (ms <= 0) return '';
   const totalSec = Math.floor(ms / 1000);
   const d = Math.floor(totalSec / 86400);

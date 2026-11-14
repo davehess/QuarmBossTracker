@@ -15,6 +15,8 @@ import { userTz, fmtAbs } from '@/lib/timezone';
 import ExpansionSection from './ExpansionSection';
 import ZoneTimersPanel from './ZoneTimers';
 import { parseZoneTimers, type ZoneTimers } from '@/lib/zoneTimers';
+import NextUpList from '@/components/lab/boards-next-up/NextUpList';
+import { toNextUpBosses } from '@/lib/boardsNextUpView';
 
 // Per-page metadata so a link pasted into Discord unfurls as what it IS.
 // Without this the page inherits the site-wide description and every
@@ -82,9 +84,11 @@ async function loadZoneTimers(): Promise<ZoneTimers> {
   }
 }
 
-export default async function BoardsPage() {
+export default async function BoardsPage({ searchParams }: { searchParams?: Promise<{ v?: string }> }) {
+  // ?v=a is the "next up" preview (design lab draft boards-next-up); no ?v= is the page exactly as before.
+  const nextUp = (await searchParams)?.v === 'a';
   const { data: { user } } = await supabaseServer().auth.getUser();
-  if (!user) redirect('/auth/signin?next=/boards');
+  if (!user) redirect(nextUp ? '/auth/signin?next=' + encodeURIComponent('/boards?v=a') : '/auth/signin?next=/boards');
   await requireMember(user.id);
 
   // The zone-timers panel is on /boards itself (the guild lead, 2026-10-09, looking at a stampede that was running:
@@ -118,6 +122,37 @@ export default async function BoardsPage() {
 
   const totalAvailable = rows.filter(r => !r.next_spawn || new Date(r.next_spawn).getTime() <= Date.now()).length;
 
+  const sections = EXPANSION_ORDER.map(expansion => {
+    const bosses = byExpansion.get(expansion);
+    if (!bosses || bosses.length === 0) return null;
+    const meta = EXPANSION_META[expansion];
+    const byZone = new Map<string, BoardRow[]>();
+    for (const b of bosses) {
+      const z = b.zone || 'Unknown zone';
+      if (!byZone.has(z)) byZone.set(z, []);
+      byZone.get(z)!.push(b);
+    }
+    const zones = [...byZone.entries()].map(([zone, list]) => ({ zone, bosses: list }));
+    return (
+      <ExpansionSection
+        key={expansion}
+        expansion={expansion}
+        label={meta.label}
+        accentClass={meta.accent}
+        zones={zones}
+      />
+    );
+  });
+
+  if (nextUp) {
+    return (
+      <div className="space-y-6">
+        <ZoneTimersPanel timers={zoneTimers} />
+        <NextUpList bosses={toNextUpBosses(rows)} nowMs={Date.now()} tick>{sections}</NextUpList>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <ZoneTimersPanel timers={zoneTimers} />
@@ -141,27 +176,7 @@ export default async function BoardsPage() {
         </p>
       </section>
 
-      {EXPANSION_ORDER.map(expansion => {
-        const bosses = byExpansion.get(expansion);
-        if (!bosses || bosses.length === 0) return null;
-        const meta = EXPANSION_META[expansion];
-        const byZone = new Map<string, BoardRow[]>();
-        for (const b of bosses) {
-          const z = b.zone || 'Unknown zone';
-          if (!byZone.has(z)) byZone.set(z, []);
-          byZone.get(z)!.push(b);
-        }
-        const zones = [...byZone.entries()].map(([zone, list]) => ({ zone, bosses: list }));
-        return (
-          <ExpansionSection
-            key={expansion}
-            expansion={expansion}
-            label={meta.label}
-            accentClass={meta.accent}
-            zones={zones}
-          />
-        );
-      })}
+      {sections}
     </div>
   );
 }

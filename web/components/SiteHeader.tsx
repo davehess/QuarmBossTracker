@@ -22,6 +22,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNo
 import Nav, { GROUPS } from './Nav';
 import TimezonePicker from './TimezonePicker';
 import { CHANNELS, ChannelLink } from './HeaderIcons';
+import HeaderDraft from './lab/site-header/HeaderDraft';
 
 // Applied before paint, so a page that loads already scrolled — a refresh, a
 // back-navigation, an in-page anchor — does not paint the full bar and snap.
@@ -34,7 +35,7 @@ const ROOMY = '(min-width: 1180px)';
 const chip = 'inline-flex items-center gap-1 rounded border border-border bg-panel px-2 py-1' +
              ' text-xs text-text no-underline whitespace-nowrap transition-colors hover:bg-[#21262d]';
 
-export default function SiteHeader({
+function SiteHeaderToday({
   showMe, showAdmin, authBadge, tour, search,
 }: {
   showMe: boolean;
@@ -271,4 +272,30 @@ function MenuLink({ href, label, on }: { href: string; label: string; on: boolea
       {label}
     </Link>
   );
+}
+
+// STAGING (design lab draft: site-header). The default is the bar above, untouched. ?hdr=a|b|c (or 1, meaning a) on
+// any page shows the draft bar built from this same nav data and these same slots, and the choice is remembered for
+// the browser tab; ?hdr=off puts the current bar back. Nothing else reads it.
+const HDR_KEY = 'wp-hdr';
+export default function SiteHeader(props: {
+  showMe: boolean; showAdmin: boolean; authBadge: ReactNode; tour: ReactNode; search: ReactNode;
+}) {
+  const [hdr, setHdr] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      const q = new URLSearchParams(window.location.search).get('hdr');
+      if (q === 'off') sessionStorage.removeItem(HDR_KEY);
+      else if (q === '1' || q === 'a' || q === 'b' || q === 'c') sessionStorage.setItem(HDR_KEY, q);
+      setHdr(sessionStorage.getItem(HDR_KEY));
+    } catch { /* storage blocked: stay on the current bar */ }
+  }, []);
+  if (hdr === '1' || hdr === 'a' || hdr === 'b' || hdr === 'c') {
+    return (
+      <HeaderDraft variant={hdr === 'b' ? 'b' : hdr === 'c' ? 'c' : 'a'} groups={GROUPS} showMe={props.showMe}
+                   showAdmin={props.showAdmin} authBadge={props.authBadge} tour={props.tour} search={props.search}
+                   timezone={<TimezonePicker />} />
+    );
+  }
+  return <SiteHeaderToday {...props} />;
 }

@@ -337,6 +337,11 @@ export function metaForPath(rawPath: string): PageMeta {
   }
   m = path.match(/^\/pvp\/([^/]+)$/);
   if (m) return pvpMeta(m[1]);
+  // The design lab (beta branch only): drafts with made-up data. One card for the whole area; a draft is never named
+  // in a link preview, and nothing in it comes from the database.
+  if (/^\/lab(\/|$)/.test(path)) {
+    return { title: '[draft] Design lab', description: 'Draft page designs for WolfPack.quest and Raid Mimic, shown with made-up data. Nothing here is live.' };
+  }
   // One demo page per gate (the gate's own name is in the page's tab; the card stays generic and never reads a gate list).
   if (/^\/raidmimic\/demo\/flags\/[^/]+$/.test(path)) {
     return { title: '[beta] Demo guild · Gate flags', description: 'A demo guild’s progress toward one Planes of Power gate, piece by piece, with flags recorded for someone else shown as reported. Invented guild.' };
