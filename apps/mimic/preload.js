@@ -1799,6 +1799,8 @@ contextBridge.exposeInMainWorld('mimic', {
   // `goto` ({ character, eqDir, chat: true }) opens it on that character's chat routing (bring-in card, FB-125).
   openUiStudio:           (goto)             => ipcRenderer.invoke('open-ui-studio', goto),
   onUiStudioGoto:         (cb)               => ipcRenderer.on('ui-studio-goto', (_e, goto) => cb(goto)),
+  // A restore (bring-in) was written for { character, eqDir, files: [names] } — now, or after a camp / EverQuest closing.
+  onUiStudioRestored:     (cb)               => ipcRenderer.on('ui-studio-restored', (_e, info) => cb(info)),
   // Bundled PvP rotation templates (Dirge Team 6™ etc.) — list by class,
   // load full content, and import = write a markdown summary alongside
   // the EQ folder so the user can build their hotkey pages by reference

@@ -144,7 +144,8 @@ const saveSrc = sliceBlock(studio, '  function _writeAllReason(tgtSuffix){', SAV
 
 function studioApi(blockText = saveSrc) {
   const harness = 'var STATE = { windows: [], fromCloud: false, srcSuffix: "2560x1440", srcW: 2560, srcH: 1440, tgtW: 2560, tgtH: 1440 };\n';
-  return evalBlock(harness + parseIniSrc + '\n' + readPosSrc + '\n' + zealEditsSrc + '\n' + blockText,
+  const unplacedSrc = sliceBlock(studio, '  function _unplacedUntilOpened(w){', '\n  }\n');
+  return evalBlock(harness + parseIniSrc + '\n' + readPosSrc + '\n' + zealEditsSrc + '\n' + unplacedSrc + '\n' + blockText,
     ['STATE', 'parseIni', '_readPos', '_buildSaveEdits']);
 }
 // The part of _renderLoadedBundle that matters here: one window per section

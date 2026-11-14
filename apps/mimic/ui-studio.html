@@ -210,6 +210,7 @@
     <button id="cloudBackupBtn"    class="secondary" title="Upload encrypted backup of your UI ini files to the bot (existing capture flow)">☁ Backup</button>
     <button id="cloudRestoreBtn"   class="secondary" title="Pull a cloud backup into the editor — rescale it to this machine's monitor, then Save. Use this to deploy your layout on a new computer.">📥 Restore</button>
     <button id="changesBtn"        class="secondary" title="Every change in this character's EverQuest and Zeal files since the previous version Mimic kept — the game's own changes too, not only the ones made here">🔍 Changes…</button>
+    <button id="reloadStaleBtn" class="secondary" style="display:none" title="The files changed on disk while this canvas has unsaved changes. Asks before it throws them away.">Reload…</button>
     <span id="status"></span>
   </div>
   <!-- Named layouts for the picked character (uiLayouts.js): alternative screens ("Raid (full chat)",
@@ -422,6 +423,15 @@
       if (!goto || !goto.character) return;
       var sel = document.getElementById('charSelect');
       var want = String(goto.character).toLowerCase(), found = null;
+      // Opening a character re-reads its files (or switches the canvas): the same unsaved-changes question as a
+      // reload after a bring-in. A no keeps the work; for the same character the chat routing still opens on it.
+      var keepCanvas = false;
+      if (_hasUnsavedEdits()) {
+        if (window.confirm('This canvas has changes that are not saved. Opening ' + goto.character + ' re-reads the files and throws them away.\n\n' +
+          'OK = open it anyway · Cancel = keep the changes (press Save first, then open it)')) keepCanvas = false;
+        else if (STATE.character && String(STATE.character).toLowerCase() === want) keepCanvas = true;
+        else { setStatus('kept your unsaved changes · Save them, then open ' + goto.character, 'err'); return; }
+      }
       for (var i = 0; i < sel.options.length; i++) if (String(sel.options[i].value).split('|')[0].toLowerCase() === want) { found = sel.options[i]; break; }
       if (!found) {
         found = document.createElement('option');
@@ -429,8 +439,7 @@
         found.textContent = goto.character;
         sel.appendChild(found);
       }
-      sel.value = found.value;
-      await loadAndRescale(true);
+      if (!keepCanvas) { sel.value = found.value; await loadAndRescale(true); }
       if (goto.chat) {
         document.getElementById('inspectSocialsBtn').click();
         var tries = 0, t = setInterval(function(){
@@ -446,19 +455,43 @@
   document.getElementById('bringBtn').addEventListener('click', function(){
     var pane = document.getElementById('bringPane');
     pane.hidden = false;
-    window.wpBringSetup.mount(document.getElementById('bringCard'), { all: true, fresh: true, onDone: _reloadAfterBringIn });
+    // No onDone here: the main process tells this window when a restore is WRITTEN (onUiStudioRestored below), for this
+    // card and for every other surface alike, so a queued bring-in reloads when it lands and not when it was queued.
+    window.wpBringSetup.mount(document.getElementById('bringCard'), { all: true, fresh: true });
+  });
+  if (window.mimic && window.mimic.onUiStudioRestored) window.mimic.onUiStudioRestored(function(info){
+    if (!info || !info.character) return;
+    _reloadAfterBringIn(true, [{ character: info.character, eqDir: info.eqDir, kind: 'done',
+      files: (info.files || []).map(function(n){ return { name: n }; }) }]);
   });
   document.getElementById('bringClose').addEventListener('click', function(){ document.getElementById('bringPane').hidden = true; });
   // A bring-in writes the character's files behind this window. Without a reload the canvas kept showing the files
   // as they were BEFORE it, and the next Save wrote those old places back over what had just been brought in.
-  // Runs only when a bring-in actually ran (the card's onDone), so closing the card never discards edits made here.
-  // And only when it wrote files for the character on this canvas (rows: the card's result lines); a bring-in for
-  // another character changes nothing here. Moves made here and not saved are kept, with a note, never thrown away.
+  // Runs when the main process says a restore was WRITTEN (onUiStudioRestored: immediately, or after the camp / EverQuest
+  // closing that a queued one waited for), so closing the card never discards edits made here and a queued bring-in
+  // never reloads early. Only when it wrote files in THIS EverQuest folder for the character on this canvas (rows: one
+  // per character, with the file names written); a bring-in for another character changes nothing here unless it
+  // rewrote a shared file this canvas has loaded. Anything not saved here (moves, a fitted or cloud-backup preview)
+  // is kept, with a note and a reload button that asks first, never thrown away.
+  function _sameDir(a, b){
+    var n = function(s){ return String(s || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase(); };
+    return n(a) === n(b);
+  }
+  // Is there anything on this canvas that a Save would write and a reload would throw away? A moved or resized window,
+  // or a layout that is not the file as saved (a Fit / Load + Rescale preview, a cloud backup): Save writes every
+  // window for those (_writeAllReason), though no single window then counts as changed.
+  function _hasUnsavedEdits(){
+    if (!STATE.windows || !STATE.windows.length) return false;
+    return STATE.windows.some(_windowChanged) || !!_writeAllReason(STATE.tgtW + 'x' + STATE.tgtH);
+  }
   function _reloadAfterBringIn(ok, rows){
     if (!STATE.character || !STATE.eqDir) return;
     var me = String(STATE.character).toLowerCase();
-    var done = Array.isArray(rows) ? rows.filter(function(r){ return r && r.kind === 'done' && r.files && r.files.length; }) : null;
-    var mine = !done || done.some(function(r){ return String(r.character).toLowerCase() === me; });
+    var done = Array.isArray(rows) ? rows.filter(function(r){
+      return r && r.kind === 'done' && r.files && r.files.length && (!r.eqDir || _sameDir(r.eqDir, STATE.eqDir));
+    }) : null;
+    var mineRows = done ? done.filter(function(r){ return String(r.character).toLowerCase() === me; }) : [];
+    var mine = !done || mineRows.length > 0;
     // It also changes this canvas when it wrote, for ANOTHER character, a file that is loaded here: the shared
     // zeal.ini / eqclient.ini hold Zeal's bars, which the canvas draws.
     var loaded = {};
@@ -467,16 +500,38 @@
       return r.files.some(function(f){ return f && loaded[String(f.name).toLowerCase()]; });
     });
     if (!wrote) return;
-    if (STATE.windows.some(_windowChanged)) {
-      // The bring-in gave every window of this character a place at this screen size, so the places this canvas
-      // only guessed must not be written by the next Save; the moves made here still are, as the line below says.
-      if (mine) for (var bi = 0; bi < STATE.windows.length; bi++) STATE.windows[bi].noBlock = false;
-      setStatus('the bring-in changed ' + STATE.character + '\'s files, and this canvas has moves that are not saved · ' +
-        'Save would write them over what was brought in · press Load to see the files as they are now', 'err');
+    if (_hasUnsavedEdits()) {
+      // A window whose layout file the bring-in wrote now has a place at this screen size, so the place this canvas
+      // only guessed for it must not be written by the next Save. Only those: a file that was not written (a
+      // bring-in with just Socials, say) gave its windows nothing.
+      var wf = {};
+      mineRows.forEach(function(r){ r.files.forEach(function(f){ if (f && f.name) wf[String(f.name).toLowerCase()] = 1; }); });
+      for (var bi = 0; bi < STATE.windows.length; bi++) if (wf[String(STATE.windows[bi].file).toLowerCase()]) STATE.windows[bi].noBlock = false;
+      _staleNotice(mine);
       return;
     }
     loadAndRescale(true).catch(function(e){ setStatus('could not re-read the files: ' + (e && e.message), 'err'); });
   }
+  // The files changed behind a canvas that has unsaved work: say what is true, and never advise a Load that would
+  // drop the work. Save writes only what was changed here (into this character's own file); to see the new files,
+  // save first and reload, or reload at once on an explicit yes (the button).
+  function _staleNotice(mine){
+    setStatus((mine ? 'the bring-in changed ' + STATE.character + '\'s files. ' : 'another character\'s bring-in changed files this canvas shows (Zeal\'s shared options). ') +
+      'This canvas has changes that are not saved · Save your moves first, then reload',
+      'err');
+    var b = document.getElementById('reloadStaleBtn');
+    if (b) b.style.display = '';
+  }
+  function _staleHide(){
+    var b = document.getElementById('reloadStaleBtn');
+    if (b) b.style.display = 'none';
+  }
+  document.getElementById('reloadStaleBtn').addEventListener('click', function(){
+    if (_hasUnsavedEdits() && !window.confirm('Reload ' + STATE.character + ' from disk?\n\n' +
+      'Everything on the canvas that is not saved yet (moved windows, a fitted layout, a cloud-backup preview) is thrown away.\n\n' +
+      'Cancel keeps it: press Save first, then reload.')) return;
+    loadAndRescale(true).catch(function(e){ setStatus('could not re-read the files: ' + (e && e.message), 'err'); });
+  });
 
   // Show the active EQ folder for the picked character — so a multi-folder user
   // can see which install they're editing (the dropdown only shows the name).
@@ -1068,6 +1123,7 @@
       STATE.tgtW = tW; STATE.tgtH = tH;
     }
     setStatus('loading ' + STATE.character + '…');
+    _staleHide();
     // Always a fresh read of the files on disk — nothing from an earlier load or a saved layout.
     try {
       STATE.bundle = await window.mimic.uiStudioReadBundle(STATE.character, STATE.eqDir);
@@ -1827,10 +1883,19 @@
   // How many of the game's own windows the file has no place for at the Target screen size. `many` is a fifth of
   // them or more (and at least three): the file is a layout made for another screen, not one with a few windows
   // that were simply never opened at this size.
+  // The windows the game only creates when they are opened (bags, bank, merchant / loot / trade, Zeal's item and
+  // button windows) and the ones it never shows in play have no place in a layout that is in use, however long it has
+  // been played at this size. They say nothing about whether the file was made for another screen, and a place
+  // guessed for one must not be written over the game's own after a camp (a layout in use on the guild lead's PC
+  // showed 34 of 120 "without a place", all of them these).
+  function _unplacedUntilOpened(w){
+    if (w.category === 'bags' || w.category === 'bank' || w.category === 'vendor' || w.category === 'offscreen' || w.category === 'tells') return true;
+    return /^zeal(itemdisplay|buttonwnd)/i.test(String(w.section || ''));
+  }
   function _noPlaceCount(){
     var missing = 0, total = 0;
     for (var i = 0; i < STATE.windows.length; i++) {
-      if (STATE.windows[i].zealBar) continue;
+      if (STATE.windows[i].zealBar || _unplacedUntilOpened(STATE.windows[i])) continue;
       total++;
       if (STATE.windows[i].noBlock) missing++;
     }
@@ -2257,7 +2322,7 @@
       }
       for (var k in kv) {
         var ed = { file: w.file, section: w.section, key: k, value: kv[k] };
-        if (guess) ed.guess = true;
+        if (guess) { ed.guess = true; if (_unplacedUntilOpened(w)) ed.untilOpened = true; }
         edits.push(ed);
       }
       files[w.file] = true;
@@ -2335,6 +2400,31 @@
     if (STATE.character && STATE.eqDir) return { character: STATE.character, eqDir: STATE.eqDir };
     return _selectedCharEqDir();
   }
+  // The same edits without the places that were only guessed (the file had none, and the window was not moved here).
+  function _withoutGuesses(built){
+    var edits = built.edits.filter(function(e){ return !e.guess; });
+    var files = {}, wins = {};
+    edits.forEach(function(e){ files[e.file] = true; wins[e.file + '\n' + e.section] = true; });
+    return { edits: edits, tgtSuffix: built.tgtSuffix, files: Object.keys(files), windows: Object.keys(wins).length, all: built.all };
+  }
+  // Is a bring-in for the character on this canvas still waiting to be written (queued for the camp or for EverQuest
+  // to close)? Until it lands, this canvas shows the files from BEFORE it, so a place only guessed here would be
+  // written over the brought-in one when it does.
+  async function _restoreQueuedHere(){
+    try {
+      var list = await window.mimic.uiStudioPendingList();
+      return (list || []).some(function(e){
+        return e.kind === 'restore' && String(e.character).toLowerCase() === String(STATE.character).toLowerCase() && _sameDir(e.eqDir, STATE.eqDir);
+      });
+    } catch (e) { return false; }
+  }
+  // A Save that writes EVERY window (a fitted / rescaled layout, a cloud backup) is not just the moves: with a
+  // bring-in waiting for the camp it would be written first and then replaced by the bring-in. Ask before that.
+  function _confirmSaveOverQueued(built, waiting){
+    if (!waiting || !built || !built.all) return true;
+    return window.confirm('A bring-in for ' + STATE.character + ' is waiting to be written when you camp / close EverQuest.\n\n' +
+      'Saving now writes this layout and the bring-in will then replace it.\n\nSave anyway?');
+  }
   async function _queueDefer(built){
     // The queue holds the KEY EDITS, not file texts: they are merged into the
     // file as EQ leaves it on logout, so EQ's own save is never overwritten.
@@ -2342,8 +2432,10 @@
     // place for (the file had none, and it was not moved here) is left to the game: the edit would land after the
     // camp and put the guess over where the window really was. The exception is a layout made for another screen
     // (many windows with no place, _noPlaceCount): there the fitted places are what is being saved.
+    // A window the game only creates when it is opened (bags, bank...) is never written as a guess, even then.
     var edits = built.edits;
     if (!_noPlaceCount().many) edits = edits.filter(function(e){ return !e.guess; });
+    else edits = edits.filter(function(e){ return !e.untilOpened; });
     if (!edits.length) {
       setStatus('nothing to schedule: no window was moved here · the game saves a place for the windows that have none when ' +
         STATE.character + ' camps', 'ok');
@@ -2620,7 +2712,16 @@
   document.getElementById('saveBtn').addEventListener('click', async function(){
     if (!STATE.character || !STATE.eqDir) { setStatus('nothing to save', 'err'); return; }
     var built = _buildSaveEdits();
+    var waiting = await _restoreQueuedHere();
+    if (!_confirmSaveOverQueued(built, waiting)) { setStatus('not saved: a bring-in for ' + STATE.character + ' is waiting to be written, and this layout would be replaced by it', 'err'); return; }
     if (STATE.fromCloud) { try { await _saveCloudRestore(built); } catch (e) { setStatus('restore failed: ' + e.message, 'err'); } return; }
+    if (waiting) {
+      built = _withoutGuesses(built);
+      if (!built.edits.length) {
+        setStatus('nothing to save yet: a bring-in for ' + STATE.character + ' is still waiting to be written, and the places this canvas only guessed are not saved over it', 'ok');
+        return;
+      }
+    }
     if (!built.edits.length) { setStatus('nothing to save: no window was moved or resized since Load, and every window already has a place for this screen size', 'ok'); return; }
     // Is the character logged in right now? If so, a plain Save won't apply
     // (EQ keeps the layout in memory, ignores it on a skin reload, and
