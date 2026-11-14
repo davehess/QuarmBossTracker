@@ -19,6 +19,7 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
+import { discordIdOf } from '@/lib/lockout';
 
 export async function authorizeMimicForMember(formData: FormData) {
   // Defense in depth — the /admin layout already gates, but a server action
@@ -53,7 +54,7 @@ export async function authorizeMimicForMember(formData: FormData) {
     .maybeSingle();
   const officerDiscordId =
     officer?.discord_id ||
-    ((user!.user_metadata as Record<string, string> | null)?.provider_id ?? null);
+    discordIdOf(user);
 
   // Same validation ladder as the member-side page (/auth/mimic-link).
   const { data: rows } = await admin

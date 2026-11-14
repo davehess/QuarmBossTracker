@@ -419,6 +419,7 @@ vi.mock('@/lib/supabase-server', () => ({ supabaseServer: () => ({ auth: { getUs
 vi.mock('@/lib/officer', () => ({ isOfficer: async () => h.officer }));
 vi.mock('@/lib/guild', () => ({ GUILD_TAG: 'g' }));
 vi.mock('@/lib/actorName', () => ({ actorName: () => 'an officer' }));
+vi.mock('@/lib/lockout', async () => await import('../web/lib/lockout.ts'));
 vi.mock('@/lib/consoleHealth', async () => await import('../web/lib/consoleHealth.ts'));
 vi.mock('@/lib/adminTyped', async () => await import('../web/lib/adminTyped.ts'));
 vi.mock('@/lib/supabase', () => ({

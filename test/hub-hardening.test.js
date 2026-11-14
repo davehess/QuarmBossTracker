@@ -106,7 +106,7 @@ describe('createGuild binds a Discord server only with a valid proof', () => {
     mockBoth('next/cache', () => ({ revalidatePath() {} }));
     mockBoth('next/navigation', () => ({ redirect: () => { throw new Error('NEXT_REDIRECT'); } }));
     mockBoth('next/headers', () => ({ cookies: () => ({ get: (n) => (n === 'rm_manage' && cookie ? { value: cookie } : undefined) }) }));
-    vi.doMock('@/lib/supabase-server', () => ({ supabaseServer: () => ({ auth: { getUser: async () => ({ data: { user: { id: 'u1', app_metadata: { provider_id: 'd-1' }, user_metadata: {} } } }) } }) }));
+    vi.doMock('@/lib/supabase-server', () => ({ supabaseServer: () => ({ auth: { getUser: async () => ({ data: { user: { id: 'u1', app_metadata: { discord_id: 'd-1' }, user_metadata: {} } } }) } }) }));
     // Any database touch means the refusal came too late.
     vi.doMock('@/lib/supabase', () => ({ supabaseAdmin: () => { calls.push('admin'); throw new Error('database reached'); } }));
     vi.doMock('@/lib/lockout', async () => await import('../web/lib/lockout.ts'));
@@ -203,7 +203,7 @@ describe('redeemInvite counts failed attempts in the database', () => {
     vi.stubEnv('ANON_FEEDBACK_SALT', 'salt-for-test');
     mockBoth('next/cache', () => ({ revalidatePath() {} }));
     mockBoth('next/headers', () => ({ headers: () => ({ get: (n) => (n === 'x-forwarded-for' ? ip : null) }) }));
-    vi.doMock('@/lib/supabase-server', () => ({ supabaseServer: () => ({ auth: { getUser: async () => ({ data: { user: { id: 'u1', app_metadata: { provider_id: 'd-1' }, user_metadata: {} } } }) } }) }));
+    vi.doMock('@/lib/supabase-server', () => ({ supabaseServer: () => ({ auth: { getUser: async () => ({ data: { user: { id: 'u1', app_metadata: { discord_id: 'd-1' }, user_metadata: {} } } }) } }) }));
     vi.doMock('@/lib/supabase', () => ({ supabaseAdmin: () => fakeAdmin() }));
     vi.doMock('@/lib/lockout', async () => await import('../web/lib/lockout.ts'));
     vi.doMock('@/lib/hubRegistry', async () => await import('../web/lib/hubRegistry.ts'));

@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-2-1-139-2026-11-14',
+    title: 'Web 2.1.139 · Bot 4.0.82',
+    version: 'Web 2.1.139 · Bot 4.0.82',
+    date: '2026-11-14',
+    headline: 'A security check-up of the site, the bot and Mimic, with two things tightened.',
+    features: [
+      { name: 'Who you are comes from your Discord sign-in only', blurb: 'The site now reads your Discord account from the sign-in record itself and from nowhere else. Nothing changes in what you see.' },
+    ],
+    fixes: [
+      'A UI backup is accepted only under a plain character name.',
+    ],
+  },
+  {
     key: 'web-2-1-138-2026-11-13',
     title: 'Web 2.1.138',
     version: 'Web 2.1.138',

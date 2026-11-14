@@ -222,7 +222,7 @@ describe('the createGuild server action, run (web/app/guilds/new/actions.ts)', (
   const fresh = (extra = {}, opts = { unique: UNIQUE }) => memDb({ hub_players: [], hub_guilds: [], hub_memberships: [], audit_log: [], ...extra }, opts);
 
   function beforeEachCase() {
-    user = { id: 'auth-u1', app_metadata: { provider_id: 'd-100' }, user_metadata: { custom_claims: { global_name: 'Aldenmar' } } };
+    user = { id: 'auth-u1', app_metadata: { discord_id: 'd-100' }, user_metadata: { custom_claims: { global_name: 'Aldenmar' } } };
     store = fresh();
   }
 
@@ -348,7 +348,7 @@ describe('the createGuild server action, run (web/app/guilds/new/actions.ts)', (
     beforeEachCase();
     const create = await load();
     await create(good);
-    user = { id: 'auth-u2', app_metadata: { provider_id: 'd-200' }, user_metadata: {} };
+    user = { id: 'auth-u2', app_metadata: { discord_id: 'd-200' }, user_metadata: {} };
     expect((await create({ ...good, displayName: 'Other Guild', slug: 'other-guild' })).redirectedTo).toBe('/guilds/other-guild');
   });
   it('a refused attempt (bad form, taken address) does not use up the day', async () => {
@@ -496,7 +496,7 @@ describe('the invite server actions, run (web/app/guilds/[slug]/actions.ts)', ()
       ...over,
     }, { unique: { hub_invites: [['code']] } });
   }
-  const as = (id) => { user = id ? { id: `auth-${id}`, app_metadata: { provider_id: id }, user_metadata: {} } : null; };
+  const as = (id) => { user = id ? { id: `auth-${id}`, app_metadata: { discord_id: id }, user_metadata: {} } : null; };
 
   describe('createInvite', () => {
     it.each(['d-owner', 'd-off'])('an %s makes a code: 25 uses, 7 days, this guild, made by them', async (who) => {

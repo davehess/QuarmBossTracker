@@ -10,6 +10,7 @@ import { revalidatePath } from 'next/cache';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
+import { discordIdOf } from '@/lib/lockout';
 import { validateTemplate } from '@/lib/comp';
 import { GUILD_TAG } from '@/lib/guild';
 import { actorName } from '@/lib/actorName';
@@ -46,7 +47,6 @@ export async function saveCompTemplates(rawJson: string): Promise<SaveResult> {
   });
   if (errors.length) return { ok: false, errors };
 
-  const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
   const display = actorName(user);
 
   const { error } = await supabaseAdmin()
@@ -54,7 +54,7 @@ export async function saveCompTemplates(rawJson: string): Promise<SaveResult> {
     .upsert({
       guild_id: GUILD_TAG,
       templates: parsed,
-      updated_by_discord_id: (user.app_metadata?.provider_id || meta.provider_id || null) as string | null,
+      updated_by_discord_id: discordIdOf(user),
       updated_by_name: display,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'guild_id' });

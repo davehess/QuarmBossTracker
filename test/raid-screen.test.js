@@ -562,7 +562,7 @@ describe('POST /api/screen/state: officers only', () => {
     await POST(post({ mode: 'map' }));
     expect(st.tables.raid_screen_state[0].updated_by).toBe('rethlan_g');
 
-    st.user = { id: 'officer-1', user_metadata: { provider_id: '222' } };
+    st.user = { id: 'officer-1', app_metadata: { discord_id: '222' }, user_metadata: {} };
     st.tables.wolfpack_members = [{ user_id: null, discord_id: '222', nickname: 'Brackwyn', global_name: null }];
     await POST(post({ mode: 'map' }));
     expect(st.tables.raid_screen_state[0].updated_by).toBe('Brackwyn');

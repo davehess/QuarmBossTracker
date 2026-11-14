@@ -6853,7 +6853,8 @@ async function _indexSnapshotSocials({ character, ownerDiscord, snapshotId, file
   const pick =
     names.find(n => n.toLowerCase() === `${lc}_pq.proj.ini`) ||
     names.find(n => /^(sock|socials)_/i.test(n) && n.toLowerCase().includes(lc)) ||
-    names.find(n => new RegExp('^' + lc + '_.*\\.ini$', 'i').test(n));
+    // Plain string tests, not a pattern built from the uploaded name: a name is data, never part of a regex.
+    names.find(n => { const l = n.toLowerCase(); return l.startsWith(lc + '_') && l.endsWith('.ini'); });
   if (!pick) return;
   const socials = _extractSocialsFromIniText(files[pick]);
   try {
@@ -9156,7 +9157,9 @@ async function _handleAgentUiLayoutUpload(req, res) {
   // with several machines backing up the same character, the timestamp alone
   // can't tell you which box a snapshot came from).
   const machineName   = (payload?.machine_name || null) && String(payload.machine_name).trim().slice(0, 64);
-  if (!character || !files) {
+  // A character name is letters only. Checked here because the name goes on to an ilike match and a file-name
+  // test: anything else in it (wildcards, pattern syntax, look-alike letters) is refused before either.
+  if (!character || !files || !/^[A-Za-z]{2,24}$/.test(character)) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'character + files required' }));
   }
@@ -9288,7 +9291,7 @@ async function _handleAgentUiLayoutList(req, res) {
   // since that drives the picker UI. The character determines the owner.
   const url = new URL(req.url, 'http://x');
   const character = (url.searchParams.get('character') || '').trim();
-  if (!character) {
+  if (!character || !/^[A-Za-z]{2,24}$/.test(character)) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'character query required' }));
   }
@@ -9390,7 +9393,7 @@ async function _handleAgentUiLayoutDownload(req, res, snapshotId) {
   // request must come from someone who can prove they own the matching char.
   const url = new URL(req.url, 'http://x');
   const character = (url.searchParams.get('character') || '').trim();
-  if (!character || !/^[0-9a-f-]{36}$/i.test(snapshotId)) {
+  if (!character || !/^[A-Za-z]{2,24}$/.test(character) || !/^[0-9a-f-]{36}$/i.test(snapshotId)) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'character query + valid id required' }));
   }

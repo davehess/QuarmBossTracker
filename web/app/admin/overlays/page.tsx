@@ -17,6 +17,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer, requireOfficer } from '@/lib/officer';
+import { discordIdOf } from '@/lib/lockout';
 import { supabaseServer } from '@/lib/supabase-server';
 import { GUILD_TAG } from '@/lib/guild';
 import { actorName, shownActor } from '@/lib/actorName';
@@ -234,7 +235,6 @@ async function saveOverlayTuning(formData: FormData) {
     if (raw) tuning[t.key] = raw.slice(0, 120);
   }
 
-  const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
   const display = actorName(user);
 
   await sb
@@ -242,7 +242,7 @@ async function saveOverlayTuning(formData: FormData) {
     .upsert({
       guild_id: GUILD_TAG,
       tuning,
-      updated_by_discord_id: (user.app_metadata?.provider_id || meta.provider_id || null) as string | null,
+      updated_by_discord_id: discordIdOf(user),
       updated_by_name: display,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'guild_id' });
@@ -266,7 +266,6 @@ async function saveClassSets(formData: FormData) {
     if (picked.length) classSets[c.key] = picked;
   }
 
-  const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
   const display = actorName(user);
 
   // Upsert touches ONLY class_sets (+ audit columns) — `tuning` stays as-is.
@@ -275,7 +274,7 @@ async function saveClassSets(formData: FormData) {
     .upsert({
       guild_id: GUILD_TAG,
       class_sets: classSets,
-      updated_by_discord_id: (user.app_metadata?.provider_id || meta.provider_id || null) as string | null,
+      updated_by_discord_id: discordIdOf(user),
       updated_by_name: display,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'guild_id' });

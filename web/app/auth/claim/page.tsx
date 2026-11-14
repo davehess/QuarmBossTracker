@@ -27,7 +27,7 @@ import { notFound, redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { isRaidmimicHost } from '@/lib/raidmimicHost';
 import { supabaseAdmin } from '@/lib/supabase';
-import { isLockedOut } from '@/lib/lockout';
+import { isLockedOut, verifiedDiscord } from '@/lib/lockout';
 
 export const metadata = {
   title: 'Site access invite',
@@ -78,7 +78,7 @@ async function claimInvite(formData: FormData) {
 
   // Member lockout (the guild lead, 2026-10-13): a paused member cannot mint or reset a password account
   // either. This flow never opens a session, so there is nothing to sign out; just refuse.
-  if (await isLockedOut({ id: member!.user_id ?? undefined, user_metadata: { discord_id: member!.discord_id } })) {
+  if (await isLockedOut(verifiedDiscord(member!.user_id, member!.discord_id))) {
     redirect('/auth/paused');
   }
 
@@ -107,6 +107,7 @@ async function claimInvite(formData: FormData) {
       email,
       password,
       email_confirm: true,
+      app_metadata: { discord_id: String(member!.discord_id) },
     });
     if (updErr) redirect(`${back}&error=create_failed`);
   } else {
@@ -115,6 +116,8 @@ async function claimInvite(formData: FormData) {
       password,
       email_confirm: true,
       user_metadata: { wp_invited: true, discord_id: member!.discord_id },
+      // The id the site trusts. app_metadata is server-only; user_metadata above is the account owner's to edit.
+      app_metadata: { discord_id: String(member!.discord_id) },
     });
     if (createErr || !created?.user) {
       // Most likely: username taken (email collision). Surface as that.
@@ -181,7 +184,7 @@ export default async function ClaimPage({
     .select('nickname, global_name, user_id')
     .eq('discord_id', invite.member_discord_id)
     .maybeSingle();
-  if (await isLockedOut({ id: member?.user_id ?? undefined, user_metadata: { discord_id: invite.member_discord_id } })) {
+  if (await isLockedOut(verifiedDiscord(member?.user_id, invite.member_discord_id))) {
     redirect('/auth/paused');
   }
   const displayName = member?.nickname || member?.global_name || 'you';

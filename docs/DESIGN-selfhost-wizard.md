@@ -473,6 +473,12 @@ and the same never-refetch guarantee.
   wizard must not present the server-side answer as self-evidently correct.
 
 ### Identity & auth
+- **A session is not proof of membership, and the Discord id comes from the sign-in identity (2026-11-14, DECISIONS
+  §579).** Supabase lets a new account be made on any project that has not turned sign-ups off, and turning them off
+  also blocks a member's first Discord sign-in, so they stay on. Every gate therefore checks the members table by
+  login id, and the Discord id is read from `user.identities` or the server-only `app_metadata.discord_id`, never from
+  `user_metadata` (the account's owner can edit that). A deployment that adds its own pages must use
+  `discordIdOf()` in `web/lib/lockout.ts` for the same reason.
 - **A sandbox/self-host instance uses its OWN Discord application.** The
   "never a second Discord app" rule applies only to surfaces sharing the
   production Supabase project. Any app works: sign-in requests

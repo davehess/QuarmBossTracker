@@ -604,7 +604,10 @@ describe('/auth/mimic-link on a raidmimic host', () => {
     expect(hubAction).toMatch(/claimHubCode\(hubLinkDb\(supabaseAdmin\(\)\), \{ userCode, userId: user!\.id, discordId \}\)/);
     expect(hubAction).not.toMatch(/wolfpack_members/);
     expect(hubAction).not.toMatch(/\.from\('mimic_link_codes'\)/);   // the stamp goes through the rules, never straight from the action
-    expect(page).toMatch(/String\(meta\.provider_id \?\? meta\.sub \?\? ''\)/);
+    // the id comes from the sign-in identity (web/lib/lockout.ts discordIdOf), never from the editable profile
+    expect(page).toMatch(/import \{ discordIdOf as trustedDiscordId \} from '@\/lib\/lockout';/);
+    expect(page).toMatch(/return trustedDiscordId\(user\) \?\? '';/);
+    expect(page).not.toMatch(/user_metadata[^;\n]*provider_id|meta\.provider_id|meta\.sub/);
   });
 
   it('tells a player who is not in the guild "Join <guild> first" and links to /guilds', () => {
@@ -644,7 +647,10 @@ describe('/auth/mimic-link on a raidmimic host', () => {
     const gateLine = "  await requireMember(user!.id);\n";
     expect(action).toContain(gateLine);
     expect(page).toContain("import { requireMember } from '@/lib/member';");
-    expect(sha(action.replace(guard, '').replace(gateLine, ''))).toBe('f9391444bcc27084');
+    // Re-pinned on purpose (web 2.1.139): the fallback Discord id is read from the sign-in identity (trustedDiscordId),
+    // no longer from user_metadata. Nothing else in the action moved.
+    expect(action).toContain('const discordId = member?.discord_id || trustedDiscordId(user) || null;');
+    expect(sha(action.replace(guard, '').replace(gateLine, ''))).toBe('9aa7e2b4c61aa5b0');
 
     const main = page.slice(page.indexOf('export default async function MimicLinkPage'));
     const p0 = main.indexOf('if (!user) {');

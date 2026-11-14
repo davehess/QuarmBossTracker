@@ -1,5 +1,6 @@
-// Pure logic behind the /fun linkdead card ("Raids since … crashed"). No imports
-// on purpose: test/fun-ld-quit.test.js loads this file as-is.
+// Pure logic behind the /fun linkdead card ("Raids since … crashed"). One import,
+// the shared Discord-id reader (itself pure): test/fun-ld-quit.test.js loads this file as-is.
+import { discordIdOf } from './lockout';
 //
 // Two rules live here, both from the guild lead (2026-10-04):
 //
@@ -115,12 +116,8 @@ export function withoutQuit(detail: Detail): Detail {
 
 // ── Who may press the button ────────────────────────────────────────────────
 /** The Discord account behind a Supabase user (the same lookup /pvp/[name] does). */
-export function viewerDiscordId(user: { app_metadata?: unknown; user_metadata?: unknown } | null | undefined): string | null {
-  if (!user) return null;
-  const app = (user.app_metadata ?? {}) as Record<string, unknown>;
-  const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
-  const id = app.provider_id ?? meta.provider_id ?? meta.sub ?? null;
-  return id == null || id === '' ? null : String(id);
+export function viewerDiscordId(user: { app_metadata?: unknown; user_metadata?: unknown; identities?: unknown } | null | undefined): string | null {
+  return discordIdOf(user);
 }
 
 /**

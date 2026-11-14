@@ -4,6 +4,7 @@
 import Link from 'next/link';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { discordIdOf } from '@/lib/lockout';
 
 export default async function AuthBadge() {
   const supabase = supabaseServer();
@@ -56,11 +57,9 @@ export default async function AuthBadge() {
     }
   }
   if (!nickname) {
-    // Discord OAuth puts the user's Discord ID in identity.identity_data
-    // (provider_id / sub) — and Supabase mirrors it into
-    // user_metadata.provider_id for convenience. Fall back to that.
-    const meta = (user.user_metadata || {}) as { provider_id?: string; sub?: string };
-    const did = meta.provider_id || meta.sub || null;
+    // No row by auth user id yet: fall back to the Discord id on the sign-in
+    // identity (discordIdOf never reads the editable user_metadata copy).
+    const did = discordIdOf(user);
     if (did) {
       const { data } = await admin
         .from('wolfpack_members')

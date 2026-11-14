@@ -8,6 +8,7 @@ import {
   type ScreenSlide, type ScreenState,
 } from '@/lib/raidScreen';
 import { isPlanSlideTitle, planSlides } from './raidPlanSlides';
+import { discordIdOf } from './lockout';
 
 type Db = SupabaseClient;
 
@@ -66,14 +67,13 @@ export async function loadScreenState(db: Db): Promise<ScreenState> {
  * found by auth user id, then by the Discord id on their sign-in (most rows have no user id stamped yet:
  * see components/AuthBadge.tsx). Service client only, and only ever the caller's own row.
  */
-export async function driverName(db: Db, user: Pick<User, 'id' | 'user_metadata'>): Promise<string> {
+export async function driverName(db: Db, user: Pick<User, 'id' | 'app_metadata' | 'identities'>): Promise<string> {
   const pick = (r: { nickname?: string | null; global_name?: string | null } | null | undefined) =>
     r?.nickname || r?.global_name || null;
   const byUser = await db.from('wolfpack_members').select('nickname, global_name').eq('user_id', user.id).maybeSingle();
   let name = pick(byUser.data);
   if (!name) {
-    const meta = (user.user_metadata || {}) as { provider_id?: string; sub?: string };
-    const did = meta.provider_id || meta.sub || null;
+    const did = discordIdOf(user);
     if (did) {
       const byDiscord = await db.from('wolfpack_members').select('nickname, global_name').eq('discord_id', did).maybeSingle();
       name = pick(byDiscord.data);
