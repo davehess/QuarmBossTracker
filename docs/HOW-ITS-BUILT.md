@@ -3711,7 +3711,13 @@ Loads the character's ini bundle (`ui-studio-read-bundle`), parses window
 sections (`XPos<res>` blocks, bare Width/Height), rescales source→target
 resolution, drag/snap editor, writes back with `.bak` or defers until logout
 (`defer-save` + background watcher).
-**Fitting a layout to another screen size** (Mimic beta `ad460c48`, 2026-11-14, FB-132, DECISIONS §580): ONE rule,
+**Design lab (beta branch only, 2026-11-14, DECISIONS §582):** `web/app/lab` (index + one page per draft, `?v=a|b|c`,
+`?bare=1`), `web/lib/lab/registry.ts` (the drafts), `web/lib/lab/people.ts` (made-up raiders), `web/components/lab/`.
+Nothing under it reads the database (`test/lab-drafts.test.js`). A draft's recommended version is staged on the real
+page behind a query; the audit and the backlog are in `docs/DESIGN-site-refinement.md`.
+**Fitting a layout to another screen size** (stable in Mimic 3.0.10; beta `ad460c48` + review fixes `8a705746`,
+2026-11-14, FB-132, DECISIONS §580, §581; `_uiSameMachine` keeps this PC's own backups unfitted, `perCharFlag` reads
+the backup's own per-character-keys switch): ONE rule,
 `apps/mimic/uiFit.js` (`fitRect`, `fitAxis`, `isOffScreen`, `isChatSection`), used by UI Studio's Load + Rescale
 (`_renderLoadedBundle`, as a `<script>`) and by the bring-in (`uiRestorePlan.fitLayout`, by `require`). A window keeps
 its place in the free space, MainChat / Chat N are resized by the screen ratio, every other window keeps its size, a
