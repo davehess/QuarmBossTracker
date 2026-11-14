@@ -37,6 +37,27 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-3-1-0-beta-2026-11-14',
+    title: 'Mimic 3.1.0 beta',
+    version: 'Mimic 3.1.0 beta',
+    date: '2026-11-14',
+    channel: 'beta',
+    headline: 'Bringing your setup to another PC, finished: keys for every character, and nothing moves that should not.',
+    features: [
+      { name: 'Every character keeps its own keys', blurb: 'Bringing several characters to a PC that shares one set of keys can now give each of them its own keys there. The characters already on that PC keep the keys they use today. Or pick whose keys become the one set.' },
+      { name: 'Your own backup comes back as it was', blurb: 'Restoring a backup made on this PC moves nothing that did not change.' },
+      { name: 'UI Studio keeps up', blurb: 'A bring-in that waits for you to camp or close EverQuest refreshes UI Studio when it is written, and UI Studio asks before a save would be replaced by it.' },
+    ],
+    fixes: [
+      'Bringing several characters to a PC that shares one set of keys gave all of them the last character\'s keys.',
+      'Bringing a character from a PC with per-character keys to one that shares a set came up with the wrong keys.',
+      'Zeal\'s raid bars landed off a smaller screen.',
+      'A bring-in no longer turns off Zeal\'s auto-join channels.',
+      'The Key bindings tick starts off for a backup from another PC, with a warning that it changes keys for every character there.',
+      'Bags and the bank no longer make UI Studio say a layout was made for another screen.',
+    ],
+  },
+  {
     key: 'mimic-3-0-10-2026-11-14',
     title: 'Mimic 3.0.10',
     version: 'Mimic 3.0.10',
