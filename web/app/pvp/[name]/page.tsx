@@ -21,6 +21,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { requireMember } from '@/lib/member';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
+import { discordIdOf } from '@/lib/lockout';
 import { fmtTime, dayKey, dayLabel } from '@/lib/format';
 import { userTz } from '@/lib/timezone';
 import { GUILD_TAG } from '@/lib/guild';
@@ -83,9 +84,7 @@ async function ownedNames(): Promise<Set<string>> {
   try {
     const { data: { user } } = await supabaseServer().auth.getUser();
     if (!user) return owned;
-    const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
-    const discordId = (user.app_metadata as Record<string, unknown>)?.provider_id
-      ?? meta.provider_id ?? meta.sub ?? null;
+    const discordId = discordIdOf(user);
     if (!discordId) return owned;
 
     const sb = supabaseAdmin();

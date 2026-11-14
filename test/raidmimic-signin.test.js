@@ -367,7 +367,7 @@ describe('the sign-in callback, run (web/app/auth/callback/route.ts)', () => {
             st.calls.exchange++;
             return { data: { session: {
               provider_token: st.providerToken,
-              user: { id: 'auth-u1', user_metadata: { provider_id: 'd-100', custom_claims: { global_name: 'Aldenmar' }, avatar_url: 'https://cdn.discordapp.com/avatars/d-100/a.png' } },
+              user: { id: 'auth-u1', app_metadata: { discord_id: 'd-100' }, user_metadata: { custom_claims: { global_name: 'Aldenmar' }, avatar_url: 'https://cdn.discordapp.com/avatars/d-100/a.png' } },
             } }, error: null };
           },
           signOut: async () => { st.calls.signOut++; },
@@ -381,7 +381,8 @@ describe('the sign-in callback, run (web/app/auth/callback/route.ts)', () => {
       fetchUserGuilds: async (t) => { st.calls.fetchUserGuilds.push(t); return st.userGuilds; },
       fetchManagedGuildIds: async () => st.userGuilds,
     }));
-    vi.doMock('@/lib/lockout', () => ({ isLockedOut: async () => st.locked }));
+    // the real id readers (pure), with only the lockout answer stubbed
+    vi.doMock('@/lib/lockout', async () => ({ ...(await import('../web/lib/lockout.ts')), isLockedOut: async () => st.locked }));
     vi.doMock('@/lib/request-origin', async () => await import('../web/lib/request-origin.ts'));
     vi.doMock('@/lib/raidmimicHost', async () => await import('../web/lib/raidmimicHost.ts'));
     vi.doMock('@/lib/hubRegistry', async () => await import('../web/lib/hubRegistry.ts'));
@@ -749,7 +750,7 @@ describe('the redeemInvite server action, run (web/app/guilds/actions.ts)', () =
   }
   const soon = () => new Date(Date.now() + 7 * 864e5).toISOString();
   beforeEach(() => {
-    user = { id: 'auth-u1', app_metadata: { provider_id: 'd-100' }, user_metadata: { custom_claims: { global_name: 'Aldenmar' } } };
+    user = { id: 'auth-u1', app_metadata: { discord_id: 'd-100' }, user_metadata: { custom_claims: { global_name: 'Aldenmar' } } };
     store = memDb({
       hub_players: [], hub_memberships: [],
       hub_guilds: [{ guild_id: 'alpha', display_name: 'Alpha', suspended_at: null }],
@@ -781,7 +782,7 @@ describe('the redeemInvite server action, run (web/app/guilds/actions.ts)', () =
   it('the limit is per player: another player is not held back', async () => {
     const redeemInvite = await loadAction();
     for (let i = 0; i < 9; i++) await redeemInvite('ABCDEF');
-    user = { id: 'auth-u2', app_metadata: { provider_id: 'd-200' }, user_metadata: {} };
+    user = { id: 'auth-u2', app_metadata: { discord_id: 'd-200' }, user_metadata: {} };
     expect((await redeemInvite('K7M2QP')).ok).toBe(true);
   });
   it('a database without the registry says so instead of throwing', async () => {

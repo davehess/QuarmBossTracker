@@ -35,7 +35,7 @@ export type SelfResult = { ok: true; ids: Ids } | { ok: false; reason: 'no_disco
  * ties this login to a DIFFERENT Discord id, because a delete keyed on the wrong id is the one mistake this feature
  * cannot make.
  */
-export async function resolveSelf(db: Db, user: { id?: string; app_metadata?: unknown; user_metadata?: unknown } | null | undefined): Promise<SelfResult> {
+export async function resolveSelf(db: Db, user: { id?: string; app_metadata?: unknown; user_metadata?: unknown; identities?: unknown } | null | undefined): Promise<SelfResult> {
   const discordId = discordIdOf(user);
   const userId = user?.id;
   if (!userId || !discordId || !/^\d{5,25}$/.test(discordId)) return { ok: false, reason: 'no_discord' };

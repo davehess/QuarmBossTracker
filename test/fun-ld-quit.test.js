@@ -344,12 +344,13 @@ describe('who may press the button', () => {
   });
   it('an officer with no Discord id is still an officer', () => expect(check(null, true)).toBe(true));
 
-  it('reads the Discord id the way /pvp does', () => {
-    expect(viewerDiscordId({ app_metadata: { provider_id: 'a' }, user_metadata: { provider_id: 'b', sub: 'c' } })).toBe('a');
-    expect(viewerDiscordId({ app_metadata: {}, user_metadata: { provider_id: 'b', sub: 'c' } })).toBe('b');
-    expect(viewerDiscordId({ user_metadata: { sub: 'c' } })).toBe('c');
+  it('reads the Discord id from the sign-in identity, never from the editable profile', () => {
+    const id = '123456789012345678';
+    expect(viewerDiscordId({ identities: [{ provider: 'discord', id }], user_metadata: { provider_id: 'b', sub: 'c' } })).toBe(id);
+    expect(viewerDiscordId({ app_metadata: { discord_id: 'a' }, user_metadata: { provider_id: 'b', sub: 'c' } })).toBe('a');
+    expect(viewerDiscordId({ app_metadata: {}, user_metadata: { provider_id: 'b', sub: 'c' } })).toBeNull();
+    expect(viewerDiscordId({ user_metadata: { sub: 'c' } })).toBeNull();
     expect(viewerDiscordId({ user_metadata: {} })).toBeNull();
-    expect(viewerDiscordId({ user_metadata: { provider_id: '' } })).toBeNull();
     expect(viewerDiscordId(null)).toBeNull();
   });
 });
@@ -465,7 +466,7 @@ vi.mock('../web/lib/supabase.ts', () => ({
 const { viewerMayMarkQuit } = await import('../web/lib/funLdAuth.ts');
 
 describe('viewerMayMarkQuit (the server-side gate)', () => {
-  const user = (id, discord) => ({ id, app_metadata: { provider_id: discord }, user_metadata: {} });
+  const user = (id, discord) => ({ id, app_metadata: { discord_id: discord }, user_metadata: {} });
   beforeEach(() => {
     gate.officer = false;
     // The character's own player owns it; another member owns a different character.
@@ -539,7 +540,7 @@ describe('setLdQuit (the server action)', () => {
   const LATEST = '2026-09-28T01:02:27.000Z';              // the latest LD during a raid
   const SATURDAY = '2026-10-04T00:30:00.000Z';            // the latest LD of all
   beforeEach(() => {
-    act.user = { id: 'u1', app_metadata: { provider_id: '111' }, user_metadata: {} };
+    act.user = { id: 'u1', app_metadata: { discord_id: '111' }, user_metadata: {} };
     act.allowed = true;
     act.rows = seed();
     // opendkp_raids, as the noon-UTC ts rows it holds: two raids, no Oct 3

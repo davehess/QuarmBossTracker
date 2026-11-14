@@ -58,22 +58,95 @@ describe('which lockout rows are active', () => {
 describe('who a lockout matches', () => {
   const locks = { byDiscord: new Set(['111']), byUser: new Set(['u-9']) };
 
-  it('by auth user id, by the OAuth provider id, by sub, and by the password-invite metadata id', async () => {
-    const { matchesLockout, discordIdOf } = await fresh();
+  it('by auth user id, by the Discord sign-in identity, and by the server-stamped id', async () => {
+    const { matchesLockout, discordIdOf, verifiedDiscord } = await fresh();
     expect(matchesLockout({ id: 'u-9' }, locks)).toBe(true);
-    expect(matchesLockout({ id: 'x', user_metadata: { provider_id: '111' } }, locks)).toBe(true);
-    expect(matchesLockout({ id: 'x', app_metadata: { provider_id: '111' } }, locks)).toBe(true);
-    expect(matchesLockout({ id: 'x', user_metadata: { sub: '111' } }, locks)).toBe(true);
-    expect(matchesLockout({ id: 'x', user_metadata: { discord_id: '111' } }, locks)).toBe(true);
-    expect(discordIdOf({ user_metadata: { provider_id: 123 } })).toBe('123');   // always a string
+    expect(matchesLockout({ id: 'x', app_metadata: { discord_id: '111' } }, locks)).toBe(true);
+    expect(matchesLockout(verifiedDiscord('x', '111'), locks)).toBe(true);
+    expect(matchesLockout(verifiedDiscord(null, 111), locks)).toBe(true);
+    const big = { byDiscord: new Set(['123456789012345678']), byUser: new Set() };
+    expect(matchesLockout({ id: 'x', identities: [{ provider: 'discord', id: '123456789012345678' }] }, big)).toBe(true);
+    expect(discordIdOf({ app_metadata: { discord_id: 123 } })).toBe('123');   // always a string
   });
 
   it('does not match anyone else, nobody, or an empty set', async () => {
     const { matchesLockout } = await fresh();
-    expect(matchesLockout({ id: 'u-1', user_metadata: { provider_id: '222' } }, locks)).toBe(false);
+    expect(matchesLockout({ id: 'u-1', app_metadata: { discord_id: '222' } }, locks)).toBe(false);
     expect(matchesLockout({ id: 'u-1' }, locks)).toBe(false);
     expect(matchesLockout(null, locks)).toBe(false);
-    expect(matchesLockout({ id: 'u-9', user_metadata: { provider_id: '111' } }, { byDiscord: new Set(), byUser: new Set() })).toBe(false);
+    expect(matchesLockout({ id: 'u-9', app_metadata: { discord_id: '111' } }, { byDiscord: new Set(), byUser: new Set() })).toBe(false);
+  });
+});
+
+// The Discord id decides whose data a page shows and whose guild a form saves, so it is read only from what the
+// signed-in person cannot write (DECISIONS §579). user_metadata is theirs to edit from the browser.
+describe('the Discord id never comes from the editable profile', () => {
+  const REAL = '123456789012345678', FAKE = '999999999999999999';
+  const discord = (over = {}) => ({ provider: 'discord', id: REAL, identity_data: { provider_id: REAL, sub: REAL }, ...over });
+
+  it('ignores every user_metadata field, whatever it claims', async () => {
+    const { discordIdOf, matchesLockout } = await fresh();
+    for (const meta of [{ provider_id: FAKE }, { sub: FAKE }, { discord_id: FAKE }, { provider_id: FAKE, sub: FAKE, discord_id: FAKE }]) {
+      expect(discordIdOf({ id: 'u', user_metadata: meta })).toBeNull();
+      expect(discordIdOf({ id: 'u', user_metadata: meta, identities: [] })).toBeNull();
+      expect(discordIdOf({ id: 'u', user_metadata: meta, identities: [{ provider: 'email', id: FAKE, identity_data: { sub: FAKE } }] })).toBeNull();
+      expect(discordIdOf({ id: 'u', user_metadata: meta, identities: [discord()] })).toBe(REAL);
+      expect(matchesLockout({ id: 'u', user_metadata: meta }, { byDiscord: new Set([FAKE]), byUser: new Set() })).toBe(false);
+    }
+    // the old app_metadata key was never set by anything, so it is not a way in either
+    expect(discordIdOf({ app_metadata: { provider_id: FAKE } })).toBeNull();
+  });
+
+  it('reads the identity whichever way it is serialised, and only a Discord one', async () => {
+    const { discordIdOf } = await fresh();
+    expect(discordIdOf({ identities: [discord()] })).toBe(REAL);
+    // an identity whose own id is a row id, with the provider id in identity_data
+    expect(discordIdOf({ identities: [discord({ id: '0b6c1b9e-1f0a-4c57-9a3e-2d1f5c1e7a10' })] })).toBe(REAL);
+    expect(discordIdOf({ identities: [discord({ id: undefined, identity_data: { sub: REAL } })] })).toBe(REAL);
+    expect(discordIdOf({ identities: [{ provider: 'email', id: 'a@b.c' }, discord()] })).toBe(REAL);
+    expect(discordIdOf({ identities: [discord({ id: 'x', identity_data: {} })] })).toBeNull();
+    expect(discordIdOf({ identities: 'nope' })).toBeNull();
+    expect(discordIdOf({ identities: [null, 7, {}] })).toBeNull();
+    // the identity wins over a stamped id
+    expect(discordIdOf({ identities: [discord()], app_metadata: { discord_id: FAKE } })).toBe(REAL);
+  });
+
+  it('a stamped id cannot carry filter syntax', async () => {
+    const { discordIdOf } = await fresh();
+    for (const bad of ['1,owner_discord_id.neq.0', '1)', 'a b', '', '*', '1%', 'x'.repeat(41)]) {
+      expect(discordIdOf({ app_metadata: { discord_id: bad } })).toBeNull();
+    }
+  });
+
+  it('no page, action or library reads an id out of user_metadata', () => {
+    const walk = (d) => fs.readdirSync(d).flatMap((n) => {
+      const p = path.join(d, n);
+      if (n === 'node_modules' || n === '.next') return [];
+      return fs.statSync(p).isDirectory() ? walk(p) : (/\.(ts|tsx)$/.test(n) ? [p] : []);
+    });
+    const root = path.join(ROOT, 'web');
+    const files = [...walk(path.join(root, 'app')), ...walk(path.join(root, 'lib')), ...walk(path.join(root, 'components')), path.join(root, 'middleware.ts')];
+    expect(files.length).toBeGreaterThan(200);
+    const offenders = [];
+    for (const f of files) {
+      const code = stripJs(fs.readFileSync(f, 'utf8'));
+      // an id read off the editable profile, by any of the three keys, directly or through a `meta` alias
+      if (/user_metadata\??\.(provider_id|sub|discord_id)\b/.test(code)
+        || /\bmeta\??\.(provider_id|sub|discord_id)\b/.test(code)
+        || /user_metadata[^;\n]*\)\??\.(provider_id|sub|discord_id)\b/.test(code)
+        || /app_metadata\??\.provider_id\b/.test(code)) offenders.push(path.relative(root, f));
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('server code that holds a verified id passes it where only the server can write', () => {
+    for (const f of ['web/app/auth/callback/route.ts', 'web/app/auth/claim/page.tsx', 'web/lib/openSignIn.ts']) {
+      const code = src(f);
+      expect(code).toMatch(/isLockedOut\(verifiedDiscord\(/);
+      expect(code).not.toMatch(/isLockedOut\(\{/);
+    }
+    const claim = src('web/app/auth/claim/page.tsx');
+    expect(claim.match(/app_metadata: \{ discord_id: String\(member!\.discord_id\) \}/g)).toHaveLength(2);   // new account and reset
   });
 });
 
@@ -171,14 +244,14 @@ describe('sign-in is refused for a locked member', () => {
     expect(check).toBeGreaterThan(cb.indexOf('hasAllowedRole'));
     expect(check).toBeLessThan(cb.indexOf("from('wolfpack_members').upsert"));
     const block = cb.slice(check, cb.indexOf("from('wolfpack_members').upsert"));
-    expect(block).toMatch(/provider_id: member\.user\.id/);
+    expect(block).toMatch(/verifiedDiscord\(data\.session\.user\.id, member\.user\.id\)/);
     expect(block).toMatch(/supabase\.auth\.signOut\(\)/);
     expect(block).toMatch(/\/auth\/paused/);
   });
 
   it('the invite claim refuses a locked member in the action and on the page', () => {
     const claim = src('web/app/auth/claim/page.tsx');
-    expect(claim).toMatch(/import \{ isLockedOut \} from '@\/lib\/lockout';/);
+    expect(claim).toMatch(/import \{ isLockedOut, verifiedDiscord \} from '@\/lib\/lockout';/);
     expect(claim.match(/await isLockedOut\(/g)).toHaveLength(2);
     expect(claim.match(/redirect\('\/auth\/paused'\)/g)).toHaveLength(2);
     // the action's check sits before any account is created or reset

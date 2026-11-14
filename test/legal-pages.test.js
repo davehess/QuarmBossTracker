@@ -356,7 +356,7 @@ describe('both sign-in callbacks record it, after the session is good, and never
         auth: {
           exchangeCodeForSession: async () => ({ data: { session: {
             provider_token: 'TOK',
-            user: { id: 'auth-u1', user_metadata: { provider_id: 'd-100', custom_claims: { global_name: 'Aldenmar' } } },
+            user: { id: 'auth-u1', app_metadata: { discord_id: 'd-100' }, user_metadata: { custom_claims: { global_name: 'Aldenmar' } } },
           } }, error: null }),
           signOut: async () => { calls.signOut++; },
         },
@@ -366,7 +366,7 @@ describe('both sign-in callbacks record it, after the session is good, and never
       fetchGuildMember: async () => ({ nick: 'Aldenmar', user: { id: 'd-100', global_name: 'Ald' }, roles: ['r-pack'], joined_at: '2026-01-01T00:00:00Z' }),
       memberAvatarUrl: () => null, memberDisplayName: (m) => m.nick, fetchUserGuilds: async () => [], fetchManagedGuildIds: async () => [],
     }));
-    vi.doMock('@/lib/lockout', () => ({ isLockedOut: async () => false }));
+    vi.doMock('@/lib/lockout', async () => ({ ...(await import('../web/lib/lockout.ts')), isLockedOut: async () => false }));
     vi.doMock('@/lib/request-origin', async () => await import('../web/lib/request-origin.ts'));
     vi.doMock('@/lib/raidmimicHost', async () => await import('../web/lib/raidmimicHost.ts'));
     vi.doMock('@/lib/hubRegistry', async () => await import('../web/lib/hubRegistry.ts'));

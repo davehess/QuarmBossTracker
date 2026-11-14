@@ -14,6 +14,7 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
+import { discordIdOf } from '@/lib/lockout';
 import { GUILD_TAG } from '@/lib/guild';
 import { actorName } from '@/lib/actorName';
 import { setAtKey } from '@/lib/consoleHealth';
@@ -58,11 +59,10 @@ export async function applyDangerControl(formData: FormData): Promise<void> {
     tuning[key] = value;
     tuning[setAtKey(key)] = new Date().toISOString();
   }
-  const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
   const { error } = await sb.from('overlay_tuning').upsert({
     guild_id: GUILD_TAG,
     tuning,
-    updated_by_discord_id: (user.app_metadata?.provider_id || meta.provider_id || null) as string | null,
+    updated_by_discord_id: discordIdOf(user),
     updated_by_name: actorName(user),
     updated_at: new Date().toISOString(),
   }, { onConflict: 'guild_id' });
