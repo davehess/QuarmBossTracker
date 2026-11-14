@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.82': [
+    'Behind the scenes: a UI backup is now accepted only under a plain character name. Nothing changes for normal backups.',
+  ],
   '4.0.81': [
     'PoP guide correction: the Binden Concerrentia\'s elemental fragments are lore and no-drop (the guide said they could be traded), and the talismans use up a Quintessence of Knowledge each click.',
   ],
