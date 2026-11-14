@@ -25,6 +25,8 @@ import ZoneSvg from './ZoneSvg';
 import { loadWalls } from './walls';
 import { loadSavedRoute } from './savedRoute';
 import { chooseRoute, markerLetter } from '@/lib/popRaidMap';
+import { mapBlockers } from '@/lib/popTonightBlockersView';
+import BlockersStrip, { FlagFold } from '@/components/lab/pop-tonight-blockers/BlockersStrip';
 
 export const metadata: Metadata = {
   title: '[beta] Raid night plan',
@@ -101,7 +103,8 @@ const H = ({ children }: { children: React.ReactNode }) => (
   <h4 className="mt-3 mb-1 text-[11px] font-semibold uppercase tracking-wider text-dim">{children}</h4>
 );
 
-export default async function RaidPlanPage() {
+export default async function RaidPlanPage({ searchParams }: { searchParams?: Promise<{ v?: string }> }) {
+  const alt = (await searchParams)?.v; // ?v=a: the blockers strip first, the full raider table folded (draft)
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/pop/raid');
   await requireMember(user.id);
@@ -117,6 +120,7 @@ export default async function RaidPlanPage() {
   const routes = PLAN.map((s, i) => chooseRoute(saved[i], s.route));
   const { raiders, held, note, unlinked, error } = data;
   const has = (name: string, key: string) => held.get(name.toLowerCase())?.has(key) ?? false;
+  const strip = alt === 'a' && !error && raiders.length ? mapBlockers(PLAN, PREFLAGS, raiders, has) : null;
   const missing = (key: string) => raiders.filter(r => !has(r.name, key)).map(r => r.name);
 
   return (
@@ -130,6 +134,8 @@ export default async function RaidPlanPage() {
       <p className="mt-1 text-xs">
         <Link href="/raid/sr" className="text-blue hover:underline">Soft Reserve: pick the drops you want first claim on →</Link>
       </p>
+
+      {strip && <div className="mt-3"><BlockersStrip view={strip} /></div>}
 
       <nav className="mt-3 rounded-lg border border-border bg-panel p-3 text-xs" aria-label="Targets">
         <ol className="space-y-1">
@@ -160,6 +166,7 @@ export default async function RaidPlanPage() {
         </details>
       </section>
 
+      <FlagFold on={!!strip} count={raiders.length}>
       <section id="preflags" className="mt-4 rounded-lg border border-border bg-panel p-3">
         <h2 className="text-sm font-semibold text-text">Preflag check</h2>
         <p className="mt-1 text-xs text-dim">{error ? '' : note}</p>
@@ -220,6 +227,7 @@ export default async function RaidPlanPage() {
           </>
         )}
       </section>
+      </FlagFold>
 
       {PLAN.map((s, i) => (
         <section key={s.id} id={s.id} className="mt-6 scroll-mt-4">

@@ -28,6 +28,8 @@ import { classifyEncounter, clearClassification, toggleWipe, markDeathIntentiona
 import { shownActor } from '@/lib/actorName';
 import { isWipe } from '@/lib/encounterMarks';
 import { GUILD_TAG } from '@/lib/guild';
+import { toResultView } from '@/lib/parseResultFirstView';
+import ResultFirstA from '@/components/lab/parse-result-first/VersionA';
 
 export const dynamic = 'force-dynamic';
 
@@ -447,8 +449,9 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   } catch { return PARSE_FALLBACK_META; }
 }
 
-export default async function EncounterDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function EncounterDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams?: Promise<{ v?: string }> }) {
   const { id } = await params;
+  const view = (await searchParams)?.v;
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/parses/${encodeURIComponent(id)}`);
   await requireMember(user.id);
@@ -645,6 +648,23 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
       </span>
     );
   };
+
+  // ?v=a — the "result first" layout (design lab draft parse-result-first). The page does not load the viewer's own
+  // characters, so this version shows no "you" marks here; the default render below is untouched.
+  if (view === 'a') {
+    const v = toResultView({
+      boss: bossName, zone: zoneLong, whenLabel: `${dayLabel(dispDate, tz)} ${fmtTime(enc.started_at, tz)}`,
+      isWipe: enc.is_wipe, classification: enc.classification, startedAt: enc.started_at, durationSec: enc.duration_sec,
+      totalDamage: enc.total_damage, totalDps: enc.total_dps, players: players, classOf: (n) => whoMap.get(n.toLowerCase())?.class ?? null,
+      deaths, contribs, events: raidEvents, loot,
+    });
+    return (
+      <div className="space-y-4">
+        <div className="text-sm"><Link href="/parses" className="text-blue hover:underline">← back to parses</Link></div>
+        <ResultFirstA v={v} linkNames />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

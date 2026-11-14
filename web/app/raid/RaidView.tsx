@@ -14,7 +14,9 @@
 //   • DKP auction winner highlight (roadmap stage 4)
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import AlertFirst from '@/components/lab/raid-roster-calm/AlertFirst';
+import { calmViewFromRows } from '@/lib/raidRosterCalmView';
 import BuffLagButton from '@/components/BuffLagButton';
 import MoreInfo from '@/components/MoreInfo';
 import {
@@ -264,6 +266,8 @@ export default function RaidView({
   // open at 15s was the likeliest cause of the 75% warning (the guild lead,
   // 2026-10-25: pick A, "trim the waste"); Mimic's overlays stay live.
   const router = useRouter();
+  // ?v=a swaps the roster for the calm "alert first" view (design lab draft raid-roster-calm). Same data, same refresh.
+  const calmView = useSearchParams()?.get('v') === 'a';
   useEffect(() => {
     const t = setInterval(() => {
       if (document.visibilityState === 'visible' && inRaidWindow()) router.refresh();
@@ -403,6 +407,29 @@ export default function RaidView({
         - twitchSortKey({ className: b.className, manaPct: b.manaPct! })
         || a.name.localeCompare(b.name)),
     [manaList]);
+
+  if (calmView) {
+    return (
+      <div className="space-y-3">
+        {multiRaid && (
+          <div className="flex flex-wrap items-center gap-2">
+            {raidTabs.map((t) => (
+              <button key={t.key} type="button" onClick={() => setActiveRaid(t.key)}
+                className={`rounded border px-3 py-1.5 text-sm ${activeRaid === t.key ? 'border-blue bg-blue/20 text-blue' : 'border-border bg-panel text-text'}`}>{t.label}</button>
+            ))}
+          </div>
+        )}
+        <AlertFirst
+          view={calmViewFromRows(tabRows, ari)}
+          fullViewHref="/raid"
+          renderDetail={(c) => {
+            const row = rows.find((x) => x.name === c.name);
+            return row ? <CharacterDetail row={row} dsValues={dsValues} onClose={() => setSelectedName(null)} /> : null;
+          }}
+        />
+      </div>
+    );
+  }
 
   const focused = bufferClass !== '';
 

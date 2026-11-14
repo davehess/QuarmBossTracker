@@ -96,8 +96,12 @@ describe('the page', () => {
   const src = readFileSync(new URL('../web/app/boards/page.tsx', import.meta.url), 'utf8')
     .split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
   it('shows the panel on /boards itself, not behind a ?v= variant (a running stampede was invisible without it)', () => {
-    expect(src).toMatch(/<ZoneTimersPanel timers=\{zoneTimers\} \/>/);
-    expect(src).not.toMatch(/\bsearchParams\b/);
+    // The page has one preview (?v=a, the "next up" list, design lab). The panel is in BOTH renders, first in each,
+    // so no ?v= can hide it again.
+    const panels = src.match(/<div className="space-y-6">\s*<ZoneTimersPanel timers=\{zoneTimers\} \/>/g) || [];
+    expect(panels).toHaveLength(2);
+    expect(src.match(/searchParams\)\?\./g)).toHaveLength(1);     // the query is read once, for ?v=a
+    expect(src).toMatch(/const nextUp = \(await searchParams\)\?\.v === 'a';/);
     expect(src).not.toMatch(/v === 'b'/);
     // read in parallel with the boards, so the page is no slower for it
     expect(src).toMatch(/Promise\.all\(\[loadZoneTimers\(\), loadBoards\(\)\]\)/);
