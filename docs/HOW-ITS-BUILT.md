@@ -3711,6 +3711,20 @@ Loads the character's ini bundle (`ui-studio-read-bundle`), parses window
 sections (`XPos<res>` blocks, bare Width/Height), rescales source→target
 resolution, drag/snap editor, writes back with `.bak` or defers until logout
 (`defer-save` + background watcher).
+**Fitting a layout to another screen size** (Mimic beta `ad460c48`, 2026-11-14, FB-132, DECISIONS §580): ONE rule,
+`apps/mimic/uiFit.js` (`fitRect`, `fitAxis`, `isOffScreen`, `isChatSection`), used by UI Studio's Load + Rescale
+(`_renderLoadedBundle`, as a `<script>`) and by the bring-in (`uiRestorePlan.fitLayout`, by `require`). A window keeps
+its place in the free space, MainChat / Chat N are resized by the screen ratio, every other window keeps its size, a
+tuck of up to 16 px past an edge is kept. `fitLayout` reads the block the backup was played at (`videoModeOf`, the
+backup's own eqclient.ini) and takes sizeless windows' sizes from the skin (`_uiSkinSizes` in main). In the editor:
+`_fitMemoFor` / `_fitMemoSave` stop a second rescale shrinking chat windows again; `_offBanner` + `_bringOnScreen`
+flag and fix windows off the screen; `_fitBanner` / `_fitCandidates` offer to fit a layout made for another screen
+(files copied by hand); `_buildSaveEdits` writes every window with no place at this screen size (`noBlock`);
+`_readPos`'s third argument picks the fallback block. Key bindings: `[KeyMaps]` is replaced as a section, and the
+character's own `[KeyMaps_<Char>]` (Zeal's per-character keybinds) rides in the `zealchar` part, filled from the
+backup's `[KeyMaps]` when this PC has `PerCharKeybinds` on and the backup does not (`perCharKeys`, `entryText`).
+`_displayPixels` gives Detect a screen's real pixels. `scripts/Collect-EqUi.ps1` zips a PC's settings files for
+support, passwords blanked.
 **Zeal bars as they draw** (Mimic beta, 2026-11-05, FB-120): `_raidBarsGrid` lays 71 fake members into the raid-bars box with
 Zeal's own cell math (`ZEAL_FONT_METRICS`, measured from Zeal's `.spritefont` files), by class or — with `GroupSort`, or the
 Show panel's view-only `STATE.raidBarsView` — by group with 13 headings (`RAID_FAKE_GROUPS`, `_raidBarsByGroup`), and `_raidBarsCellsHtml` draws them; `_assistBar`

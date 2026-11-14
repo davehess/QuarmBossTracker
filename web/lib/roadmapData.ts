@@ -37,6 +37,28 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-3-0-10-beta-ui-fit-2026-11-14',
+    title: 'Mimic 3.0.10 beta',
+    version: 'Mimic 3.0.10 beta',
+    date: '2026-11-14',
+    channel: 'beta',
+    headline: 'Bringing your setup to a PC with a different screen size now fits the layout to that screen, and your key bindings come with it.',
+    features: [
+      { name: 'Your layout, fitted to this screen', blurb: 'Windows docked to an edge stay docked there, nothing is left hanging off the screen, and chat windows are resized to match. It works from a bigger screen to a smaller one and the other way.' },
+      { name: 'Your key bindings come with the character', blurb: 'They are brought as a whole set. If this PC keeps key bindings per character (a Zeal option) and the other PC does not, they are put where the game looks for them here.' },
+      { name: 'Copied your files over by hand?', blurb: 'UI Studio tells you the layout was made for another screen size and fits it to this one in one click.' },
+      { name: 'A warning for windows off the screen', blurb: 'UI Studio marks them in red, counts them, and has a button that moves only those back on.' },
+    ],
+    fixes: [
+      'A setup brought from a 1440p PC to a 1080p PC used an old leftover layout, or left windows hanging off the right and bottom edges.',
+      'After a bring-in, a character on a PC with per-character key bindings came up with default keys.',
+      'Saving in UI Studio after a bring-in could put the old layout back.',
+      'Saving in UI Studio wrote only the windows you had moved, so a copied layout stayed scrambled in game.',
+      'A Save made while a bring-in waited for you to camp cancelled the bring-in.',
+      'Detect offered the wrong screen size when Windows display scaling was above 100%.',
+    ],
+  },
+  {
     key: 'web-2-1-139-2026-11-14',
     title: 'Web 2.1.139 · Bot 4.0.82',
     version: 'Web 2.1.139 · Bot 4.0.82',
