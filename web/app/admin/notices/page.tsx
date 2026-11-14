@@ -13,6 +13,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer, requireOfficer } from '@/lib/officer';
+import { discordIdOf } from '@/lib/lockout';
 import { supabaseServer } from '@/lib/supabase-server';
 import { GUILD_TAG } from '@/lib/guild';
 
@@ -55,7 +56,7 @@ async function createNotice(formData: FormData) {
     title,
     body,
     severity,
-    created_by_discord_id: (user.app_metadata?.provider_id || meta.provider_id || null) as string | null,
+    created_by_discord_id: discordIdOf(user),
     created_by_name: String(meta.full_name || meta.name || meta.preferred_username || 'officer'),
     expires_at: expiresDays > 0 ? new Date(Date.now() + expiresDays * 86400000).toISOString() : null,
   });

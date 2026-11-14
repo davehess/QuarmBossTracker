@@ -20,6 +20,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer, requireOfficer } from '@/lib/officer';
+import { discordIdOf } from '@/lib/lockout';
 import { supabaseServer } from '@/lib/supabase-server';
 import { GUILD_TAG } from '@/lib/guild';
 import { actorName, shownActor } from '@/lib/actorName';
@@ -67,7 +68,6 @@ async function saveVoiceSettings(formData: FormData) {
 
   // Pull display name for the audit trail. Falls back to "officer" if the
   // member row isn't synced yet — rare on first install only.
-  const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
   const display = actorName(user);
 
   await supabaseAdmin()
@@ -79,7 +79,7 @@ async function saveVoiceSettings(formData: FormData) {
       volume_pct,
       skip_patterns,
       skip_trigger_names,
-      updated_by_discord_id: (user.app_metadata?.provider_id || meta.provider_id || null) as string | null,
+      updated_by_discord_id: discordIdOf(user),
       updated_by_name: display,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'guild_id' });

@@ -19,6 +19,7 @@ import Link from 'next/link';
 import type { User } from '@supabase/supabase-js';
 import { supabaseServer } from '@/lib/supabase-server';
 import { requireMember } from '@/lib/member';
+import { discordIdOf as trustedDiscordId } from '@/lib/lockout';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isRaidmimicHost } from '@/lib/raidmimicHost';
 import { profileOf } from '@/lib/hubRegistry';
@@ -91,14 +92,14 @@ async function authorizeCode(formData: FormData) {
 
   const admin = supabaseAdmin();
   // Look up the discord_id from wolfpack_members (cached at sign-in by the
-  // auth callback). user.user_metadata.provider_id is the same value but
-  // wolfpack_members is the canonical store.
+  // auth callback). wolfpack_members is the canonical store; the fallback is
+  // the Discord id on the sign-in identity, never the editable user_metadata.
   const { data: member } = await admin
     .from('wolfpack_members')
     .select('discord_id')
     .eq('user_id', user!.id)
     .maybeSingle();
-  const discordId = member?.discord_id || (user!.user_metadata as Record<string, string> | null)?.provider_id || null;
+  const discordId = member?.discord_id || trustedDiscordId(user) || null;
   if (!discordId) {
     redirect('/auth/mimic-link?error=no_discord_id');
   }
@@ -275,8 +276,7 @@ const HUB_OK_LABELS: Record<string, string> = {
 };
 
 function discordIdOf(user: User): string {
-  const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
-  return String(meta.provider_id ?? meta.sub ?? '');
+  return trustedDiscordId(user) ?? '';
 }
 
 async function authorizeHubCode(formData: FormData) {

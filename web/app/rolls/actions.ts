@@ -16,6 +16,7 @@ import { revalidatePath } from 'next/cache';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
+import { discordIdOf } from '@/lib/lockout';
 import { GUILD_TAG } from '@/lib/guild';
 
 type Key = { from: number; to: number; startedAt: string };
@@ -27,7 +28,7 @@ async function guard() {
   const name =
     (user.user_metadata?.full_name as string | undefined) ||
     (user.user_metadata?.name as string | undefined) || null;
-  return { ok: true as const, discordId: (user.user_metadata?.provider_id as string) ?? null, name };
+  return { ok: true as const, discordId: discordIdOf(user), name };
 }
 
 function validKey(k: Key) {

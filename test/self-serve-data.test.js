@@ -91,7 +91,7 @@ describe('the typed confirm', () => {
 });
 
 describe('who is asking: the session, and only the session', () => {
-  const userFor = (id, did) => ({ id, app_metadata: { provider_id: did } });
+  const userFor = (id, did) => ({ id, app_metadata: { discord_id: did } });
   it('takes the login id and Discord id off the user', async () => {
     const db = fakeDb({ tables: { wolfpack_members: [] } });
     expect(await resolveSelf(db, userFor(ME.userId, ME.discordId))).toEqual({ ok: true, ids: ME });

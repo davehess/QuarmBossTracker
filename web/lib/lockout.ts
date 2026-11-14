@@ -73,19 +73,42 @@ export async function getActiveLockouts(): Promise<Lockouts> {
   return _inflight;
 }
 
-// The Discord id of a Supabase auth user: provider_id on an OAuth account (what auth/callback stamps), sub as
-// the fallback, and the id the claim flow writes into a password-invite account's metadata.
-export function discordIdOf(user: { app_metadata?: unknown; user_metadata?: unknown } | null | undefined): string | null {
+// The Discord id of a Supabase auth user, read ONLY from the two places the signed-in person cannot write:
+//   1. the Discord identity Supabase recorded at sign-in (user.identities), and
+//   2. app_metadata.discord_id, which only the server can set (the claim flow stamps it on an invited password
+//      account; server code that already holds a verified id passes it the same way).
+// user_metadata is NEVER read: the account's owner can change it from the browser, so an id taken from it is
+// whatever they say it is (DECISIONS §579). An identity's id must be all digits (a Discord id is; this also picks the
+// right field whichever way the identity is serialised). A server-stamped id is held to a shape that cannot break
+// out of a filter string.
+const DISCORD_ID_RX = /^\d{5,25}$/;
+const STAMPED_ID_RX = /^[\w-]{1,40}$/;
+export function discordIdOf(
+  user: { app_metadata?: unknown; user_metadata?: unknown; identities?: unknown } | null | undefined,
+): string | null {
   if (!user) return null;
+  const identities = Array.isArray(user.identities) ? user.identities : [];
+  for (const raw of identities) {
+    const i = (raw ?? {}) as { provider?: unknown; id?: unknown; identity_data?: unknown };
+    if (i.provider !== 'discord') continue;
+    const data = (i.identity_data ?? {}) as Record<string, unknown>;
+    for (const c of [i.id, data.provider_id, data.sub]) {
+      const s = c == null ? '' : String(c);
+      if (DISCORD_ID_RX.test(s)) return s;
+    }
+  }
   const app = (user.app_metadata ?? {}) as Record<string, unknown>;
-  const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
-  const id = app.provider_id ?? meta.provider_id ?? meta.sub ?? meta.discord_id ?? null;
-  return id == null ? null : String(id);
+  const stamped = app.discord_id == null ? '' : String(app.discord_id);
+  return STAMPED_ID_RX.test(stamped) ? stamped : null;
 }
+
+/** A user-shaped value for server code that already holds a VERIFIED Discord id (the guild API's answer, a members row). */
+export const verifiedDiscord = (id: string | null | undefined, discordId: unknown) =>
+  ({ id: id ?? undefined, app_metadata: { discord_id: discordId == null ? null : String(discordId) } });
 
 // Pure matcher, so the rule can be exercised without the database.
 export function matchesLockout(
-  user: { id?: string; app_metadata?: unknown; user_metadata?: unknown } | null | undefined,
+  user: { id?: string; app_metadata?: unknown; user_metadata?: unknown; identities?: unknown } | null | undefined,
   locks: Lockouts,
 ): boolean {
   if (!user) return false;
@@ -95,7 +118,7 @@ export function matchesLockout(
 }
 
 export async function isLockedOut(
-  user: { id?: string; app_metadata?: unknown; user_metadata?: unknown } | null | undefined,
+  user: { id?: string; app_metadata?: unknown; user_metadata?: unknown; identities?: unknown } | null | undefined,
 ): Promise<boolean> {
   if (!user) return false;
   return matchesLockout(user, await getActiveLockouts());
