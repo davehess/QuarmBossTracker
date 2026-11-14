@@ -117,6 +117,7 @@
 <body>
 <div id="app"></div>
 <script src="voice.js"></script>
+<script src="bring-setup.js"></script>
 <script>
 (function () {
   'use strict';
@@ -169,6 +170,11 @@
     { id: 'welcome',  icon: '🐺', title: 'Welcome',              bookend: true, body: bWelcome },
     { id: 'account',  icon: '🔑', title: 'Wolf Pack account',    kind: 'req', body: bAccount,
       lede: 'Signing in is what puts your fights, tells and characters on wolfpack.quest. Local-only works too — nothing leaves this PC.' },
+    // 2026-11-11 (the guild lead: "front and center"): right after sign-in, because that is when a player on a new
+    // PC has backups waiting. The card is shared with Settings and UI Studio (bring-setup.js). Optional, and it
+    // reads as done when the account has nothing to bring over.
+    { id: 'setup',    icon: '📦', title: 'Bring your setup',     body: bBring,
+      lede: 'Your windows, hotbuttons, socials and overlay positions from your other computer, if you backed them up.' },
     { id: 'folder',   icon: '📁', title: 'EverQuest folder',     kind: 'req', body: bFolder,
       lede: 'Mimic reads the log files EverQuest writes. Tick the folder you play from.' },
     { id: 'chars',    icon: '👤', title: 'Your characters',      kind: 'req', body: bChars,
@@ -212,6 +218,13 @@
   function stepState(id) {
     switch (id) {
       case 'account':  return (S.signedIn || S.localOnly) ? 'done' : 'need';
+      case 'setup':
+        if (!S.signedIn) { S.bringN = null; return S.visited.has(id) ? 'done' : 'todo'; }
+        if (S.bringN == null && !S.bringBusy && window.wpBringSetup) {
+          S.bringBusy = true;
+          window.wpBringSetup.pending(function (n) { S.bringN = n; S.bringBusy = false; changed(); });
+        }
+        return S.bringN === 0 || S.visited.has(id) ? 'done' : 'todo';
       case 'folder':   return S.eqConfigured ? 'done' : 'need';
       case 'chars':    return S.chars.length ? 'done' : (S.eqConfigured ? 'need' : 'todo');
       case 'zeal':     return (S.zeal && S.zeal.hasZealAsi) ? 'done' : 'todo';
@@ -275,6 +288,23 @@
     Promise.resolve(M.hubList()).then(function (r) {
       if (r && Array.isArray(r.hubs)) { S.hubs = r.hubs; S.hub = r.current || S.hub; changed(); }
     }).catch(function () {});
+  }
+
+  // Bring your setup to this computer: the shared card (bring-setup.js). Signed out, it says so; with nothing
+  // backed up, it says that and the step reads as done.
+  var bringHost = null;   // kept between redraws, so a redraw never closes the card or loses a pick
+  function bBring(el) {
+    if (!S.signedIn) { el.innerHTML = '<div class="box"><div class="dim">Sign in on the Wolf Pack account step first. Your backups are kept with your account.</div></div>'; return; }
+    if (!bringHost) {
+      bringHost = document.createElement('div');
+      bringHost.innerHTML = '<div class="dim" data-bring-note>Looking for backups in your account…</div><div data-bring-card></div>';
+      var card = bringHost.querySelector('[data-bring-card]');
+      window.wpBringSetup.mount(card, { fresh: true, onDone: function () { S.bringN = null; changed(); } }).then(function () {
+        bringHost.querySelector('[data-bring-note]').textContent = card.querySelector('[data-wpbs]') ? '' : 'Nothing to bring over: no backups in your account that this PC is missing.';
+      });
+    }
+    el.innerHTML = '';
+    el.appendChild(bringHost);
   }
 
   function bAccount(el) {

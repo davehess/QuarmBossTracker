@@ -12,10 +12,14 @@
 
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { readSource, sliceBlock, evalBlock, stripJs, ROOT } from './_source-slice.js';
 
 const studio = readSource(path.join(ROOT, 'apps', 'mimic', 'ui-studio.html'));
 const main   = readSource(path.join(ROOT, 'apps', 'mimic', 'main.js'));
+
+// The bars are fitted with the same rule as every window (apps/mimic/uiFit.js, a <script> in the page).
+globalThis.UiFit = createRequire(import.meta.url)(path.join(ROOT, 'apps', 'mimic', 'uiFit.js'));
 
 function studioZeal() {
   const parse = sliceBlock(studio, '  function parseIni(text){', '\n    return { lines: lines, sections: sections };\n  }');
@@ -52,9 +56,25 @@ describe('UI Studio shows Zeal\'s raid bars and assist bar as Zeal windows', () 
     expect(z._zealBarEdits(w)).toEqual({ Left: 50, Top: 30 });
   });
 
-  it('positions remap to the target resolution; sizes stay pixels', () => {
+  it('positions are fitted to the target screen; sizes stay pixels', () => {
     const [w] = z._zealBarWindows(ini('[AssistBar]\nLeft=100\nTop=200\nFontSize=16\n'), 2560, 1440, 0.75, 0.75);
-    expect([w.x, w.y, w.w]).toEqual([75, 150, 203]);
+    expect(w.w).toBe(203);                       // its text, never scaled
+    // the same fraction of the free space: 100 of (2560 - 203) wide -> that fraction of (1920 - 203)
+    expect(w.x).toBe(Math.round(100 / (2560 - 203) * (1920 - 203)));
+    expect(w.y).toBe(Math.round(200 / (1440 - w.h) * (1080 - w.h)));
+    // docked to the right edge at 1440p, it is docked to the right edge at 1080p (it used to hang off by a quarter of its width)
+    const [r] = z._zealBarWindows(ini('[AssistBar]\nLeft=' + (2560 - 203) + '\nTop=0\nFontSize=16\n'), 2560, 1440, 0.75, 0.75);
+    expect(r.x + r.w).toBe(1920);
+  });
+
+  it('a raid-bar box that runs to the screen edge runs to the NEW screen\'s edge after a rescale', () => {
+    const [w] = z._zealBarWindows(ini('[RaidBars]\nEnabled=TRUE\nLeft=1600\nTop=400\nRight=0\nBottom=0\n'), 2560, 1440, 0.75, 0.75);
+    expect([w.x, w.y]).toEqual([1200, 300]);
+    expect([w.x + w.w, w.y + w.h]).toEqual([1920, 1080]);
+    // a sized box keeps its size and stays on the screen
+    const [b] = z._zealBarWindows(ini('[RaidBars]\nEnabled=TRUE\nLeft=2000\nTop=900\nRight=2560\nBottom=1440\n'), 2560, 1440, 0.75, 0.75);
+    expect([b.w, b.h]).toEqual([560, 540]);
+    expect([b.x + b.w, b.y + b.h]).toEqual([1920, 1080]);
   });
 
   it('no raid-bar section, no raid bars; no assist-bar section, the assist bar shows where Zeal would draw it (FB-120)', () => {

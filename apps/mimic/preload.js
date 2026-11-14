@@ -646,7 +646,7 @@ function _wpPlaceNameChip() {
 // overlay's own corner controls), then the window is asked for the row's height. Un-folding shows it all again;
 // main gives the old height back and a page that fits itself fits again.
 const _WP_FOLD_KEEP = '#move-btn,#hide-btn,#clear-btn,#drag-controls,#setupbar,#wpResizeMenu,#mimic-conn-banner,#mimic-update-banner,'
-  + '#wp-cvd-defs,#wp-grip,#wp-grip-top,.wp-name-chip,script,style,link';
+  + '#weavecv,#wp-cvd-defs,#wp-grip,#wp-grip-top,.wp-name-chip,script,style,link';
 let _wpFoldSetRaw = false;       // the last window height this page asked for was the fold's
 function _wpFoldRow() {
   const proxy = document.querySelector('.wp-name-proxy');
@@ -1776,6 +1776,11 @@ contextBridge.exposeInMainWorld('mimic', {
   // Compare-first restore, Keep in sync and This PC (main.js "compare-first restore" block).
   uiRestorePlan:          (params)  => ipcRenderer.invoke('ui-restore-plan', params),
   uiRestoreParts:         (params)  => ipcRenderer.invoke('ui-restore-parts', params),
+  uiLocalVersions:        (character) => ipcRenderer.invoke('ui-local-versions', character),
+  // UI Studio's Changes panel: the kept versions, and the key-by-key diff of one against the files now.
+  uiStudioVersions:       (character, eqDir) => ipcRenderer.invoke('ui-studio-versions', character, eqDir),
+  uiStudioDiff:           (character, eqDir, id) => ipcRenderer.invoke('ui-studio-diff', character, eqDir, id),
+  uiAccountCharacters:    ()        => ipcRenderer.invoke('ui-account-characters'),
   uiSyncGet:              ()        => ipcRenderer.invoke('ui-sync-get'),
   uiSyncSet:              (patch)   => ipcRenderer.invoke('ui-sync-set', patch),
   uiSyncDismiss:          (character) => ipcRenderer.invoke('ui-sync-dismiss', character),
@@ -1791,7 +1796,9 @@ contextBridge.exposeInMainWorld('mimic', {
   // through this (and the deferred save queues the same edits), not the bundle.
   uiStudioWriteEdits:     (eqDir, edits, opts) => ipcRenderer.invoke('ui-studio-write-edits', eqDir, edits, opts),
   // Open the standalone UI Studio editor window from the dashboard's nav.
-  openUiStudio:           ()                 => ipcRenderer.invoke('open-ui-studio'),
+  // `goto` ({ character, eqDir, chat: true }) opens it on that character's chat routing (bring-in card, FB-125).
+  openUiStudio:           (goto)             => ipcRenderer.invoke('open-ui-studio', goto),
+  onUiStudioGoto:         (cb)               => ipcRenderer.on('ui-studio-goto', (_e, goto) => cb(goto)),
   // Bundled PvP rotation templates (Dirge Team 6™ etc.) — list by class,
   // load full content, and import = write a markdown summary alongside
   // the EQ folder so the user can build their hotkey pages by reference

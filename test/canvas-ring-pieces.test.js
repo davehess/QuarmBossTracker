@@ -329,7 +329,7 @@ describe('the canvas paints and edits a Ring arc', () => {
       'var window = { WpParts: WpParts }; var _layout = { panels: panels }; var _els = els; var _edit = true; var _one = null; function isEd(id) { return _edit || (_one != null && _one === id); }\n'
       + 'function partDef(p) { return WpParts.byId[p.part] || null; } function viewFor() { return null; }\n'
       + 'function sampleFor(d, now) { return typeof d.sample === "function" ? d.sample(now) : d.sample; }\n'
-      + 'function setBody(e, html) { e.html = html; }\n'
+      + 'function setBody(e, html) { e.html = html; } function isMin() { return false; } function minMode(a, m) { return m; }\n'
       + slice('  function paintParts(onlySrc) {') + '\npaintParts();');
     run(W, panels, els);
     expect(els.q1.html).toContain('viewBox="' + W.segBox(arcOf('me.hp')).join(' ') + '"');
