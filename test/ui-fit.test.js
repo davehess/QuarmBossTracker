@@ -123,12 +123,14 @@ describe('both places that fit a layout use this one rule', () => {
     expect(plan).toMatch(/const uiFit = require\('\.\/uiFit'\);/);
     expect(plan).toMatch(/uiFit\.fitRect\(\{ x: from\.x, y: from\.y, w, h \}, from\.res, tgt, \{ resize: uiFit\.isChatSection\(s\.name\)/);
     // ...except a backup made on THIS computer, which is put back as it was (its block for this screen size is kept)
-    expect(plan).toMatch(/const fitOpts = \(backupFiles, skinSizes, target, sameMachine\) =>\s*\(\{ source: sameMachine && target && target\.w > 0 && target\.h > 0 \? target : videoModeOf\(backupFiles\), skinSizes \}\);/);
+    // (the size the backup was PLAYED at is always passed: a window with no place here is still fitted from it)
+    expect(plan).toMatch(/const fitOpts = \(backupFiles, skinSizes, target, sameMachine\) =>\s*\(\{ source: videoModeOf\(backupFiles\), keep: !!sameMachine, skinSizes \}\);/);
+    expect(plan).toMatch(/let from = \(keep && had\) \? at\(tgt\) : \(!sameScreen \? at\(main\) : null\);/);
     expect(plan).not.toMatch(/x \* tw \/ rw/);
     // main hands the skin's window sizes, and whether the backup is this PC's own, to all three calls
     expect(main.match(/skinSizes: _uiSkinSizes\(entry\.eqDir\), sameMachine: !!entry\.sameMachine|\{ knownChars, target, skinSizes, sameMachine \}|uiRestorePlan\.fitOpts\(snap\.files, skinSizes, target, sameMachine\)/g)).toHaveLength(3);
     expect(main).toMatch(/if \(snap\.local === true\) return true;/);
-    expect(main).toMatch(/snap\.machine_name === me/);
+    expect(main).toMatch(/snap\.machine_name\.toLowerCase\(\) === me\.toLowerCase\(\)/);
   });
 
   it('UI Studio warns about windows off the screen and can bring only those back', () => {
@@ -159,8 +161,12 @@ describe('both places that fit a layout use this one rule', () => {
     expect(studio).toMatch(/mount\(document\.getElementById\('bringCard'\), \{ all: true, fresh: true, onDone: _reloadAfterBringIn \}\)/);
     expect(studio).toMatch(/function _reloadAfterBringIn\(ok, rows\)\{\s*if \(!STATE\.character \|\| !STATE\.eqDir\) return;/);
     // only for the character on the canvas, and never over moves that are not saved
-    expect(studio).toMatch(/r\.kind === 'done' && String\(r\.character\)\.toLowerCase\(\) === me && r\.files && r\.files\.length/);
-    expect(studio).toMatch(/if \(!wrote\) return;\s*if \(STATE\.windows\.some\(_windowChanged\)\) \{[^}]*return;\s*\}\s*loadAndRescale\(true\)/);
+    expect(studio).toMatch(/var mine = !done \|\| done\.some\(function\(r\)\{ return String\(r\.character\)\.toLowerCase\(\) === me; \}\);/);
+    // ...or when it wrote, for another character, a file loaded here (the shared files hold Zeal's bars)
+    expect(studio).toMatch(/var wrote = mine \|\| done\.some\(function\(r\)\{\s*return r\.files\.some\(function\(f\)\{ return f && loaded\[String\(f\.name\)\.toLowerCase\(\)\]; \}\);/);
+    expect(studio).toMatch(/if \(!wrote\) return;\s*if \(STATE\.windows\.some\(_windowChanged\)\) \{/);
+    // the places this canvas only guessed are not written over what the bring-in just placed
+    expect(studio).toMatch(/if \(mine\) for \(var bi = 0; bi < STATE\.windows\.length; bi\+\+\) STATE\.windows\[bi\]\.noBlock = false;/);
     expect(stripJs(readSource(path.join(ROOT, 'apps', 'mimic', 'bring-setup.js')))).toMatch(/el\.__wpbsDone\(ok, rows\)/);
   });
 

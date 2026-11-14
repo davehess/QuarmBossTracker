@@ -125,6 +125,9 @@ describe('main.js wiring', () => {
     expect(h).toMatch(/const halves = \[parts\.filter\(k => !_uiNeedsEqClosed\(\[k\]\)\), parts\.filter\(k => _uiNeedsEqClosed\(\[k\]\)\)\]/);
     expect(h).toMatch(/const busy = await _uiEqBusyFor\(character, g, eqDir\);/);
     expect(h).toMatch(/queuedParts: queued/);
+    // a half that waits carries "made on this computer" with it, so it is not re-fitted when it lands
+    expect(h).toMatch(/_queueUiRestore\(\{[^}]*target, sameMachine \}\)/);
+    expect(h).toMatch(/_uiWriteRestore\(\{[^}]*target, sameMachine \}\)/);
     const q = stripJs(sliceBlock(main, 'function _queueUiRestore(entry) {', '\n}\n'));
     expect(q).toMatch(/_uiNeedsEqClosed\(e\.parts\) === shared/);
   });

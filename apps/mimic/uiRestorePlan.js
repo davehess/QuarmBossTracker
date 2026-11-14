@@ -141,7 +141,16 @@ function classify(files, character, opts = {}) {
       // Key bindings are brought as a whole SECTION, never merged key by key: a merge keeps this PC's binding for
       // every key the other PC left unbound, so one key ends up doing two things (the guild lead, 2026-11-14: "all
       // of the keybinds are messed up").
-      res.keybinds.push({ file, mode: 'sections', keepAbsent: true, test: (n) => /^KeyMaps$/i.test(n) });
+      // The tick means "the keys this character plays with". On a backup whose PC keeps keys per character
+      // (its own switch says so) those are [KeyMaps_<Char>], and its [KeyMaps] is a set no character there reads.
+      // When THIS PC shares one set, the game here reads [KeyMaps], so the character's own section is written as
+      // [KeyMaps]. Bringing the backup's [KeyMaps] instead gave the character keys that were never its own (the
+      // switch itself is no longer copied, so its own section stays unread here). Review, 2026-11-14.
+      const sharedKeys = (n) => /^KeyMaps$/i.test(n);
+      if (c && perCharFlag(files) === true && !(opts && opts.localPerCharKeys)
+          && parseSections(files[file]).some((s) => lc(s.name) === 'keymaps_' + c)) {
+        res.keybinds.push({ file, mode: 'sections', keepAbsent: true, test: sharedKeys, from: 'KeyMaps_' + String(character).trim(), as: 'KeyMaps' });
+      } else res.keybinds.push({ file, mode: 'sections', keepAbsent: true, test: sharedKeys });
       // Zeal's "per character keybinds" option ([Zeal] PerCharKeybinds in zeal.ini) keeps a character's bindings
       // in [KeyMaps_<Char>] (Zeal binds.cpp update_ini_section_name). They are the character's own, so they come
       // with the character whatever the shared Key bindings tick says. Two cases, both seen in real files:
@@ -234,6 +243,7 @@ function fitLayout(text, targetW, targetH, opts) {
     ? { w: Math.round(opts.source.w), h: Math.round(opts.source.h) } : null;
   const hasBlock = (r) => !!r && secs.some((s) => keyMap(s).has('xpos' + r.w + 'x' + r.h));
   const main = hasBlock(asked) ? asked : mainRes(secs, { w: tw, h: th });
+  const keep = !!(opts && opts.keep);
   const sourceRes = main ? main.w + 'x' + main.h : null;
   if (!(tw > 0 && th > 0)) return { text: src, added: 0, clamped: 0, refit: 0, resized: 0, sourceRes };
 
@@ -256,7 +266,9 @@ function fitLayout(text, targetW, targetH, opts) {
     // Where the window is read from: the block the backup was played at; else, on a backup played on this screen
     // size (or one with no block for this window at its own size), this screen's block; else any block; else the
     // old bare XPos/YPos, whose screen size is not known.
-    let from = !sameScreen ? at(main) : null;
+    // opts.keep (a backup made on this computer): a window that has a place at this screen size keeps it. A window
+    // with none is fitted from the size the backup was played at, like any other backup.
+    let from = (keep && had) ? at(tgt) : (!sameScreen ? at(main) : null);
     if (!from && had) from = at(tgt);
     if (!from && main) from = at(main);
     if (!from && m.has('xpos') && m.has('ypos')) from = { x: parseInt(m.get('xpos'), 10), y: parseInt(m.get('ypos'), 10), res: null };
@@ -305,10 +317,12 @@ function videoModeOf(files) {
   const m = keyMap(vm), w = posInt(m.get('width')), h = posInt(m.get('height'));
   return w && h ? { w, h } : null;
 }
-// A backup made on THIS computer is put back as it was (sameMachine): its block for this screen size is kept, even
-// when the game ran at another size the day the backup was made. "How it looks on the other PC" has no meaning there.
+// A backup made on THIS computer is put back as it was (sameMachine -> keep): a window that has a place at this
+// screen size keeps it, even when the game ran at another size the day the backup was made. The size the backup was
+// PLAYED at is still passed (source): a window with no place at this size is fitted from that one. Passing the
+// target as the source instead lost it, and such windows were fitted from whichever block came first in the file.
 const fitOpts = (backupFiles, skinSizes, target, sameMachine) =>
-  ({ source: sameMachine && target && target.w > 0 && target.h > 0 ? target : videoModeOf(backupFiles), skinSizes });
+  ({ source: videoModeOf(backupFiles), keep: !!sameMachine, skinSizes });
 
 const prep = (partKey, text, target, fit) =>
   (partKey === 'layout' && target && target.w > 0 && target.h > 0) ? fitLayout(text, target.w, target.h, fit).text : text;

@@ -308,6 +308,27 @@ describe('buildRestore', () => {
       expect(r2.writes['eqclient.ini']).not.toContain('SHARED');
     });
 
+    // Review of the release, 2026-11-14. The other direction: the backup's PC keeps keys per character, this PC
+    // shares one set. With the switch no longer copied, the game here reads [KeyMaps], so the tick must bring the
+    // character's own keys there, not the other PC's [KeyMaps] that no character reads.
+    it('a per-character backup brought to a PC that shares keys: the tick brings the character\'s OWN keys as the shared set', () => {
+      const bk = { ...PER, 'eqclient.ini': '[KeyMaps]\r\nKEYMAP_FORWARD=UNREAD\r\n[KeyMaps_Aldenmar]\r\nKEYMAP_FORWARD=e\r\nKEYMAP_DUCK=x\r\n' };
+      const lo = { 'zeal.ini': '[Zeal]\r\nPerCharKeybinds=FALSE\r\n', 'eqclient.ini': '[KeyMaps]\r\nKEYMAP_FORWARD=UP\r\nMINE=1\r\n' };
+      const r = buildRestore({ backupFiles: bk, localFiles: lo, character: C, parts: ['keybinds', 'zealchar', 'zeal'] });
+      expect(r.writes['eqclient.ini']).toContain('[KeyMaps]\r\nKEYMAP_FORWARD=e\r\nKEYMAP_DUCK=x\r\n');
+      expect(r.writes['eqclient.ini']).not.toMatch(/UNREAD|MINE=1/);
+      expect(r.writes['zeal.ini']).toBeUndefined();                 // the switch is not copied: this PC keeps sharing keys
+      // without the tick the shared set is left alone
+      const r2 = buildRestore({ backupFiles: bk, localFiles: lo, character: C, parts: ['zealchar'] });
+      expect(r2.writes['eqclient.ini']).toContain('[KeyMaps]\r\nKEYMAP_FORWARD=UP\r\nMINE=1\r\n');
+      // both PCs per character: the shared set comes as it is (no character reads it on either)
+      const r3 = buildRestore({ backupFiles: bk, localFiles: local(), character: C, parts: ['keybinds'] });
+      expect(r3.writes['eqclient.ini']).toContain('[KeyMaps]\r\nKEYMAP_FORWARD=UNREAD\r\n');
+      // a backup that cannot say which way its PC keeps keys (no zeal.ini) is not second-guessed
+      const r4 = buildRestore({ backupFiles: { 'eqclient.ini': bk['eqclient.ini'] }, localFiles: lo, character: C, parts: ['keybinds'] });
+      expect(r4.writes['eqclient.ini']).toContain('[KeyMaps]\r\nKEYMAP_FORWARD=UNREAD\r\n');
+    });
+
     it('bringing shared Zeal settings never flips this PC\'s per-character switch', () => {
       const bk = { 'zeal.ini': '[Zeal]\r\nPerCharKeybinds=FALSE\r\nCamera=2\r\n' };
       const lo = { 'zeal.ini': '[Zeal]\r\nPerCharKeybinds=TRUE\r\nCamera=1\r\n' };
@@ -613,6 +634,21 @@ describe('a layout that is already this screen\'s is not re-fitted', () => {
     expect(r.writes[NAME]).toBe(ui);
     expect(compare('layout', bk, { ...lo, [NAME]: ui }, C, { target, sameMachine: true }).same).toBe(true);
     expect(compare('layout', bk, { ...lo, [NAME]: ui }, C, { target }).same).toBe(false);
+  });
+
+  // Review of the release, 2026-11-14: "same computer" was first built as "read everything at this screen's size",
+  // which threw away the size the backup was played at. A window with no place at this size was then fitted from
+  // whichever block came first in its section.
+  it('a backup made on this computer: a window with NO place at this size is fitted from the size it was played at', () => {
+    // BuffWindow: an old 1280x1024 place listed first, the played-at 2560x1440 place, none for 1920x1080
+    const ui2 = ui + '[BuffWindow]\r\nXPos1280x1024=0\r\nYPos1280x1024=0\r\nXPos2560x1440=2400\r\nYPos2560x1440=1300\r\nWidth=100\r\nHeight=100\r\n';
+    const r = buildRestore({ backupFiles: { ...bk, [NAME]: ui2 }, localFiles: lo, character: C, parts: ['layout'], target, sameMachine: true });
+    const secs = parseSections(r.writes[NAME]);
+    const val = (sec, key) => secs.find((s) => s.name === sec).keys.find((k) => k.key === key).value;
+    // the window that HAS a place here keeps it, size and all
+    expect([val('MainChat', 'XPos1920x1080'), val('MainChat', 'YPos1920x1080'), val('MainChat', 'Width')]).toEqual(['100', '200', '400']);
+    // the one that has none: docked bottom right at 2560x1440, so bottom right here (not 0,0 from the 1280x1024 block)
+    expect([val('BuffWindow', 'XPos1920x1080'), val('BuffWindow', 'YPos1920x1080')]).toEqual(['1776', '951']);
   });
 
   it('with no screen size recorded for the backup, a tie between blocks goes to this screen\'s block', () => {
