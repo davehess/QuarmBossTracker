@@ -3716,8 +3716,15 @@ resolution, drag/snap editor, writes back with `.bak` or defers until logout
 Nothing under it reads the database (`test/lab-drafts.test.js`). A draft's recommended version is staged on the real
 page behind a query; the audit and the backlog are in `docs/DESIGN-site-refinement.md`.
 **Fitting a layout to another screen size** (stable in Mimic 3.0.10; beta `ad460c48` + review fixes `8a705746`,
-2026-11-14, FB-132, DECISIONS §580, §581; `_uiSameMachine` keeps this PC's own backups unfitted, `perCharFlag` reads
-the backup's own per-character-keys switch): ONE rule,
+2026-11-14, FB-132, DECISIONS §580, §581; review fixes on beta in Mimic 3.1.0, `2aec33aa`, §583, §584.
+`_uiSameMachine` recognises this PC's own backups, local or cloud (once the bot's download returns `machine_name`,
+held until 3.1.0 is stable), and `fitOpts(…, sameMachine, sourceRes)` passes `keep`: a window with a place at this
+size is left exactly as it is, one without is fitted from the played-at block. `fitZealBars` fits zeal.ini's
+[RaidBars]/[AssistBar] pixels. Keys: `perCharFlag` reads the backup's own per-character-keys switch; onto a
+shared-keys PC the card's "Give each character its own keys on this PC" runs `splitKeysWrites` (pseudo-part
+`keysplit`, queued first) and then per-character keys, or a picker writes one character's `[KeyMaps_<Char>]` as
+`[KeyMaps]` (`keysDecision` in bring-setup.js). UI Studio reloads on `ui-studio-restored` from `_uiWriteRestore`):
+ONE rule,
 `apps/mimic/uiFit.js` (`fitRect`, `fitAxis`, `isOffScreen`, `isChatSection`), used by UI Studio's Load + Rescale
 (`_renderLoadedBundle`, as a `<script>`) and by the bring-in (`uiRestorePlan.fitLayout`, by `require`). A window keeps
 its place in the free space, MainChat / Chat N are resized by the screen ratio, every other window keeps its size, a
