@@ -20,7 +20,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer } from '@/lib/supabase-server';
 import { fetchUserGuilds, fetchManagedGuildIds } from '@/lib/discord';
 import { MANAGE_COOKIE, MANAGE_TTL_MS, signManageProof } from '@/lib/hubManage';
-import { isLockedOut } from '@/lib/lockout';
+import { discordIdOf, isLockedOut, verifiedDiscord } from '@/lib/lockout';
 import { GUILD_TAG } from './guild';   // relative for the same reason
 import { recordTermsAcceptance } from './termsAcceptance';   // relative on purpose: the tests that run this route mock every "@/" import by name
 import { FLOW_GUILDS, FLOW_MANAGE, openNext, profileOf, splitMatchesByOpenJoin, type RegisteredGuild } from '@/lib/hubRegistry';
@@ -38,14 +38,13 @@ export async function openSignInCallback(req: NextRequest, origin: string, next:
   if (error || !data.session) return fail(origin, error?.message || 'session_failed');
 
   const user = data.session.user;
-  const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
-  const discordId = String(meta.provider_id ?? meta.sub ?? '');
+  const discordId = discordIdOf(user) ?? '';
   if (!discordId) {
     await supabase.auth.signOut();
     return fail(origin, 'no_discord_id');
   }
 
-  if (await isLockedOut({ id: user.id, user_metadata: { provider_id: discordId } })) {
+  if (await isLockedOut(verifiedDiscord(user.id, discordId))) {
     await supabase.auth.signOut();
     return NextResponse.redirect(`${origin}/auth/paused`);
   }

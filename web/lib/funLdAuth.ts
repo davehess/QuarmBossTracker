@@ -12,7 +12,7 @@ import { mayMarkQuit, viewerDiscordId } from './funLd';
 import { GUILD_TAG } from './guild';
 
 export async function viewerMayMarkQuit(
-  user: { id: string; app_metadata?: unknown; user_metadata?: unknown } | null | undefined,
+  user: { id: string; app_metadata?: unknown; user_metadata?: unknown; identities?: unknown } | null | undefined,
 ): Promise<boolean> {
   if (!user) return false;
   try {
