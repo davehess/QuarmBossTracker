@@ -252,6 +252,7 @@ function classify(files, character, opts = {}) {
 // ---- fitLayout -------------------------------------------------------------------------------
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const PARKED = 10000;   // a coordinate this far out (the game writes -32000) is a window parked on purpose, not lost
 const posInt = (v) => { const n = parseInt(v, 10); return Number.isFinite(n) && n > 0 ? n : 0; };
 
 // A backup's window layout, fitted to this PC's game screen (targetW x targetH). The rule is uiFit.js: a window
@@ -296,7 +297,17 @@ function fitLayout(text, targetW, targetH, opts) {
     // position and size, even one the game parked past an edge on purpose. And when the backup was played at this
     // very size, a window with no place here never had one: the game gives it its default, so none is invented
     // from a stale block of another size (review 2026-11-14: 13-34 windows "moved" on an unchanged backup).
-    if (keep && (had || sameScreen)) continue;
+    // The one exception: a place at this size where NO part of the window is on the screen is brought back with the
+    // usual rule, as it would be on any other PC. A window partly tucked past an edge is the player's own choice and
+    // stays exactly where it was (real files have chat windows 28-73 px past the left edge on purpose). The game's own
+    // parked windows (-32000) are not lost either.
+    let lost = false;
+    if (keep && (had || sameScreen)) {
+      const bx = had ? parseInt(m.get(lc(tx)), 10) : NaN, by = had ? parseInt(m.get(lc(ty)), 10) : NaN;
+      lost = Number.isFinite(bx) && Number.isFinite(by) && Math.abs(bx) < PARKED && Math.abs(by) < PARKED
+        && (bx + w <= 0 || by + h <= 0 || bx >= tgt.w || by >= tgt.h);
+      if (!lost) continue;
+    }
     const at =(r) => (r && m.has('xpos' + r.w + 'x' + r.h) && m.has('ypos' + r.w + 'x' + r.h))
       ? { x: parseInt(m.get('xpos' + r.w + 'x' + r.h), 10), y: parseInt(m.get('ypos' + r.w + 'x' + r.h), 10), res: r } : null;
 
@@ -305,7 +316,7 @@ function fitLayout(text, targetW, targetH, opts) {
     // old bare XPos/YPos, whose screen size is not known.
     // opts.keep (a backup made on this computer): a window that has a place at this screen size keeps it. A window
     // with none is fitted from the size the backup was played at, like any other backup.
-    let from = !sameScreen ? at(main) : null;
+    let from = lost ? at(tgt) : (!sameScreen ? at(main) : null);
     if (!from && had) from = at(tgt);
     if (!from && main) from = at(main);
     if (!from && m.has('xpos') && m.has('ypos')) from = { x: parseInt(m.get('xpos'), 10), y: parseInt(m.get('ypos'), 10), res: null };
@@ -386,12 +397,14 @@ function fitZealBars(text, src, tgt) {
       w = Math.round(fs * 11); h = Math.round(fs * 2) + 4;
     }
     // A side that runs to the screen edge (0) has no size to keep: its corner just scales.
-    const x = w ? uiFit.fitAxis(L, w, sw, tw, w) : Math.round(L * tw / sw);
-    const y = h ? uiFit.fitAxis(T, h, sh, th, h) : Math.round(T * th / sh);
+    // A bar wider or taller than the new screen is cut down to it, so Left >= 0 and Right <= the screen's width.
+    const nw = Math.min(w, tw), nh = Math.min(h, th);
+    const x = w ? uiFit.fitAxis(L, w, sw, tw, nw) : Math.round(L * tw / sw);
+    const y = h ? uiFit.fitAxis(T, h, sh, th, nh) : Math.round(T * th / sh);
     edits.push({ section: s.name, key: 'Left', value: String(x) }, { section: s.name, key: 'Top', value: String(y) });
     if (name === 'raidbars') {
-      if (R > L) edits.push({ section: s.name, key: 'Right', value: String(x + w) });
-      if (B > T) edits.push({ section: s.name, key: 'Bottom', value: String(y + h) });
+      if (R > L) edits.push({ section: s.name, key: 'Right', value: String(x + nw) });
+      if (B > T) edits.push({ section: s.name, key: 'Bottom', value: String(y + nh) });
     }
   }
   return edits.length ? applyIniKeyEdits(text, edits).text : text;
@@ -470,13 +483,16 @@ function compare(partKey, backupFiles, localFiles, character, opts = {}) {
     // What the shared step writes: a section per character that has none yet (each a copy of this PC's keys), then the switch.
     const w = splitKeysWrites(localFiles, opts.splitChars);
     const en = findName(localFiles, 'eqclient.ini');
-    const before = new Set(parseSections(en ? localFiles[en] : '').map((x) => lc(x.name)));
+    const sig = (text) => new Map(parseSections(text).map((x) => [lc(x.name), x.keys.map((k) => k.key + '=' + k.value).join('\n')]));
+    const before = sig(en ? localFiles[en] : '');
     const ek = en || 'eqclient.ini';
-    const added = w[ek] ? parseSections(w[ek]).filter((x) => !before.has(lc(x.name))).length : 0;
+    let added = 0, stale = 0;
+    if (w[ek]) for (const [n, s] of sig(w[ek])) { if (!before.has(n)) added++; else if (before.get(n) !== s) stale++; }
     const sw = Object.keys(w).some((n) => lc(n) === 'zeal.ini');
-    return { inBackup: added + (sw ? 1 : 0), same: !added && !sw, added, changed: sw ? 1 : 0, removed: 0,
-      summary: !added && !sw ? 'already per character'
-        : (added ? plural(added, ['character keeps', 'characters keep']) + ' the keys used today in a section of their own' : '') + (added && sw ? '; ' : '') + (sw ? "Zeal's per-character keys turned on" : '') };
+    const done = added + stale;
+    return { inBackup: done + (sw ? 1 : 0), same: !done && !sw, added, changed: stale + (sw ? 1 : 0), removed: 0,
+      summary: !done && !sw ? 'already per character'
+        : (done ? plural(done, ['character keeps', 'characters keep']) + ' the keys used today in a section of their own' : '') + (done && sw ? '; ' : '') + (sw ? "Zeal's per-character keys turned on" : '') };
   }
   const entries = classify(backupFiles, character, { ...opts, localPerCharKeys: perCharKeys(localFiles) })[partKey] || [];
   const r = { inBackup: 0, same: false, added: 0, changed: 0, removed: 0, summary: '' };
@@ -575,20 +591,27 @@ function mergeKeys(localText, backupText, entry) {
 const NAME_OK = /^[\w'-]+$/;
 function splitKeysWrites(localFiles, names) {
   const out = {};
+  // No zeal.ini on this PC (Zeal is not installed): plain EverQuest never reads per-character keys, so there is
+  // nothing to switch on and nothing to write (review of 3.1.0, M2).
+  if (perCharFlag(localFiles) === null) return out;
   const en = findName(localFiles, 'eqclient.ini');
   const etext = en && typeof localFiles[en] === 'string' ? localFiles[en] : '';
   const shared = sharedKeys(etext);
-  const have = new Set(parseSections(etext).map((x) => lc(x.name)));
   const eol = etext.includes('\r\n') || !etext.includes('\n') ? '\r\n' : '\n';
   const want = [];
   const seen = new Set();
+  // A section left by an earlier try of per-character keys (Zeal keeps it after the switch is turned off) is unread
+  // while this PC shares one set, so it is overwritten with today's keys too: turning the switch on must not hand the
+  // character a forgotten old set (review of 3.1.0, H1). Sections of names not in the list are left alone, and a PC
+  // whose switch is already on reads its sections now, so nothing is rewritten there.
+  const live = perCharFlag(localFiles) === true;
   for (const n of Array.isArray(names) ? names : []) {
     const name = String(n || '').trim();
-    if (!NAME_OK.test(name) || seen.has(lc(name)) || have.has('keymaps_' + lc(name))) continue;
+    if (!NAME_OK.test(name) || seen.has(lc(name))) continue;
     seen.add(lc(name));
     want.push(name);
   }
-  if (shared && want.length) {
+  if (shared && want.length && !live) {
     const add = want.map((n) => '[KeyMaps_' + n + ']' + eol + shared.keys.map((k) => k.key + '=' + k.value + eol).join('')).join('');
     const text = replaceSections(etext, add, (n) => /^KeyMaps_/i.test(n), true);
     if (text !== etext) out[en || 'eqclient.ini'] = text;
