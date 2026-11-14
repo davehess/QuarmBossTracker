@@ -106,6 +106,20 @@ describe('main.js wiring', () => {
     expect(busy.indexOf('_uiCharActiveInZeal')).toBeLessThan(busy.indexOf('_uiNeedsEqClosed'));
     expect(busy).toMatch(/_uiCharLogFresh\(eqDir, cl\)/);          // in game with the pipe down still counts as camp
   });
+  it('says what the queue will really wait for: a shared-file half waits for EverQuest to close even for the logged-in character', async () => {
+    const busyFor = (live, up, fresh) => evalBlock(
+      `const _uiCharActiveInZeal = () => ${live}; const _isEqRunning = async () => ${up}; const _uiCharLogFresh = () => ${fresh};\n`
+      + sliceBlock(main, 'function _uiNeedsEqClosed(parts) {', '\n}\n')
+      + sliceBlock(main, 'async function _uiEqBusyFor(character, parts, eqDir) {', '\n}\n'), ['_uiEqBusyFor'])._uiEqBusyFor;
+    expect(await busyFor(true, true, false)('Aldenmar', ['layout', 'hotkeys'], 'd')).toBe('camp');
+    expect(await busyFor(true, true, false)('Aldenmar', ['zealchar'], 'd')).toBe('close');
+    expect(await busyFor(true, true, false)('Aldenmar', ['keybinds', 'zeal'], 'd')).toBe('close');
+    expect(await busyFor(true, true, false)('Aldenmar', undefined, 'd')).toBe('camp');        // the compare card: the character as a whole
+    expect(await busyFor(false, true, false)('Aldenmar', ['keybinds'], 'd')).toBe('close');
+    expect(await busyFor(false, true, true)('Aldenmar', ['layout'], 'd')).toBe('camp');       // in game with the pipe down
+    expect(await busyFor(false, true, false)('Aldenmar', ['layout'], 'd')).toBe(null);        // someone else's client is running
+    expect(await busyFor(false, false, true)('Aldenmar', ['keybinds'], 'd')).toBe(null);
+  });
   it('a restore runs in two halves: own files now or at camp, shared-file parts when EverQuest closes, and the queue keeps both', () => {
     const h = stripJs(sliceBlock(main, "ipcMain.handle('ui-restore-parts', async (_e, params) => {", '\n});\n'));
     expect(h).toMatch(/const halves = \[parts\.filter\(k => !_uiNeedsEqClosed\(\[k\]\)\), parts\.filter\(k => _uiNeedsEqClosed\(\[k\]\)\)\]/);

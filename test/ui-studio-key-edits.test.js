@@ -436,7 +436,8 @@ describe('wiring', () => {
   it('Save and the deferred queue send edits, not file texts', () => {
     const code = strip(studio);
     expect(code).toContain('window.mimic.uiStudioWriteEdits(STATE.eqDir, built.edits');
-    expect(code).toContain('edits: built.edits, tgtSuffix: built.tgtSuffix');
+    expect(code).toContain('var edits = built.edits;');
+    expect(code).toContain('edits: edits, tgtSuffix: built.tgtSuffix');
     expect(code).not.toMatch(/bundle: newBundle/);
     const saveHandler = sliceBlock(code, "document.getElementById('saveBtn')", "document.getElementById('deferCancel')");
     expect(saveHandler).not.toMatch(/uiStudioWriteBundle|newBundle/);
