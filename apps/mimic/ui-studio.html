@@ -457,11 +457,20 @@
   function _reloadAfterBringIn(ok, rows){
     if (!STATE.character || !STATE.eqDir) return;
     var me = String(STATE.character).toLowerCase();
-    var wrote = !Array.isArray(rows) || rows.some(function(r){
-      return r && r.kind === 'done' && String(r.character).toLowerCase() === me && r.files && r.files.length;
+    var done = Array.isArray(rows) ? rows.filter(function(r){ return r && r.kind === 'done' && r.files && r.files.length; }) : null;
+    var mine = !done || done.some(function(r){ return String(r.character).toLowerCase() === me; });
+    // It also changes this canvas when it wrote, for ANOTHER character, a file that is loaded here: the shared
+    // zeal.ini / eqclient.ini hold Zeal's bars, which the canvas draws.
+    var loaded = {};
+    Object.keys(STATE.bundle || {}).forEach(function(n){ loaded[String(n).toLowerCase()] = 1; });
+    var wrote = mine || done.some(function(r){
+      return r.files.some(function(f){ return f && loaded[String(f.name).toLowerCase()]; });
     });
     if (!wrote) return;
     if (STATE.windows.some(_windowChanged)) {
+      // The bring-in gave every window of this character a place at this screen size, so the places this canvas
+      // only guessed must not be written by the next Save; the moves made here still are, as the line below says.
+      if (mine) for (var bi = 0; bi < STATE.windows.length; bi++) STATE.windows[bi].noBlock = false;
       setStatus('the bring-in changed ' + STATE.character + '\'s files, and this canvas has moves that are not saved · ' +
         'Save would write them over what was brought in · press Load to see the files as they are now', 'err');
       return;

@@ -14173,7 +14173,8 @@ function _uiSameMachine(snap) {
   if (!snap) return false;
   if (snap.local === true) return true;
   const me = _thisMachine();
-  return !!me && typeof snap.machine_name === 'string' && snap.machine_name === me;
+  // Windows computer names are not case-sensitive (uiSync.newerElsewhere compares them the same way).
+  return !!me && typeof snap.machine_name === 'string' && snap.machine_name.toLowerCase() === me.toLowerCase();
 }
 
 // ── Overlay positions as a part of a backup (the guild lead, 2026-11-11) ─────────────────────────────────────
