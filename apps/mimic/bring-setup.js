@@ -203,7 +203,8 @@
       btn.disabled = false;
       lastRun = { verb: all ? 'Restored' : 'Brought in', rows: rows, copies: copies, notes: notes };
       // Re-read the account list (a brought-in character is now on this PC) but keep every tick and backup choice.
-      load(true).then(function () { render(el, all); if (ok && el.__wpbsDone) el.__wpbsDone(ok); });
+      // onDone also gets the result rows, so the caller can tell which characters had files written just now.
+      load(true).then(function () { render(el, all); if (ok && el.__wpbsDone) el.__wpbsDone(ok, rows); });
     }
     next(0);
   }

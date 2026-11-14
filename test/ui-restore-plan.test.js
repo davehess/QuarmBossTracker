@@ -287,6 +287,36 @@ describe('buildRestore', () => {
       expect(r.writes['eqclient.ini']).toContain('[KeyMaps]\r\nKEYMAP_FORWARD=UP\r\nMINE=1\r\n');   // the shared set stays with the tick off
     });
 
+    // Which section holds the character's live keys in a backup is decided by the BACKUP's own switch.
+    it('a backup whose PC shares keys: an old [KeyMaps_<Char>] left in its file does not win over its live [KeyMaps]', () => {
+      const bk = { 'zeal.ini': '[Zeal]\r\nPerCharKeybinds=FALSE\r\n',
+        'eqclient.ini': '[KeyMaps]\r\nKEYMAP_FORWARD=w\r\nKEYMAP_DUCK=x\r\n[KeyMaps_Aldenmar]\r\nKEYMAP_FORWARD=OLD\r\n' };
+      const r = buildRestore({ backupFiles: bk, localFiles: local(), character: C, parts: ['zealchar'] });
+      expect(r.writes['eqclient.ini']).toContain('[KeyMaps_Aldenmar]\r\nKEYMAP_FORWARD=w\r\nKEYMAP_DUCK=x\r\n[KeyMaps_Brackwyn]');
+      expect(r.writes['eqclient.ini']).not.toContain('OLD');
+    });
+
+    it('a backup whose PC is per character: its [KeyMaps] is nobody\'s keys and is never written as the character\'s', () => {
+      // this PC's own backup, taken before the character had a section of its own
+      const bk = { ...PER, 'eqclient.ini': '[KeyMaps]\r\nKEYMAP_FORWARD=SHARED\r\n' };
+      const r = buildRestore({ backupFiles: bk, localFiles: local(), character: C, parts: ['zealchar'] });
+      expect(r.writes['eqclient.ini']).toBeUndefined();
+      // and with a section of its own, that section comes as it is
+      const bk2 = { ...PER, 'eqclient.ini': '[KeyMaps]\r\nKEYMAP_FORWARD=SHARED\r\n[KeyMaps_Aldenmar]\r\nKEYMAP_FORWARD=e\r\n' };
+      const r2 = buildRestore({ backupFiles: bk2, localFiles: local(), character: C, parts: ['zealchar'] });
+      expect(r2.writes['eqclient.ini']).toContain('[KeyMaps_Aldenmar]\r\nKEYMAP_FORWARD=e\r\n[KeyMaps_Brackwyn]');
+      expect(r2.writes['eqclient.ini']).not.toContain('SHARED');
+    });
+
+    it('bringing shared Zeal settings never flips this PC\'s per-character switch', () => {
+      const bk = { 'zeal.ini': '[Zeal]\r\nPerCharKeybinds=FALSE\r\nCamera=2\r\n' };
+      const lo = { 'zeal.ini': '[Zeal]\r\nPerCharKeybinds=TRUE\r\nCamera=1\r\n' };
+      const r = buildRestore({ backupFiles: bk, localFiles: lo, character: C, parts: ['zeal'] });
+      expect(r.writes['zeal.ini']).toBe('[Zeal]\r\nPerCharKeybinds=TRUE\r\nCamera=2\r\n');
+      const k = classify(bk, C).zeal.find((e) => e.file === 'zeal.ini').keyTest;
+      expect([k('PerCharKeybinds'), k('percharkeybinds'), k('Camera'), k('ServerPassword')]).toEqual([false, false, true, false]);
+    });
+
     it('with the shared Key bindings tick on, [KeyMaps] is replaced as well', () => {
       const r = buildRestore({ backupFiles: SHARED_BK, localFiles: local(), character: C, parts: ['keybinds', 'zealchar'] });
       expect(r.writes['eqclient.ini']).toContain('[KeyMaps]\r\nKEYMAP_FORWARD=w\r\nKEYMAP_DUCK=x\r\nKEYMAP_HOT1_2=NOKEY\r\n[KeyMaps_Aldenmar]\r\nKEYMAP_FORWARD=w\r\nKEYMAP_DUCK=x');
@@ -559,5 +589,36 @@ describe('windowRects', () => {
     const r = windowRects(fitted, 1920, 1080);
     expect(r.find(w => w.name === 'A').x).toBe(0);                // the 1920x1080 block, edited
     expect(windowRects(t, 1920, 1080).find(w => w.name === 'A').x).toBe(0.5);   // no such block: the file's own
+  });
+});
+
+// Review of the fitted bring-in (2026-11-14): two cases where "fit it from the other screen" is the wrong answer.
+describe('a layout that is already this screen\'s is not re-fitted', () => {
+  const NAME = 'UI_' + CHAR;
+  // The file holds a block for both screen sizes this PC has used. The backup was taken the day the game ran at
+  // 2560x1440; the game runs at 1920x1080 now.
+  const ui = '[MainChat]\r\nXPos2560x1440=2000\r\nYPos2560x1440=1200\r\nXPos1920x1080=100\r\nYPos1920x1080=200\r\nWidth=400\r\nHeight=200\r\n';
+  const bk = { [NAME]: ui, 'eqclient.ini': '[VideoMode]\r\nWidth=2560\r\nHeight=1440\r\n' };
+  const lo = { [NAME]: ui.replace('XPos1920x1080=100', 'XPos1920x1080=555'), 'eqclient.ini': '[VideoMode]\r\nWidth=1920\r\nHeight=1080\r\n' };
+  const target = { w: 1920, h: 1080 };
+
+  it('a backup from another PC: its block for this size is replaced by a fit of the size it was played at', () => {
+    const r = buildRestore({ backupFiles: bk, localFiles: lo, character: C, parts: ['layout'], target });
+    expect(r.writes[NAME]).not.toContain('XPos1920x1080=100\r\n');
+    expect(r.writes[NAME]).not.toContain('XPos1920x1080=555\r\n');
+  });
+
+  it('a backup made on this computer: its block for this size is put back as it was', () => {
+    const r = buildRestore({ backupFiles: bk, localFiles: lo, character: C, parts: ['layout'], target, sameMachine: true });
+    expect(r.writes[NAME]).toBe(ui);
+    expect(compare('layout', bk, { ...lo, [NAME]: ui }, C, { target, sameMachine: true }).same).toBe(true);
+    expect(compare('layout', bk, { ...lo, [NAME]: ui }, C, { target }).same).toBe(false);
+  });
+
+  it('with no screen size recorded for the backup, a tie between blocks goes to this screen\'s block', () => {
+    const r = fitLayout(ui, 1920, 1080, {});
+    expect(r.sourceRes).toBe('1920x1080');
+    expect(r.text).toBe(ui);
+    expect(fitLayout(ui, 2560, 1440, {}).sourceRes).toBe('2560x1440');
   });
 });

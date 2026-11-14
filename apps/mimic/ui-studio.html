@@ -452,8 +452,20 @@
   // A bring-in writes the character's files behind this window. Without a reload the canvas kept showing the files
   // as they were BEFORE it, and the next Save wrote those old places back over what had just been brought in.
   // Runs only when a bring-in actually ran (the card's onDone), so closing the card never discards edits made here.
-  function _reloadAfterBringIn(){
+  // And only when it wrote files for the character on this canvas (rows: the card's result lines); a bring-in for
+  // another character changes nothing here. Moves made here and not saved are kept, with a note, never thrown away.
+  function _reloadAfterBringIn(ok, rows){
     if (!STATE.character || !STATE.eqDir) return;
+    var me = String(STATE.character).toLowerCase();
+    var wrote = !Array.isArray(rows) || rows.some(function(r){
+      return r && r.kind === 'done' && String(r.character).toLowerCase() === me && r.files && r.files.length;
+    });
+    if (!wrote) return;
+    if (STATE.windows.some(_windowChanged)) {
+      setStatus('the bring-in changed ' + STATE.character + '\'s files, and this canvas has moves that are not saved · ' +
+        'Save would write them over what was brought in · press Load to see the files as they are now', 'err');
+      return;
+    }
     loadAndRescale(true).catch(function(e){ setStatus('could not re-read the files: ' + (e && e.message), 'err'); });
   }
 
@@ -1172,6 +1184,9 @@
   // A window that hangs off the Target screen. One whose size is only the stand-in counts when less than 80 px of
   // it could be on screen, so a small window near an edge is not called off-screen on a guess.
   function _isOffScreen(w){
+    // Windows the game never shows in play (the "Not in-game / popups" group) are left out: the game itself parks
+    // some of them just past the corner of the screen, and "bringing them back" would be moving the game's own parking.
+    if (w.category === 'offscreen') return false;
     var scr = { w: STATE.tgtW, h: STATE.tgtH };
     if (w.sizeKnown || w.zealBar) return UiFit.isOffScreen(w, scr);
     return w.x < -UiFit.TUCK || w.y < -UiFit.TUCK || w.x > scr.w - 80 || w.y > scr.h - 80;
@@ -1798,23 +1813,33 @@
   }
   window.addEventListener('resize', function(){ if (STATE.windows.length) renderStage(); });
 
-  // The banner counts EVERY window off the screen, hidden groups too: Save writes them all.
-  // A layout made for another screen. Files copied from another PC hold a full layout for THAT screen size and little
-  // or nothing for this one; the game then puts every window with no place wherever it likes (chat windows stacked
-  // bottom-centre). Shown when the file is being viewed as saved, some windows have no place for this screen size,
-  // and the file holds a fuller layout for another one. The button is Load + Rescale from that size.
-  function _fitCandidates(){
-    var tgt = STATE.tgtW + 'x' + STATE.tgtH;
-    if (!STATE.nativeLoad || STATE.fromCloud || STATE.srcSuffix !== tgt) return null;
+  // The off-screen banner counts every window off the screen, hidden groups too (Save writes them all), except the
+  // group the game never shows in play (_isOffScreen).
+  // How many of the game's own windows the file has no place for at the Target screen size. `many` is a fifth of
+  // them or more (and at least three): the file is a layout made for another screen, not one with a few windows
+  // that were simply never opened at this size.
+  function _noPlaceCount(){
     var missing = 0, total = 0;
     for (var i = 0; i < STATE.windows.length; i++) {
       if (STATE.windows[i].zealBar) continue;
       total++;
       if (STATE.windows[i].noBlock) missing++;
     }
+    return { missing: missing, total: total, many: missing >= Math.max(3, Math.ceil(total * 0.2)) };
+  }
+  // A layout made for another screen. Files copied from another PC hold a full layout for THAT screen size and little
+  // or nothing for this one; the game then puts every window with no place wherever it likes (chat windows stacked
+  // bottom-centre). Shown when the file is being viewed as saved, MANY windows have no place for this screen size,
+  // and the file holds a fuller layout for another one. The button is Load + Rescale from that size.
+  // Not shown for a few missing windows: a member who changed screen size and has played at the new one since
+  // has a layout in use here, and the button would lay the old screen's layout over it.
+  function _fitCandidates(){
+    var tgt = STATE.tgtW + 'x' + STATE.tgtH;
+    if (!STATE.nativeLoad || STATE.fromCloud || STATE.srcSuffix !== tgt) return null;
+    var np = _noPlaceCount(), missing = np.missing, total = np.total;
     var counts = STATE.blockCounts || {}, have = counts[tgt] || 0;
     var fuller = (STATE.otherBlocks || []).filter(function(k){ return counts[k] > have; });
-    if (!missing || !fuller.length) return null;
+    if (!np.many || !fuller.length) return null;
     // the fullest, and any other just as full (the game run one pixel narrower leaves both 2559x1440 and 2560x1440)
     var best = counts[fuller[0]];
     return { missing: missing, total: total, sizes: fuller.filter(function(k){ return counts[k] === best; }).slice(0, 3) };
@@ -1827,8 +1852,9 @@
     if (!c) return;
     var x = function(s){ return s.replace('x', '×'); };
     b.querySelector('.txt').textContent = '⚠ ' + c.missing + ' of ' + c.total + ' windows have no saved place for this ' +
-      STATE.tgtW + '×' + STATE.tgtH + ' screen: this layout was made for a ' + c.sizes.map(x).join(' or ') + ' screen. ' +
-      'The game puts a window with no place wherever it likes.' +
+      STATE.tgtW + '×' + STATE.tgtH + ' screen, and the file also holds a fuller layout for a ' + c.sizes.map(x).join(' or ') +
+      ' screen (files copied from another PC look like this). The game puts a window with no place wherever it likes. ' +
+      'Fitting replaces what you see here with that layout, fitted to this screen; nothing is written until you press Save.' +
       (c.sizes.length > 1 ? ' Pick the size the game ran at on the other PC; if it looks wrong, pick the other.' : '');
     b.querySelector('.btns').innerHTML = c.sizes.map(function(s){
       return '<button data-fit="' + s + '" style="background:var(--wp-bg);color:var(--wp-text);border:1px solid var(--wp-border);' +
@@ -2203,6 +2229,7 @@
       // out, the game puts it wherever it likes (chat windows stacked bottom-centre), and re-saving changed
       // nothing (the guild lead, 2026-11-14: "they end up looking like this even after resaving in UI studio").
       if (!all && !_windowChanged(w) && !(w.noBlock && !w.zealBar)) continue;
+      var guess = !all && !_windowChanged(w);   // written only because the file had no place for it (_queueDefer)
       var kv;
       if (w.zealBar) kv = _zealBarEdits(w);
       else {
@@ -2219,7 +2246,11 @@
         // that was merely moved keeps whatever size EQ has for it now.
         if (all ? (w.hasWH || w.sizeEdited) : _sizeChanged(w)) { kv.Width = w.w; kv.Height = w.h; }
       }
-      for (var k in kv) edits.push({ file: w.file, section: w.section, key: k, value: kv[k] });
+      for (var k in kv) {
+        var ed = { file: w.file, section: w.section, key: k, value: kv[k] };
+        if (guess) ed.guess = true;
+        edits.push(ed);
+      }
       files[w.file] = true;
       nWin++;
     }
@@ -2298,8 +2329,19 @@
   async function _queueDefer(built){
     // The queue holds the KEY EDITS, not file texts: they are merged into the
     // file as EQ leaves it on logout, so EQ's own save is never overwritten.
+    // The game writes a place for every window when the character camps. So a window this canvas only GUESSED a
+    // place for (the file had none, and it was not moved here) is left to the game: the edit would land after the
+    // camp and put the guess over where the window really was. The exception is a layout made for another screen
+    // (many windows with no place, _noPlaceCount): there the fitted places are what is being saved.
+    var edits = built.edits;
+    if (!_noPlaceCount().many) edits = edits.filter(function(e){ return !e.guess; });
+    if (!edits.length) {
+      setStatus('nothing to schedule: no window was moved here · the game saves a place for the windows that have none when ' +
+        STATE.character + ' camps', 'ok');
+      return;
+    }
     var res = await window.mimic.uiStudioDeferSave({
-      character: STATE.character, eqDir: STATE.eqDir, edits: built.edits, tgtSuffix: built.tgtSuffix,
+      character: STATE.character, eqDir: STATE.eqDir, edits: edits, tgtSuffix: built.tgtSuffix,
     }).catch(function(e){ return { ok: false, error: e && e.message }; });
     if (!res || !res.ok) { setStatus('could not schedule: ' + (res && res.error ? res.error : 'unknown'), 'err'); return; }
     _showDeferBanner();

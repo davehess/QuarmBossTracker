@@ -14167,6 +14167,14 @@ async function _loadUiSource(cfg, token, character, id) {
   return _fetchUiSnapshot(cfg, token, character, id);
 }
 function _localVersionsRoot() { return path.join(app.getPath('userData'), 'char-versions'); }
+// Was this backup made on THIS computer (a version Mimic kept here, or a cloud backup carrying this PC's name)? Such
+// a backup is put back as it was: its layout is not re-fitted from the screen size the game ran at that day.
+function _uiSameMachine(snap) {
+  if (!snap) return false;
+  if (snap.local === true) return true;
+  const me = _thisMachine();
+  return !!me && typeof snap.machine_name === 'string' && snap.machine_name === me;
+}
 
 // ── Overlay positions as a part of a backup (the guild lead, 2026-11-11) ─────────────────────────────────────
 function _overlayBackupText() {
@@ -14259,7 +14267,10 @@ function _uiCharLogFresh(eqDir, charLower) {
 }
 async function _uiEqBusyFor(character, parts, eqDir) {
   const cl = String(character).toLowerCase();
-  if (_uiCharActiveInZeal(cl)) return 'camp';
+  // A half that writes eqclient.ini / zeal.ini waits for EverQuest to close even when this character is the one
+  // logged in: answering "camp" there promised something the queue does not do (it holds that half until every
+  // client is closed). With no part list (the compare card asking about the character as a whole) it stays "camp".
+  if (_uiCharActiveInZeal(cl)) return Array.isArray(parts) && _uiNeedsEqClosed(parts) ? 'close' : 'camp';
   let up = false;
   try { up = await _isEqRunning(); } catch { up = false; }
   if (!up) return null;
@@ -14303,7 +14314,7 @@ function _uiWriteRestore(entry, backupTag) {
   const r = uiRestorePlan.buildRestore({
     backupFiles: entry.files, localFiles: local, character: entry.character,
     parts: _uiPartKeys(entry.parts), knownChars: _knownCharsIn(entry.eqDir, entry.character), target,
-    skinSizes: _uiSkinSizes(entry.eqDir),
+    skinSizes: _uiSkinSizes(entry.eqDir), sameMachine: !!entry.sameMachine,
   });
   const written = [];
   for (const [name, text] of Object.entries(r.writes || {})) {
@@ -14355,8 +14366,9 @@ ipcMain.handle('ui-restore-plan', async (_e, params) => {
     const knownChars = _knownCharsIn(eqDir, character);
     const target = await _uiTargetRes(local);
     const skinSizes = _uiSkinSizes(eqDir);
+    const sameMachine = _uiSameMachine(snap);
     const parts = uiRestorePlan.PARTS.map(p => ({ key: p.key, label: p.label, scope: p.scope,
-      ...uiRestorePlan.compare(p.key, snap.files, local, character, { knownChars, target, skinSizes }) }));
+      ...uiRestorePlan.compare(p.key, snap.files, local, character, { knownChars, target, skinSizes, sameMachine }) }));
     // Mimic's own overlay layout: a part of its own when the backup holds one (no per-item compare; it is a layout).
     if (snap.overlays) {
       const n = Object.keys(snap.overlays.rects).length;
@@ -14365,7 +14377,7 @@ ipcMain.handle('ui-restore-plan', async (_e, params) => {
     }
     const bl = _uiMainLayoutText(snap.files, character), ml = _uiMainLayoutText(local, character);
     const fitted = bl && target
-      ? uiRestorePlan.fitLayout(bl, target.w, target.h, { source: uiRestorePlan.videoModeOf(snap.files), skinSizes }).text : null;
+      ? uiRestorePlan.fitLayout(bl, target.w, target.h, uiRestorePlan.fitOpts(snap.files, skinSizes, target, sameMachine)).text : null;
     return {
       ok: true,
       source: { machine: params?.machine ? String(params.machine).slice(0, 64) : null,
@@ -14396,6 +14408,7 @@ ipcMain.handle('ui-restore-parts', async (_e, params) => {
     // The size the layout is fitted to is measured now (the EverQuest window needs an async look); a queued
     // restore keeps it for the case eqclient.ini has no [VideoMode] when it applies.
     const target = await _uiTargetRes(_readUiBundle(eqDir, character));
+    const sameMachine = _uiSameMachine(snap);
     // Two halves, so one never holds the other back: the character's own files go now (or when that character camps),
     // and the parts inside eqclient.ini / zeal.ini wait for EverQuest to close, since a running client rewrites them.
     const halves = [parts.filter(k => !_uiNeedsEqClosed([k])), parts.filter(k => _uiNeedsEqClosed([k]))].filter(g => g.length);
@@ -14405,11 +14418,11 @@ ipcMain.handle('ui-restore-parts', async (_e, params) => {
     for (const g of halves) {
       const busy = await _uiEqBusyFor(character, g, eqDir);
       if (busy) {
-        _queueUiRestore({ character, eqDir, files: snap.files, overlays: snap.overlays || null, parts: g, label: snap.label || null, target });
+        _queueUiRestore({ character, eqDir, files: snap.files, overlays: snap.overlays || null, parts: g, label: snap.label || null, target, sameMachine });
         queued.push({ parts: g, busy });
         continue;
       }
-      const w = _uiWriteRestore({ character, eqDir, files: snap.files, overlays: snap.overlays || null, parts: g, target });
+      const w = _uiWriteRestore({ character, eqDir, files: snap.files, overlays: snap.overlays || null, parts: g, target, sameMachine });
       for (const n of w) if (!written.includes(n)) written.push(n);
       for (const [n, ps] of Object.entries(w.fileParts || {})) fileParts[n] = [...new Set([...(fileParts[n] || []), ...ps])];
       for (const s of (w.savedCopies || [])) if (!savedCopies.includes(s)) savedCopies.push(s);

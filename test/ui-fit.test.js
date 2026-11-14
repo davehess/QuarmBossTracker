@@ -122,10 +122,13 @@ describe('both places that fit a layout use this one rule', () => {
   it('the bring-in fits with uiFit.js, from the screen size the backup was played at', () => {
     expect(plan).toMatch(/const uiFit = require\('\.\/uiFit'\);/);
     expect(plan).toMatch(/uiFit\.fitRect\(\{ x: from\.x, y: from\.y, w, h \}, from\.res, tgt, \{ resize: uiFit\.isChatSection\(s\.name\)/);
-    expect(plan).toMatch(/const fitOpts = \(backupFiles, skinSizes\) => \(\{ source: videoModeOf\(backupFiles\), skinSizes \}\);/);
+    // ...except a backup made on THIS computer, which is put back as it was (its block for this screen size is kept)
+    expect(plan).toMatch(/const fitOpts = \(backupFiles, skinSizes, target, sameMachine\) =>\s*\(\{ source: sameMachine && target && target\.w > 0 && target\.h > 0 \? target : videoModeOf\(backupFiles\), skinSizes \}\);/);
     expect(plan).not.toMatch(/x \* tw \/ rw/);
-    // main hands the skin's window sizes to all three calls
-    expect(main.match(/skinSizes: _uiSkinSizes\(entry\.eqDir\)|\{ knownChars, target, skinSizes \}|videoModeOf\(snap\.files\), skinSizes \}/g)).toHaveLength(3);
+    // main hands the skin's window sizes, and whether the backup is this PC's own, to all three calls
+    expect(main.match(/skinSizes: _uiSkinSizes\(entry\.eqDir\), sameMachine: !!entry\.sameMachine|\{ knownChars, target, skinSizes, sameMachine \}|uiRestorePlan\.fitOpts\(snap\.files, skinSizes, target, sameMachine\)/g)).toHaveLength(3);
+    expect(main).toMatch(/if \(snap\.local === true\) return true;/);
+    expect(main).toMatch(/snap\.machine_name === me/);
   });
 
   it('UI Studio warns about windows off the screen and can bring only those back', () => {
@@ -138,7 +141,15 @@ describe('both places that fit a layout use this one rule', () => {
   it('UI Studio offers to fit a layout made for another screen, and Save writes a place for every window shown', () => {
     expect(studio).toMatch(/id="fitBanner"/);
     expect(studio).toMatch(/if \(!STATE\.nativeLoad \|\| STATE\.fromCloud \|\| STATE\.srcSuffix !== tgt\) return null;/);
-    expect(studio).toMatch(/var fuller = \(STATE\.otherBlocks \|\| \[\]\)\.filter\(function\(k\)\{ return counts\[k\] > have; \}\);\s*if \(!missing \|\| !fuller\.length\) return null;/);
+    // only when MANY windows have no place (a fifth or more, at least three): a member's own file after a change of
+    // screen size has a layout in use, and the button would lay the old screen's layout over it
+    expect(studio).toMatch(/var fuller = \(STATE\.otherBlocks \|\| \[\]\)\.filter\(function\(k\)\{ return counts\[k\] > have; \}\);\s*if \(!np\.many \|\| !fuller\.length\) return null;/);
+    expect(studio).toMatch(/many: missing >= Math\.max\(3, Math\.ceil\(total \* 0\.2\)\)/);
+    // the game's own parked windows (the group it never shows in play) are not "off the screen"
+    expect(studio).toMatch(/function _isOffScreen\(w\)\{\s*if \(w\.category === 'offscreen'\) return false;/);
+    // a save that waits for the camp leaves a guessed place to the game, unless the layout was made for another screen
+    expect(studio).toMatch(/if \(!_noPlaceCount\(\)\.many\) edits = edits\.filter\(function\(e\)\{ return !e\.guess; \}\);/);
+    expect(studio).toMatch(/var guess = !all && !_windowChanged\(w\);/);
     expect(studio).toMatch(/_syncPresetFromInputs\('src'\);\s*loadAndRescale\(\)\.then\(/);
     expect(studio).toMatch(/var pos = _readPos\(s\.props, srcSuffix, otherBlocks\);/);
     expect(studio).toMatch(/if \(!all && !_windowChanged\(w\) && !\(w\.noBlock && !w\.zealBar\)\) continue;/);
@@ -146,7 +157,11 @@ describe('both places that fit a layout use this one rule', () => {
 
   it('after a bring-in the canvas re-reads the files, so the next Save cannot write the old places back', () => {
     expect(studio).toMatch(/mount\(document\.getElementById\('bringCard'\), \{ all: true, fresh: true, onDone: _reloadAfterBringIn \}\)/);
-    expect(studio).toMatch(/function _reloadAfterBringIn\(\)\{\s*if \(!STATE\.character \|\| !STATE\.eqDir\) return;\s*loadAndRescale\(true\)/);
+    expect(studio).toMatch(/function _reloadAfterBringIn\(ok, rows\)\{\s*if \(!STATE\.character \|\| !STATE\.eqDir\) return;/);
+    // only for the character on the canvas, and never over moves that are not saved
+    expect(studio).toMatch(/r\.kind === 'done' && String\(r\.character\)\.toLowerCase\(\) === me && r\.files && r\.files\.length/);
+    expect(studio).toMatch(/if \(!wrote\) return;\s*if \(STATE\.windows\.some\(_windowChanged\)\) \{[^}]*return;\s*\}\s*loadAndRescale\(true\)/);
+    expect(stripJs(readSource(path.join(ROOT, 'apps', 'mimic', 'bring-setup.js')))).toMatch(/el\.__wpbsDone\(ok, rows\)/);
   });
 
   it('a Save queued while a bring-in waits no longer drops the bring-in', () => {
